@@ -1,0 +1,45 @@
+{
+  "name": "@coyasong/youtube-mcp-server",
+  "version": "1.0.0",
+  "main": "dist/index.js",
+  "module": "./src/index.ts",
+  "type": "module",
+  "bin": {
+    "youtube-mcp-server": "./dist/index.js"
+  },
+  "scripts": {
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\"",
+    "prebuild": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true});require('fs').mkdirSync('dist',{recursive:true})\"",
+    "build": "tsc",
+    "start": "node dist/stdio-main.js",
+    "stdio": "node dist/stdio-main.js",
+    "dev": "node --loader ts-node/esm src/stdio-main.ts"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/coyaSONG/youtube-mcp-server.git"
+  },
+  "keywords": [],
+  "author": "coyaSONG",
+  "license": "ISC",
+  "bugs": {
+    "url": "https://github.com/coyaSONG/youtube-mcp-server/issues"
+  },
+  "homepage": "https://github.com/coyaSONG/youtube-mcp-server#readme",
+  "description": "",
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.29.0",
+    "dotenv": "^16.4.7",
+    "express": "^5.2.1",
+    "googleapis": "^173.0.0",
+    "node-cache": "^5.1.2",
+    "youtube-captions-scraper": "^2.0.3",
+    "zod": "^4.4.3"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.0",
+    "@types/node": "^22.13.14",
+    "ts-node": "^10.9.2",
+    "typescript": "^5.8.2"
+  }
+}

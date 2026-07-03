@@ -1,0 +1,56 @@
+# ========== 密钥与本地认证（切勿提交） ==========
+.env
+.env.*
+!.env.example
+auth.json
+auth.lock
+
+# ========== Hermes 运行时状态 ==========
+state.db
+state.db-*
+logs/
+sessions/
+cache/
+audio_cache/
+image_cache/
+memories/
+sandboxes/
+pairing/
+cron/
+install.log
+
+# ========== 本地缓存与历史 ==========
+models_dev_cache.json
+ollama_cloud_models_cache.json
+.skills_prompt_snapshot.json
+.hermes_history
+.update_check
+config.yaml.bak.*
+
+# ========== 误创建目录 ==========
+vmr --version/
+
+# ========== MCP 生成数据 ==========
+mcp/data/maigret-reports/*
+!mcp/data/maigret-reports/.gitkeep
+
+# ========== Python / Node ==========
+__pycache__/
+*.py[cod]
+*.egg-info/
+node_modules/
+.venv/
+venv/
+.pytest_cache/
+
+# ========== IDE ==========
+.vscode/
+.idea/
+*.swp
+.DS_Store
+
+# ========== Hermes 上游（通过 install.ps1 安装，体积过大不入库） ==========
+hermes-agent/
+
+# ========== 安装产物二进制 ==========
+bin/
