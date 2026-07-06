@@ -28,6 +28,10 @@ def _emit(payload: dict, *, exit_code: int = 0) -> None:
 
 
 def main() -> None:
+    if sys.platform == "win32":
+        import os
+        os.environ.setdefault("PYTHONUTF8", "1")
+        os.environ.setdefault("PYTHONIOENCODING", "utf-8")
     try:
         params = _load_params()
         from server import _collect_accounts_impl  # noqa: E402
@@ -42,7 +46,7 @@ def main() -> None:
                 "error": str(exc),
                 "timed_out": False,
                 "scan_status": "failed",
-                "user_message": "跨平台扫描未完成，第三节仅依据 Twitter 简介与公开线索分析。",
+                "user_message": "Maigret 扫描失败，继续种子账号流校验。",
                 "summary": {"found_count": 0, "accounts": []},
                 "traceback": traceback.format_exc()[-1500:],
             },

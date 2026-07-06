@@ -1,5 +1,9 @@
 #!/usr/bin/env python3
-"""Hermes 启动器：为 twikit-mcp 注入显式 HTTP 代理，并扩展舆情画像工具。"""
+"""Hermes 启动器（画像扩展版）：为 twikit-mcp 注入代理，并可注册 persona 工具。
+
+hermes-xa 采集项目请使用 run_twitter_mcp_data_only.py（纯数据，无画像代码路径）。
+本文件保留供旧 Hermes 画像流程；启用画像：TWITTER_PERSONA_TOOLS=1
+"""
 from __future__ import annotations
 
 import asyncio
@@ -1933,10 +1937,21 @@ def _prune_tools_for_hermes_persona() -> None:
             pass
 
 
+def _persona_tools_enabled() -> bool:
+    """画像专用工具（含 mandatory_output_contract）。hermes-xa 采集默认关闭。"""
+    return os.environ.get("TWITTER_PERSONA_TOOLS", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 def main() -> None:
     _patch_get_client()
-    _register_persona_tools()
-    _prune_tools_for_hermes_persona()
+    # 画像扩展默认关闭；旧 Hermes 画像项目显式设 TWITTER_PERSONA_TOOLS=1
+    if _persona_tools_enabled():
+        _register_persona_tools()
+        _prune_tools_for_hermes_persona()
     from twitter_mcp.server import main as twikit_main
 
     twikit_main()

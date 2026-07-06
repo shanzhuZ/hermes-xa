@@ -1,0 +1,63 @@
+# 01 账号采集 — 唯一参考（Skill 只加载本文件）
+version: "1.12.0"
+
+identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
+
+forbidden_always:
+  tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、]
+
+steps:
+  "1_seed":
+    do: 种子平台 MCP profile（Twitter→get_user_info）
+    forbid: [get_user_tweets, maigret, vision]
+
+  "2_maigret":
+    when: 用户说跨平台
+    do: mcp_maigret_collect_accounts(username=种子)
+    forbid: 写报告；follow collect_skill_mode / agent_must_do_next
+
+  "3_profiles":
+    do: |
+      遍历 summary.accounts 每条候选（种子平台除外）：
+      - 有 MCP：Twitter/微博/B站/YouTube→仅 profile（YouTube 用 get_channel_stats + channelId，禁止 analyze_channel_videos）
+      - 无 MCP：Instagram/TikTok/Telegram/Facebook/GitHub→Apify 三轮（resultsLimit≤5，只取 profile 字段）
+      - discovery_only（Discord/ImgInn 等）：只记 URL
+      失败/空数据→跳过该候选，禁止 web_search，禁止重试超过 1 次
+    forbid: [get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, 任何报告文字]
+
+  "4_streams":
+    do: |
+      对步骤3成功的账号 + 种子：
+      文本流：昵称/handle/简介/互链/邮箱 → 与种子比对 → 表 2.1
+      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze → 表 2.2
+    forbid: [发文工具, 写最终报告]
+
+  "5_validated":
+    do: validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded
+    forbid: [一切发文工具]
+
+  "6_posts":
+    do: |
+      validated 每个账号：
+      - Twitter→get_user_tweets(50)
+      - YouTube→analyze_channel_videos(channelId)
+      - 微博→get_user_feeds
+      - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
+    forbid: [web_search]
+
+  "7_output":
+    once: true
+    sections: [一、个人信息, 二、账号核验依据, 三、发文信息]
+    section2: [2.1文本流表, 2.2图片流表, 2.3纳入, 2.4未纳入]
+    section3: 每平台一块，MCP/Apify 原文逐条，禁止主题归纳
+
+apify:
+  contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
+  instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
+  tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
+  telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
+  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
+  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
+
+midflight: 步骤1-6 对用户最多 2 句进度；禁止输出一、二、三、任何一节

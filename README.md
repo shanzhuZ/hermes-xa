@@ -6,7 +6,7 @@
 
 | 目录/文件 | 说明 |
 |-----------|------|
-| `docs/` | 平台设计、Clarify 交互指南、五类业务流程 |
+| `docs/` | 平台设计、Clarify 交互指南、四类业务流程 |
 | `mcp/` | MCP Server 源码与 `mcp_servers.yaml` 连接配置 |
 | `skills/` | Skill（含后续 `account-intelligence` 业务 Skill） |
 | `hooks/` | Hook 脚本 |
@@ -41,6 +41,7 @@ hermes chat
 
 ## 文档
 
+- [协作者本地环境搭建指南](docs/协作者本地环境搭建指南.md) — **克隆后必读**
 - [平台总览与框架设计](docs/平台总览与框架设计.md)
 - [Clarify 深度交互与 Skill 集成指南](docs/clarify深度交互与Skill集成指南.md)
 - [业务流程 workflows](docs/workflows/)

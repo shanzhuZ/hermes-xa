@@ -14,7 +14,7 @@
 
 ## 依赖
 
-- Python：`pip install mcp-ocr`（已装）
+- Python：`pip install mcp-ocr`
 - Tesseract：已通过 winget 安装到 `C:\Program Files\Tesseract-OCR`
 - 中文语言包：见 `tessdata/chi_sim.traineddata`（`TESSDATA_PREFIX` 指向本目录）
 

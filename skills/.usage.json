@@ -1,15 +1,41 @@
 {
+  "account-intelligence-collect": {
+    "archived_at": null,
+    "created_at": "2026-07-06T05:05:49.631065+00:00",
+    "created_by": null,
+    "last_patched_at": null,
+    "last_used_at": "2026-07-06T10:00:07.672806+00:00",
+    "last_viewed_at": "2026-07-06T10:00:07.656806+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "active",
+    "use_count": 98,
+    "view_count": 98
+  },
+  "account-intelligence-profile": {
+    "archived_at": "2026-07-06T06:30:00+00:00",
+    "created_at": "2026-07-06T05:12:06.715821+00:00",
+    "created_by": "agent",
+    "last_patched_at": null,
+    "last_used_at": "2026-07-06T06:19:53.846873+00:00",
+    "last_viewed_at": "2026-07-06T06:19:53.830917+00:00",
+    "patch_count": 0,
+    "pinned": false,
+    "state": "archived",
+    "use_count": 1,
+    "view_count": 1
+  },
   "hermes-agent": {
     "archived_at": null,
     "created_at": "2026-07-03T08:34:48.189936+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-03T08:34:48.208870+00:00",
-    "last_viewed_at": "2026-07-03T08:34:48.189936+00:00",
+    "last_used_at": "2026-07-06T07:40:40.748049+00:00",
+    "last_viewed_at": "2026-07-06T07:40:40.726539+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 1,
-    "view_count": 1
+    "use_count": 2,
+    "view_count": 2
   }
 }

@@ -35,6 +35,16 @@ if os.name == "nt":
 
 mcp = FastMCP("maigret")
 
+
+def _persona_gate_enabled() -> bool:
+    """画像成稿门禁（persona_draft_gate）。hermes-xa 01 采集须保持关闭。"""
+    return os.environ.get("MAIGRET_PERSONA_GATE", "").strip().lower() in (
+        "1",
+        "true",
+        "yes",
+    )
+
+
 # ── 环境配置 ──────────────────────────────────────────────────────────
 MAIGRET_BIN = os.environ.get("MAIGRET_BIN", "maigret")
 MAIGRET_LAUNCHER = os.environ.get(
@@ -216,9 +226,7 @@ async def _collect_accounts_via_worker(params: dict[str, Any]) -> dict[str, Any]
             payload = json.loads(text)
             if isinstance(payload, dict):
                 if payload.get("error") and "user_message" not in payload:
-                    payload["user_message"] = (
-                        "跨平台扫描未完成，第三节仅依据 Twitter 简介与公开线索分析。"
-                    )
+                    payload["user_message"] = "Maigret 扫描失败，继续种子账号流校验与单平台采集。"
                     payload["scan_status"] = payload.get("scan_status") or "failed"
                 return payload
         except json.JSONDecodeError:
@@ -228,7 +236,7 @@ async def _collect_accounts_via_worker(params: dict[str, Any]) -> dict[str, Any]
         "error": err_text or f"worker exit {proc.returncode}",
         "timed_out": False,
         "scan_status": "failed",
-        "user_message": "跨平台扫描未完成，第三节仅依据 Twitter 简介与公开线索分析。",
+        "user_message": "Maigret 扫描失败，继续种子账号流校验与单平台采集。",
         "summary": {"found_count": 0, "accounts": []},
     }
 
@@ -712,9 +720,17 @@ def _summarize_maigret_records(records: list[dict[str, Any]]) -> dict[str, Any]:
 
         sitename = rec.get("sitename") or status.get("site_name") or "unknown"
         ids = status.get("ids") or _get_ids_data(rec)
+        if not isinstance(ids, dict):
+            ids = {"raw": ids} if ids else {}
+        url_user = rec.get("url_user") or status.get("url", "") or ""
+        if "youtube" in str(sitename).lower() and url_user:
+            m = re.search(r"youtube\.com/channel/(UC[\w-]+)", url_user, re.I)
+            if m:
+                ids = dict(ids)
+                ids["youtube_channel_id"] = m.group(1)
         accounts.append({
             "sitename": sitename,
-            "url": rec.get("url_user") or status.get("url", ""),
+            "url": url_user,
             "ids": ids,
             "tags": status.get("tags") or [],
         })
@@ -766,17 +782,189 @@ def _maigret_user_message(
     partial: bool,
     scan_timeout: int,
 ) -> str:
-    """成稿第三节/预分析第四节：如实反映扫描结果，不掩盖超时。"""
+    """01 采集步骤 2：中性状态说明，禁止引导写报告。"""
     if timed_out and found_count == 0:
-        return f"跨平台扫描超时（{scan_timeout}s），未能返回有效结果。"
+        return f"跨平台扫描超时（{scan_timeout}s），无候选；继续步骤 3 仅采种子平台。"
     if found_count > 0:
         if timed_out or partial:
             return (
-                f"跨平台扫描达 {scan_timeout}s 上限，已返回 {found_count} 个已确认命中"
-                f"（部分站点未扫完，以 summary.accounts 为准）。"
+                f"跨平台扫描达 {scan_timeout}s 上限，已返回 {found_count} 个候选"
+                f"（见 summary.accounts，继续步骤 3 采各候选主页）。"
             )
-        return f"跨平台扫描完成，发现 {found_count} 个已确认跨平台账号（见 summary.accounts）。"
-    return "跨平台扫描完成，未发现其它平台同名账号。"
+        return (
+            f"跨平台扫描完成，{found_count} 个候选（见 summary.accounts）。"
+            "继续步骤 3：有 MCP 采 profile，无 MCP 用 Apify；禁止写报告。"
+        )
+    return "跨平台扫描完成，无其它平台候选；继续步骤 3 仅处理种子相关外链。"
+
+
+def _maigret_apify_tool(actor_slug: str) -> str:
+    """headlessagent/facebook-... → mcp_apify_headlessagent__facebook_profile_post_scraper"""
+    return "mcp_apify_" + actor_slug.replace("/", "__").replace("-", "_")
+
+
+def _build_step3_actions(accounts: list[dict[str, Any]], seed_username: str) -> list[dict[str, Any]]:
+    """为 01 采集步骤 3 生成可执行工具清单（机器可读，避免 Agent 猜工具名）。"""
+    actions: list[dict[str, Any]] = []
+    seed = (seed_username or "").strip().lstrip("@").lower()
+    discovery_only = (
+        "imginn", "picuki", "wordpress", "blogger", "discord", "githubgist", "pinterest"
+    )
+
+    for acc in accounts:
+        sitename = str(acc.get("sitename") or "")
+        low_site = sitename.lower()
+        url = (acc.get("url") or "").strip()
+        ids = acc.get("ids") if isinstance(acc.get("ids"), dict) else {}
+
+        if any(d in low_site for d in discovery_only):
+            actions.append({
+                "platform": sitename,
+                "url": url,
+                "action": "register_only",
+                "reason": "discovery_only，步骤3不调工具",
+            })
+            continue
+
+        if "youtube" in low_site:
+            ch = ids.get("youtube_channel_id") or ids.get("channel_id")
+            if ch:
+                actions.append({
+                    "platform": "youtube",
+                    "url": url,
+                    "tool": "mcp_youtube_get_channel_stats",
+                    "args": {"channelId": str(ch)},
+                })
+            else:
+                actions.append({
+                    "platform": "youtube",
+                    "url": url,
+                    "action": "skip",
+                    "reason": "无 ids.youtube_channel_id，跳过",
+                })
+            continue
+
+        if "instagram" in low_site and url:
+            actions.append({
+                "platform": "instagram",
+                "url": url,
+                "step3_apify": [
+                    {
+                        "tool": _maigret_apify_tool("apify/instagram-scraper"),
+                        "args": {"directUrls": [url.rstrip("/") + "/"], "resultsLimit": 5},
+                    },
+                    {"tool": "mcp_apify_get_actor_run", "args_from_previous_run": True},
+                    {"tool": "mcp_apify_get_dataset_items", "args": {"limit": 20}},
+                ],
+            })
+            continue
+
+        if "tiktok" in low_site:
+            prof = url
+            if not prof and seed:
+                prof = f"https://www.tiktok.com/@{seed}"
+            if prof:
+                actions.append({
+                    "platform": "tiktok",
+                    "url": prof,
+                    "step3_apify": [
+                        {
+                            "tool": _maigret_apify_tool("clockworks/tiktok-scraper"),
+                            "args": {"profiles": [prof], "resultsPerPage": 5},
+                        },
+                        {"tool": "mcp_apify_get_actor_run", "args_from_previous_run": True},
+                        {"tool": "mcp_apify_get_dataset_items", "args": {"limit": 20}},
+                    ],
+                })
+            continue
+
+        if "telegram" in low_site:
+            ch = seed
+            m = re.search(r"t\.me/([A-Za-z0-9_]+)", url, re.I)
+            if m:
+                ch = m.group(1)
+            if ch:
+                actions.append({
+                    "platform": "telegram",
+                    "url": url,
+                    "step3_apify": [
+                        {
+                            "tool": _maigret_apify_tool("vujeen/telegram-channel-scraper"),
+                            "args": {"channels": [ch], "maxPostsPerChannel": 3},
+                        },
+                        {"tool": "mcp_apify_get_actor_run", "args_from_previous_run": True},
+                        {"tool": "mcp_apify_get_dataset_items", "args": {"limit": 20}},
+                    ],
+                })
+            continue
+
+        if "twitter" in low_site or "x.com" in url.lower():
+            handle = seed
+            m = re.search(r"(?:twitter\.com|x\.com)/([A-Za-z0-9_]{1,15})", url, re.I)
+            if m:
+                handle = m.group(1)
+            if handle.lower() == seed:
+                actions.append({
+                    "platform": "twitter",
+                    "url": url,
+                    "action": "skip",
+                    "reason": "与种子相同，步骤1已采",
+                })
+            else:
+                actions.append({
+                    "platform": "twitter",
+                    "url": url,
+                    "tool": "mcp_twitter_get_user_info",
+                    "args": {"screen_name": handle},
+                })
+            continue
+
+        actions.append({
+            "platform": sitename,
+            "url": url,
+            "action": "skip",
+            "reason": "无步骤3 MCP/Apify 映射",
+        })
+
+    return actions
+
+
+def _attach_collect_skill_hint(payload: dict[str, Any]) -> dict[str, Any]:
+    """hermes-xa 01 采集：剥离画像成稿字段，注入 Skill 后续步骤提示。"""
+    out = dict(payload)
+    for key in (
+        "persona_draft_gate",
+        "DRAFT_BLOCKED",
+        "DRAFT_BLOCKED_REASON",
+        "NEXT_ACTIONS_REQUIRED",
+        "cross_platform_collection_plan",
+        "mandatory_output_contract",
+    ):
+        out.pop(key, None)
+    accounts = (out.get("summary") or {}).get("accounts") or []
+    seed_username = str(out.get("username") or "")
+    step3 = _build_step3_actions(accounts, seed_username)
+    out["collect_skill_mode"] = True
+    out["output_language"] = "zh-CN"
+    out["seed_username"] = seed_username
+    out["step3_actions"] = step3
+    out["agent_must_not"] = [
+        "写人物画像/综合报告/Investigation Report/用户画像总结",
+        "使用英文长报告（必须简体中文）",
+        "调用 web_search 或 web_extract 或 browser_*",
+        "在步骤 3 调用 get_user_tweets / analyze_channel_videos / get_user_feeds",
+        "使用 mcp_apify_*_get_dataset_items 等拼接工具名（dataset 用 mcp_apify_get_dataset_items）",
+        "把本工具返回当作最终输出",
+    ]
+    out["agent_must_do_next"] = [
+        "严格按 step3_actions 逐步调工具；失败则 skip，禁止 web_search",
+        "步骤4: 文本流+图片流(OCR+vision)；步骤5: validated_accounts；步骤6: 发文；步骤7: 仅三节中文报告",
+    ]
+    out["hint"] = (
+        f"种子 @{seed_username}；{len(accounts)} 条候选。"
+        f"步骤3 见 step3_actions（{len(step3)} 条）。禁止写报告。"
+    )
+    return out
 
 
 def _enrich_collect_payload(payload: dict[str, Any]) -> dict[str, Any]:
@@ -889,7 +1077,7 @@ def _try_recover_partial_result(
             "stderr": "",
             "stdout_tail": "",
         },
-        "hint": "扫描超时但磁盘报告已有部分命中；画像第三节可写已发现平台。",
+        "hint": "扫描超时但磁盘报告已有部分命中，可继续后续 MCP 采集。",
     })
 
 
@@ -977,12 +1165,19 @@ def _collect_accounts_impl(
             "timed_out": timed_out,
         },
         "hint": (
-            "完整 JSON 见 report_json（ndjson 每行一个平台）。"
+            "候选用 summary.accounts。"
             + (" 已达时间上限，返回部分结果。" if timed_out and records else "")
-            + " 画像任务：须与 Twitter 取证均完成后再一次性写六节，禁止先写一二节再调本工具。"
+            + (
+                " 画像任务：须与 Twitter 取证均完成后再一次性写六节。"
+                if _persona_gate_enabled()
+                else " 01 采集：继续步骤 3，禁止写报告。"
+            )
         ),
     }
-    return _enrich_collect_payload(payload)
+    payload = _enrich_collect_payload(payload)
+    if not _persona_gate_enabled():
+        payload = _attach_collect_skill_hint(payload)
+    return payload
 
 
 def _search_and_parse(
@@ -1261,20 +1456,13 @@ async def collect_accounts(
     primary_username: str = "",
 ) -> dict[str, Any]:
     """
-    【OSINT 主工具】根据用户名或平台主页 URL，收集该人在其他社交平台的账号。
+    【01 采集 · 步骤 2】跨平台用户名扫描，返回候选账号列表（summary.accounts）。
 
-    参数:
-    - username: 如 whyyoutouzhele
-    - profile_url: 如 https://twitter.com/whyyoutouzhele
-    - primary_platform: 本次画像主平台（twitter/youtube/weibo 等），用于生成二次采集计划时跳过重复采集
-    - primary_username: 主平台用户名（可选，用于判断是否同人账号）
-    - top_sites: 默认 10（画像场景；全库 3000+ 站请用 search_username 或 all_sites=true）
-    - timeout: 默认 150 秒；到点返回已有结果（Hermes 网关 timeout 须 ≥ scan_timeout+90）
-    - enable_recursion: 必须 false
+    仅作候选发现，禁止根据本工具返回写报告或画像。
+    下一步由 Skill 步骤 3 对各候选采主页（MCP 或 Apify）。
 
-    深度人物画像：须在主平台采集之后、成稿之前调用；
-    禁止与 get_user_tweets_for_persona 同一轮并行。
-    返回 cross_platform_collection_plan：列出需二次采集的 YouTube/Facebook 等（主平台自动跳过）。
+    参数: username（纯用户名，如 whyyoutouzhele）、top_sites 默认 10、timeout 默认 150。
+    enable_recursion 必须 false。不要传带空格的用户名或 profile_url 代替 username。
     """
     params = {
         "username": username,
@@ -1289,13 +1477,17 @@ async def collect_accounts(
         "cloudflare_bypass": cloudflare_bypass,
         "timeout": timeout,
     }
-    payload = _attach_persona_draft_gate(
-        await _collect_accounts_via_worker(params),
-        primary_platform=primary_platform,
-        primary_username=primary_username or username,
-        requested_username=username,
-        requested_url=profile_url,
-    )
+    payload = await _collect_accounts_via_worker(params)
+    if _persona_gate_enabled():
+        payload = _attach_persona_draft_gate(
+            payload,
+            primary_platform=primary_platform,
+            primary_username=primary_username or username,
+            requested_username=username,
+            requested_url=profile_url,
+        )
+    elif isinstance(payload, dict):
+        payload = _attach_collect_skill_hint(payload)
     payload["scan_scope_note"] = (
         f"本次扫描 top_{top_sites} 高优先级站点（非全库 3000+）。"
         "全量请单独调用 search_username(top_sites=50~100) 或 collect_accounts(all_sites=true, timeout≥600)。"

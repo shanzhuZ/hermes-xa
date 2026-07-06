@@ -205,6 +205,10 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
   );
 
   // Define tools
+  const youtubeCollectMode =
+    process.env.YOUTUBE_COLLECT_MODE === '1' ||
+    (process.env.YOUTUBE_COLLECT_MODE || '').toLowerCase() === 'true';
+
   server.tool(
     'search-videos',
     'Search for YouTube videos with advanced filtering options. Supports parameters: \
@@ -386,7 +390,9 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
 
   server.tool(
     'get-channel-stats',
-    'Get statistical information for a specific YouTube channel (subscriber count, total views, video count, etc.)',
+    youtubeCollectMode
+      ? '【01采集-仅步骤3】频道 profile：标题、订阅、头像 URL 等。禁止步骤3调用 analyze-channel-videos。'
+      : 'Get statistical information for a specific YouTube channel (subscriber count, total views, video count, etc.)',
     {
       channelId: z.string().min(1)
     },
@@ -561,7 +567,9 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
 
   server.tool(
     'analyze-channel-videos',
-    'Analyze recent videos from a specific channel to identify performance trends',
+    youtubeCollectMode
+      ? '【01采集-仅步骤6】采频道近期视频发文列表。禁止在步骤3-5调用；步骤3只用 get-channel-stats。'
+      : 'Analyze recent videos from a specific channel to identify performance trends',
     {
       channelId: z.string().min(1),
       maxResults: z.number().min(1).max(50).optional(),
@@ -948,7 +956,12 @@ ${summaryInstructions}`
     }
   );
 
-  registerPersonaTools(server, youtubeService);
+  const personaOn =
+    process.env.YOUTUBE_PERSONA_TOOLS === '1' ||
+    process.env.YOUTUBE_PERSONA_TOOLS?.toLowerCase() === 'true';
+  if (personaOn) {
+    registerPersonaTools(server, youtubeService);
+  }
 
   return server.server;
 }

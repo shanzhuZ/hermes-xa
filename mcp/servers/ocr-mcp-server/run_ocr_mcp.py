@@ -12,6 +12,24 @@ import sys
 from pathlib import Path
 
 
+def _configure_windows_stdio_utf8() -> None:
+    """避免 Windows 子进程 GBK 解码错误。"""
+    if os.name != "nt":
+        return
+    os.environ.setdefault("PYTHONUTF8", "1")
+    os.environ.setdefault("PYTHONIOENCODING", "utf-8")
+    for stream in (sys.stdout, sys.stderr):
+        reconf = getattr(stream, "reconfigure", None)
+        if reconf:
+            try:
+                reconf(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+
+
+_configure_windows_stdio_utf8()
+
+
 def _find_tesseract() -> str:
     env_cmd = (os.environ.get("TESSERACT_CMD") or "").strip().strip('"')
     if env_cmd and Path(env_cmd).is_file():
@@ -52,7 +70,6 @@ def _configure_tesseract() -> None:
 
 
 def main() -> None:
-    # 尽早设置，避免 Windows 下 stderr 中文乱码；跳过 mcp_ocr 安装检测
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
     os.environ.setdefault("PYTHONUTF8", "1")
 

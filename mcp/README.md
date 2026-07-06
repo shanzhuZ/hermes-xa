@@ -66,23 +66,35 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | 变量 | 用途 |
 |------|------|
 | `WEIBO_COOKIE` | 微博 MCP |
-| `APIFY_TOKEN` | Apify |
-| `FIRECRAWL_API_KEY` | Firecrawl |
+| `APIFY_TOKEN` | Apify（Instagram/Telegram/TikTok/Facebook/GitHub） |
+| `FIRECRAWL_API_KEY` | Firecrawl（Apify 失败时主页兜底） |
 | `YOUTUBE_API_KEY` | YouTube |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 需代理的 MCP |
 | `BRIGHTDATA_MCP_URL` | Bright Data（可选） |
 
 Twitter Cookie 文件默认：`C:/Users/zhr/.config/twitter-mcp/cookies.json`
 
+**Apify**：`NO_PROXY` 须含 `api.apify.com,apify.com,.apify.com`（与旧 Hermes 一致，避免代理拉 Actor schema 超时）。验证：`hermes mcp test apify` 应显示 9 个工具。
+
 ### 5. 验证
 
 ```powershell
 hermes chat
 # 会话内：/reload-mcp
-# 尝试：获取微博热搜
 ```
 
 ## 说明
 
-- **Twitter**：`tools.include` 仅保留基础 API 工具，不含 `*_for_persona` 画像专用工具。
-- **路径**：所有自研 MCP 已迁到 `D:/hermes-xa/mcp/servers/`，与旧 `AppData/Local/hermes` 解耦。
+### MCP 与旧 Hermes 的关系
+
+| 组件 | hermes-xa（本项目） | 旧 Hermes（AppData 等） |
+|------|---------------------|-------------------------|
+| 启动脚本 | `run_twitter_mcp_data_only.py`（**纯数据，~70 行**） | 可用 `run_twitter_mcp.py` + `TWITTER_PERSONA_TOOLS=1` |
+| 源码位置 | `D:/hermes-xa/mcp/servers/`（**独立副本**） | 通常在 `AppData/Local/hermes/...`，**不共用文件** |
+| pip 包 `twitter_mcp` | 共享安装，**上游无画像** | 同上 |
+
+- **hermes-xa 已切换** `config.yaml` → `run_twitter_mcp_data_only.py`，不会加载 persona 代码
+- **画像扩展**仍在 `run_twitter_mcp.py`，供旧项目保留，勿删
+- Maigret/YouTube 画像门禁默认关：`MAIGRET_PERSONA_GATE=0`、`YOUTUBE_PERSONA_TOOLS` 未设
+
+修改 MCP 后：`/reload-mcp`

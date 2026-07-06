@@ -4,7 +4,17 @@ model:
   base_url: http://172.200.200.4:7000/v1
   api_key: sk-dummy
   api_mode: chat_completions
+auxiliary:
+  vision:
+    provider: openai
+    model: Qwen2.5-VL-32B-Instruct
+    base_url: http://172.200.200.1:2015/v1
+    api_key: sk-dummy
+    timeout: 120
+    extra_body: {}
+    download_timeout: 60
 agent:
+  image_input_mode: auto
   max_turns: 150
   verbose: false
   reasoning_effort: medium
@@ -108,7 +118,8 @@ memory:
 delegation:
   max_iterations: 50
 skills:
-  creation_nudge_interval: 15
+  creation_nudge_interval: 0
+  write_approval: true
 code_execution:
   timeout: 300
   max_tool_calls: 50
@@ -296,6 +307,7 @@ mcp_servers:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
       MAIGRET_REPORTS_DIR: D:/hermes-xa/mcp/data/maigret-reports
+      MAIGRET_PERSONA_GATE: '0'
       MAIGRET_PROXY: ${HTTPS_PROXY}
       MAIGRET_DEFAULT_TIMEOUT: '300'
       MAIGRET_MAX_TIMEOUT: '300'
@@ -307,10 +319,11 @@ mcp_servers:
     enabled: true
     command: D:/environment/python/python.exe
     args:
-      - D:/hermes-xa/mcp/servers/twitter-mcp-server/run_twitter_mcp.py
+      - D:/hermes-xa/mcp/servers/twitter-mcp-server/run_twitter_mcp_data_only.py
     env:
       TWITTER_COOKIES: C:/Users/zhr/.config/twitter-mcp/cookies.json
       TWITTER_PROXY: ${HTTPS_PROXY}
+      TWITTER_PERSONA_TOOLS: '0'
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
       PYTHONUTF8: '1'
@@ -325,6 +338,8 @@ mcp_servers:
         - get_tweet_replies
         - search_tweets
         - search_user
+        - get_user_info
+        - get_user_tweets
         - get_user_followers
         - get_user_following
         - get_trends
@@ -355,11 +370,16 @@ mcp_servers:
       - D:/hermes-xa/mcp/servers/youtube-mcp-server/dist/stdio-main.js
     env:
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
+      YOUTUBE_COLLECT_MODE: '1'
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 180
+    tools:
+      include:
+        - get-channel-stats
+        - analyze-channel-videos
 custom_providers:
   - name: 172.200.200.4:7000
     base_url: http://172.200.200.4:7000/v1
@@ -372,41 +392,6 @@ custom_providers:
 known_plugin_toolsets:
   cli:
     - spotify
-
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
-
-# ── Fallback Model ────────────────────────────────────────────────────
-# Automatic provider failover when primary is unavailable.
-# Uncomment and configure to enable. Triggers on rate limits (429),
-# overload (529), service errors (503), or connection failures.
-#
-# Supported providers:
-#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
-#   openai-codex (OAuth — hermes auth) — OpenAI Codex
-#   nous         (OAuth — hermes auth) — Nous Portal
-#   zai          (ZAI_API_KEY)         — Z.AI / GLM
-#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
-#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
-#   minimax      (MINIMAX_API_KEY)     — MiniMax
-#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
-#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
-#
-# For custom OpenAI-compatible endpoints, add base_url and key_env.
-#
-# fallback_model:
-#   provider: openrouter
-#   model: anthropic/claude-sonnet-4
+onboarding:
+  seen:
+    tool_progress_prompt: true
