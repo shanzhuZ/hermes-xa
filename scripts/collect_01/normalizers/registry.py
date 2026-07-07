@@ -1,0 +1,43 @@
+"""01 采集 — MCP 工具路由到 normalizer。"""
+
+from __future__ import annotations
+
+import logging
+from typing import Any, Callable, Dict, List, Optional, Tuple
+
+from collect_01.normalizers.base import unwrap_tool_payload
+from collect_01.normalizers import apify, maigret, twitter, youtube
+
+logger = logging.getLogger(__name__)
+
+Handler = Callable[[Any, Dict[str, Any]], Dict[str, Any]]
+
+# tool_name -> (handler, kind)  kind: profile | posts | candidates | noop
+REGISTRY: Dict[str, Tuple[Handler, str]] = {
+    "mcp_twitter_get_user_info": (twitter.normalize_profile, "profile"),
+    "mcp_twitter_get_user_tweets": (twitter.normalize_posts, "posts"),
+    "mcp_maigret_collect_accounts": (maigret.normalize_candidates, "candidates"),
+    "mcp_youtube_get_channel_stats": (youtube.normalize_profile, "profile"),
+    "mcp_youtube_analyze_channel_videos": (youtube.normalize_posts, "posts"),
+    "mcp_apify_get_dataset_items": (apify.normalize_dataset_items, "mixed"),
+    "mcp_apify_apify__instagram_scraper": (apify.normalize_actor_run, "noop"),
+    "mcp_apify_clockworks__tiktok_scraper": (apify.normalize_actor_run, "noop"),
+    "mcp_apify_vujeen__telegram_channel_scraper": (apify.normalize_actor_run, "noop"),
+}
+
+
+def resolve(tool_name: str) -> Optional[Tuple[Handler, str]]:
+    return REGISTRY.get(tool_name)
+
+
+def dispatch(tool_name: str, raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    entry = resolve(tool_name)
+    if not entry:
+        return {"profiles": [], "posts": [], "candidates": [], "platforms": []}
+    handler, _kind = entry
+    payload = unwrap_tool_payload(raw)
+    try:
+        return handler(payload, ctx)
+    except Exception as exc:
+        logger.exception("normalizer 失败 tool=%s: %s", tool_name, exc)
+        return {"profiles": [], "posts": [], "candidates": [], "platforms": [], "error": str(exc)}

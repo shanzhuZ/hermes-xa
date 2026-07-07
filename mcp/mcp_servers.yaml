@@ -90,7 +90,7 @@ mcp_servers:
     connect_timeout: 60
 
   playwright:
-    enabled: true
+    enabled: false
     command: D:/environment/node/node_cache/playwright-mcp.cmd
     args:
       - --timeout-navigation

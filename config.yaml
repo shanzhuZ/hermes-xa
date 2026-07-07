@@ -1,8 +1,11 @@
+# 主模型：内网 DeepSeek（172.200.200.4:7000）。试验 Gemini：provider: gemini  default: gemini-2.5-flash
+# 账号采集 MCP 多：关闭 tool_search，避免模型「搜不到工具 / 猜错参数名」（见 docs/账号采集-问题根因分析.md）
+tools:
+  tool_search:
+    enabled: off
 model:
   default: ds
-  provider: custom
-  base_url: http://172.200.200.4:7000/v1
-  api_key: sk-dummy
+  provider: custom:local-ds
   api_mode: chat_completions
 auxiliary:
   vision:
@@ -18,8 +21,15 @@ agent:
   max_turns: 150
   verbose: false
   reasoning_effort: medium
+  # 全局语言：用户中文输入时全程简体中文（进度、说明、报告均不得用英文）
+  system_prompt: |
+    用户用中文与你交流时，你必须全程使用简体中文回复，包括：
+    - 工具调用前的进度说明（步骤 1～6 最多 2 句，用中文）
+    - 中间推理与状态说明
+    - 最终输出报告
+    禁止用英文叙述采集步骤或写英文调查报告。已加载 Skill 时严格遵守其中文输出格式与三节结构。
   personalities:
-    helpful: You are a helpful, friendly AI assistant.
+    helpful: 你是 Hermes 数据采集助手。用户用中文时全程简体中文；遵守已加载 Skill 的步骤与输出格式；禁止英文调查报告体。
     concise: You are a concise assistant. Keep responses brief and to the point.
     technical: You are a technical expert. Provide detailed, accurate technical information.
     creative: You are a creative assistant. Think outside the box and offer innovative
@@ -137,10 +147,9 @@ session_reset:
 group_sessions_per_user: true
 platform_toolsets:
   cli:
-    - browser
+    # 01 采集试验：禁用 web（web_search/web_extract）与 browser（内置浏览器）
     - clarify
     - code_execution
-    - computer_use
     - cronjob
     - delegation
     - file
@@ -152,7 +161,6 @@ platform_toolsets:
     - todo
     - tts
     - vision
-    - web
   telegram:
     - hermes-telegram
   discord:
@@ -261,7 +269,7 @@ mcp_servers:
     connect_timeout: 60
 
   playwright:
-    enabled: true
+    enabled: false
     command: D:/environment/node/node_cache/playwright-mcp.cmd
     args:
       - --timeout-navigation
@@ -381,14 +389,34 @@ mcp_servers:
         - get-channel-stats
         - analyze-channel-videos
 custom_providers:
-  - name: 172.200.200.4:7000
+  - name: google
+    base_url: https://generativelanguage.googleapis.com/v1beta/openai/
+    key_env: GOOGLE_API_KEY
+    api_mode: chat_completions
+    models:
+      gemini-2.0-flash:
+        context_length: 1048576
+      gemini-2.5-flash:
+        context_length: 1048576
+  - name: local-ds
     base_url: http://172.200.200.4:7000/v1
     api_key: sk-dummy
-    model: ds
     api_mode: chat_completions
     models:
       ds:
         context_length: 262144
+# 01 采集入库 Hook（自动写 MySQL，模型无需记 INSERT）
+hooks_auto_accept: true
+hooks:
+  pre_llm_call:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
+  post_tool_call:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
+  on_session_end:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
 known_plugin_toolsets:
   cli:
     - spotify

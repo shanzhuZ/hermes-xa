@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-collect
 description: "01采集@种子。Maigret后MCP/Apify只采主页→流比对→相似账号采发文→一次输出三节。禁画像禁web_search。"
-version: 1.12.0
+version: 1.13.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -13,6 +13,8 @@ metadata:
 
 # 01 · 账号信息采集
 
+**语言**：用户中文输入时，**全程简体中文**（进度、说明、三节报告均不得用英文）。
+
 **数据采集任务**，不是画像。最终只输出三节：`一、个人信息` `二、账号核验依据` `三、发文信息`。
 
 ## 启动（只读 1 个参考）
@@ -21,6 +23,9 @@ metadata:
 
 ## 铁律
 
+0. **工具名**：步骤 2 **只允许** `mcp_maigret_collect_accounts`；**禁止** `search_username` / `search_usernames` / `mcp_maigret_get_prompt`。Twitter 种子 **必须** `mcp_twitter_get_user_info(screen_name=whyyoutouzhele)`，**禁止** `username` 参数（会报错）。调 MCP 前若不确定参数，先看工具 schema，禁止猜参数名。
+0b. **禁止加载** `account-intelligence-profile`（02 画像 Skill）；本任务只做采集，不得 `skill_view` 画像 Skill。
+0c. **禁止 clarify**：步骤 1～7 **必须自动跑完**；步骤 3 之后**不得**问用户「是否跳过 4～7」「先做哪个」。无 OCR/vision 时：文本流照常做，图片流只登记 URL，**继续**步骤 5～7。
 1. **步骤 1～6**：禁止 `web_search` / `web_extract` / `browser_*`；禁止写报告、人物传记、综合介绍
 2. **步骤 1～6**：禁止输出「一、」「二、」「三、」任何内容；最多 2 句进度
 3. **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像

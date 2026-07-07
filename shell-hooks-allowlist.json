@@ -1,0 +1,22 @@
+{
+  "approvals": [
+    {
+      "approved_at": "2026-07-07T01:06:05.152807Z",
+      "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "event": "pre_llm_call",
+      "script_mtime_at_approval": "2026-07-06T12:37:10.811870Z"
+    },
+    {
+      "approved_at": "2026-07-07T01:06:05.169752Z",
+      "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "event": "post_tool_call",
+      "script_mtime_at_approval": "2026-07-06T12:37:10.811870Z"
+    },
+    {
+      "approved_at": "2026-07-07T01:06:05.193672Z",
+      "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "event": "on_session_end",
+      "script_mtime_at_approval": "2026-07-06T12:37:10.811870Z"
+    }
+  ]
+}

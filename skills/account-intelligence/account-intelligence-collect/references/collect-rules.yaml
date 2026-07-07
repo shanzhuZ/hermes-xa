@@ -1,5 +1,7 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.12.0"
+version: "1.13.0"
+
+language: 用户中文输入时全程简体中文；步骤1-6进度与步骤7报告均不得用英文。
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -7,15 +9,23 @@ forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
   output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、]
 
+# 步骤 4～7 必须自动完成，禁止停下来问用户
+mandatory_auto_steps: [4_streams, 5_validated, 6_posts, 7_output]
+never_ask_user: |
+  禁止在步骤 3 之后调用 clarify 询问是否跳过 4～7。
+  无 OCR/vision 时：仍执行文本流比对；图片流仅登记 avatar_url，标为 pending，不得询问用户。
+  步骤 7 必须一次性输出三节，不得因「数据量大」而跳过中间步骤。
+
 steps:
   "1_seed":
-    do: 种子平台 MCP profile（Twitter→get_user_info）
-    forbid: [get_user_tweets, maigret, vision]
+    do: mcp_twitter_get_user_info(screen_name=种子) 或对应平台 profile 工具
+    forbid: [get_user_tweets, maigret, search_username, search_usernames, vision, username参数]
+    twitter_args: 参数名必须是 screen_name 或 user_id，禁止 username
 
   "2_maigret":
     when: 用户说跨平台
-    do: mcp_maigret_collect_accounts(username=种子)
-    forbid: 写报告；follow collect_skill_mode / agent_must_do_next
+    do: mcp_maigret_collect_accounts(username=种子纯用户名，如 whyyoutouzhele)
+    forbid: [search_username, search_usernames, 写报告；follow collect_skill_mode / agent_must_do_next]
 
   "3_profiles":
     do: |
@@ -27,11 +37,13 @@ steps:
     forbid: [get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, 任何报告文字]
 
   "4_streams":
+    mandatory: true
     do: |
+      必须自动执行，禁止 clarify。
       对步骤3成功的账号 + 种子：
       文本流：昵称/handle/简介/互链/邮箱 → 与种子比对 → 表 2.1
-      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze → 表 2.2
-    forbid: [发文工具, 写最终报告]
+      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze；无工具则登记 URL 为 pending，继续后续步骤
+    forbid: [发文工具, 写最终报告, clarify, 询问用户是否跳过]
 
   "5_validated":
     do: validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded
