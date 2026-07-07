@@ -20,6 +20,7 @@ from collect_01.phases import (
     ROOT_STEPS,
     TASK_TYPE,
     PLATFORM_LABELS,
+    initial_steps,
     post_step_key,
     post_step_node,
     post_step_order,
@@ -34,7 +35,7 @@ _COLLECT_INTENT = re.compile(
     re.I,
 )
 _CROSS_YES = re.compile(r"(跨平台|cross.?platform)", re.I)
-_CROSS_NO = re.compile(r"(仅当前平台|不跨平台|单平台)", re.I)
+_CROSS_NO = re.compile(r"(仅当前平台|只采当前平台|只要当前平台|不跨平台|不要跨平台|不需要跨平台|单平台)", re.I)
 _PLATFORM_HINT = re.compile(r"(推特|twitter|微博|weibo|youtube|bilibili)", re.I)
 
 
@@ -130,8 +131,9 @@ class TaskStore:
         new_id = task_id or str(uuid.uuid4())
         seed = _parse_seed(user_message)
         cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
-        if _CROSS_YES.search(user_message or ""):
+        if cross_platform == 1 and _CROSS_YES.search(user_message or ""):
             cross_platform = 1
+        initial_phase_steps = initial_steps(bool(cross_platform))
         with db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -156,7 +158,7 @@ class TaskStore:
                     """,
                     (new_id, session_id, user_message[:65535]),
                 )
-                for step in ROOT_STEPS:
+                for step in initial_phase_steps:
                     cur.execute(
                         """
                         INSERT IGNORE INTO collect_phase_steps
@@ -168,6 +170,12 @@ class TaskStore:
         self.set_step_status(new_id, "step1_seed", "running", message="等待种子账号资料采集…")
         if not cross_platform:
             self.set_step_status(new_id, "step2_cross_platform", "skipped", message="用户未要求跨平台采集")
+            self.set_step_status(new_id, "step3_profiles", "skipped", message="单平台任务，跳过候选主页采集")
+            self.set_step_status(new_id, "step3_streams", "skipped", message="单平台任务，跳过跨平台流拆分")
+            self.set_step_status(new_id, "step4_text_compare", "skipped", message="单平台任务，跳过跨平台文本流比对")
+            self.set_step_status(new_id, "step4_image_compare", "skipped", message="单平台任务，跳过跨平台图片流比对")
+            self.set_step_status(new_id, "step5_validated", "skipped", message="单平台任务，默认种子账号直接进入发文采集")
+            self.set_task_phase(new_id, PHASE_RESOLVE_SEED)
         logger.info("创建采集任务 task_id=%s session=%s", new_id, session_id)
         return new_id
 
@@ -616,7 +624,7 @@ class TaskStore:
         step5 = _step_status(task_id, "step5_validated")
         step6 = _step_status(task_id, "step6_posts")
         step2_ok = step2 in {"completed", "skipped"}
-        step5_ok = step5 == "completed"
+        step5_ok = step5 in {"completed", "skipped"}
         ready_done = step2_ok and step5_ok and (step6 == "completed" or poc > 0)
         db.execute(
             """

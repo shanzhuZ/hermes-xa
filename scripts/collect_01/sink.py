@@ -75,6 +75,11 @@ def _store() -> TaskStore:
     return TaskStore()
 
 
+def _is_cross_platform_task(task_id: str) -> bool:
+    row = _store().get_task(task_id) or {}
+    return int(row.get("cross_platform") or 0) == 1
+
+
 def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optional[str]:
     ex = _extra(payload)
     tid = str(ex.get("task_id") or "").strip()
@@ -241,7 +246,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     store = _store()
 
-    if tool_name in _STEP4_TOOLS:
+    if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
         _enter_step4(store, task_id)
 
     if tool_name == "mcp_maigret_collect_accounts":
@@ -335,7 +340,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             message=f"Maigret 跨平台扫描完成，候选 {n_cand} 条",
         )
 
-    if tool_name in TOOL_POST_PLATFORM and get_step_status(task_id, "step5_validated") != "completed":
+    if _is_cross_platform_task(task_id) and tool_name in TOOL_POST_PLATFORM and get_step_status(task_id, "step5_validated") != "completed":
         _advance_without_image_tools(store, task_id)
 
     post_platform = TOOL_POST_PLATFORM.get(tool_name)
@@ -355,7 +360,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 payload={"post_count": post_count},
             )
 
-    if tool_name in _STEP4_TOOLS:
+    if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
         _on_step4_tool_success(store, task_id)
 
 

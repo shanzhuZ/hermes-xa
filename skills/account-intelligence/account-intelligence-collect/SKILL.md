@@ -26,6 +26,7 @@ metadata:
 0. **工具名**：步骤 2 **只允许** `mcp_maigret_collect_accounts`；**禁止** `search_username` / `search_usernames` / `mcp_maigret_get_prompt`。Twitter 种子 **必须** `mcp_twitter_get_user_info(screen_name=whyyoutouzhele)`，**禁止** `username` 参数（会报错）。调 MCP 前若不确定参数，先看工具 schema，禁止猜参数名。
 0b. **禁止加载** `account-intelligence-profile`（02 画像 Skill）；本任务只做采集，不得 `skill_view` 画像 Skill。
 0c. **禁止 clarify**：步骤 1～7 **必须自动跑完**；步骤 3 之后**不得**问用户「是否跳过 4～7」「先做哪个」。无 OCR/vision 时：文本流照常做，图片流只登记 URL，**继续**步骤 5～7。
+0d. **单平台硬规则**：若用户明确表示“不要/不需要/仅当前平台/单平台/不跨平台”，则**禁止**调用 `mcp_maigret_collect_accounts`，也**禁止**进入候选主页采集。此时只允许 3 步：`1_seed` 种子主页 → `4_streams` 图片/文本分析 → `6_posts` 种子发文采集。
 1. **步骤 1～6**：禁止 `web_search` / `web_extract` / `browser_*`；禁止写报告、人物传记、综合介绍
 2. **步骤 1～6**：禁止输出「一、」「二、」「三、」任何内容；最多 2 句进度
 3. **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
@@ -34,7 +35,7 @@ metadata:
 6. **步骤 6** 才对 `validated_accounts` 采发文
 7. **步骤 7** 一次性按 `collect-rules.yaml` 输出三节
 
-## 六步（硬顺序）
+## 六步（硬顺序，跨平台任务）
 
 | 步 | 动作 |
 |----|------|
@@ -45,6 +46,21 @@ metadata:
 | 5 | `validated_accounts`（相似账号） |
 | 6 | 发文：MCP 或 Apify |
 | 7 | **一次**输出三节 |
+
+## 单平台三步（用户明确不要跨平台时）
+
+| 步 | 动作 |
+|----|------|
+| 1 | 种子 MCP profile |
+| 2 | 种子文本流 + 图片流分析（仅种子，不做候选比对） |
+| 3 | 仅采种子发文，然后输出三节 |
+
+单平台任务中：
+
+- 禁止 Maigret
+- 禁止步骤 3 候选主页采集
+- 禁止生成非种子平台的 `validated_accounts`
+- 禁止采集非种子平台发文
 
 ## 步骤 3 工具对照
 

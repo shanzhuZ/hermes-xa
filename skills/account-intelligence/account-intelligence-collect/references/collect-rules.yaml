@@ -4,6 +4,12 @@ version: "1.13.0"
 language: 用户中文输入时全程简体中文；步骤1-6进度与步骤7报告均不得用英文。
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
+mode_switch: |
+  若用户明确表示“不需要跨平台 / 不要跨平台 / 仅当前平台 / 单平台 / 只采当前平台”，进入 single_platform 模式：
+  - 禁止调用 mcp_maigret_collect_accounts
+  - 禁止采候选主页
+  - 禁止生成候选 validated_accounts
+  - 只执行：种子主页 → 种子图片/文本分析 → 种子发文采集 → 输出三节
 
 forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
@@ -26,6 +32,14 @@ steps:
     when: 用户说跨平台
     do: mcp_maigret_collect_accounts(username=种子纯用户名，如 whyyoutouzhele)
     forbid: [search_username, search_usernames, 写报告；follow collect_skill_mode / agent_must_do_next]
+
+  "2_single_platform_streams":
+    when: 用户明确说不需要跨平台
+    do: |
+      仅对种子账号执行文本流 + 图片流分析：
+      - 文本流：昵称/handle/简介/互链/邮箱，只用于三节报告，不生成候选比对表
+      - 图片流：avatar_url → mcp_ocr_perform_ocr + vision_analyze；远程 URL 失败则下载到本地临时文件再重试 1 次
+    forbid: [mcp_maigret_collect_accounts, mcp_apify_*, mcp_youtube_get_channel_stats, get_user_feeds, 候选主页采集]
 
   "3_profiles":
     do: |
@@ -59,6 +73,16 @@ steps:
       - 微博→get_user_feeds
       - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
     forbid: [web_search]
+
+  "6_single_platform_posts":
+    when: 用户明确说不需要跨平台
+    do: |
+      仅采种子账号发文：
+      - Twitter→get_user_tweets(50)
+      - 微博→get_user_feeds
+      - YouTube 种子→analyze_channel_videos(channelId)
+      禁止任何非种子平台发文采集
+    forbid: [mcp_maigret_collect_accounts, mcp_apify_*, 非种子平台发文采集]
 
   "7_output":
     once: true

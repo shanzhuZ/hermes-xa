@@ -119,6 +119,12 @@ def root_step_keys() -> List[str]:
     return [s.step_key for s in ROOT_STEPS]
 
 
+def initial_steps(cross_platform: bool) -> List[StepDef]:
+    if cross_platform:
+        return list(ROOT_STEPS)
+    return [s for s in ROOT_STEPS if s.step_key in {"step1_seed", "step6_posts"}]
+
+
 def step_phase(step_key: str) -> Optional[str]:
     for s in ROOT_STEPS:
         if s.step_key == step_key:
