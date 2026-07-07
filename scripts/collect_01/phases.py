@@ -22,20 +22,21 @@ class StepDef:
     step_key: str
     title: str
     step_order: int
+    step_node: str
     parent_step_key: Optional[str] = None
     current_phase: Optional[str] = None
 
 
 # 固定步骤树（步骤六的子步骤按平台动态追加）
 ROOT_STEPS: Tuple[StepDef, ...] = (
-    StepDef("step1_seed", "步骤一：种子账号资料采集", 10, None, PHASE_RESOLVE_SEED),
-    StepDef("step2_cross_platform", "步骤二：跨平台账号收集", 20, None, PHASE_CROSS_PLATFORM),
-    StepDef("step3_profiles", "步骤三：候选主页采集", 30, None, PHASE_CROSS_PLATFORM),
-    StepDef("step3_streams", "步骤四：文本流与图片流拆分", 40, None, PHASE_STREAM_GEN),
-    StepDef("step4_text_compare", "步骤四：文本流对比", 41, None, PHASE_STREAM_VALIDATE),
-    StepDef("step4_image_compare", "步骤四：图片流对比", 42, None, PHASE_STREAM_VALIDATE),
-    StepDef("step5_validated", "步骤五：可信账号收敛", 50, None, PHASE_ACCOUNT_FINALIZE),
-    StepDef("step6_posts", "步骤六：分平台发文采集", 60, None, PHASE_COLLECT),
+    StepDef("step1_seed", "步骤一：种子账号资料采集", 10, "1", None, PHASE_RESOLVE_SEED),
+    StepDef("step2_cross_platform", "步骤二：跨平台账号收集", 20, "2", None, PHASE_CROSS_PLATFORM),
+    StepDef("step3_profiles", "步骤三：候选主页采集", 30, "3", None, PHASE_CROSS_PLATFORM),
+    StepDef("step3_streams", "步骤四：文本流与图片流拆分", 40, "4", None, PHASE_STREAM_GEN),
+    StepDef("step4_text_compare", "步骤四：文本流对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
+    StepDef("step4_image_compare", "步骤四：图片流对比", 42, "4.2", None, PHASE_STREAM_VALIDATE),
+    StepDef("step5_validated", "步骤五：可信账号收敛", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
+    StepDef("step6_posts", "步骤六：分平台发文采集", 60, "6", None, PHASE_COLLECT),
 )
 
 PLATFORM_LABELS: Dict[str, str] = {
@@ -48,6 +49,18 @@ PLATFORM_LABELS: Dict[str, str] = {
     "bilibili": "B站",
     "facebook": "Facebook",
     "github": "GitHub",
+}
+
+PLATFORM_STEP_INDEX: Dict[str, int] = {
+    "twitter": 1,
+    "youtube": 2,
+    "weibo": 3,
+    "instagram": 4,
+    "tiktok": 5,
+    "telegram": 6,
+    "facebook": 7,
+    "github": 8,
+    "bilibili": 9,
 }
 
 # 工具 → 触发的步骤（用于自动更新 running/completed）
@@ -88,6 +101,18 @@ def post_step_key(platform: str) -> str:
 def post_step_title(platform: str) -> str:
     label = PLATFORM_LABELS.get(platform, platform)
     return f"{label} 发文采集"
+
+
+def post_step_index(platform: str) -> int:
+    return PLATFORM_STEP_INDEX.get(platform, 90)
+
+
+def post_step_order(platform: str) -> int:
+    return 600 + post_step_index(platform)
+
+
+def post_step_node(platform: str) -> str:
+    return f"6.{post_step_index(platform)}"
 
 
 def root_step_keys() -> List[str]:

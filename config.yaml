@@ -1,33 +1,23 @@
-# 主模型：内网 DeepSeek（172.200.200.4:7000）。试验 Gemini：provider: gemini  default: gemini-2.5-flash
-# 账号采集 MCP 多：关闭 tool_search，避免模型「搜不到工具 / 猜错参数名」（见 docs/账号采集-问题根因分析.md）
-tools:
-  tool_search:
-    enabled: off
 model:
-  default: ds
-  provider: custom:local-ds
+  default: deepseek-v4-flash
+  provider: deepseek
   api_mode: chat_completions
-auxiliary:
-  vision:
-    provider: openai
-    model: Qwen2.5-VL-32B-Instruct
-    base_url: http://172.200.200.1:2015/v1
-    api_key: sk-dummy
-    timeout: 120
-    extra_body: {}
-    download_timeout: 60
 agent:
-  image_input_mode: auto
   max_turns: 150
+  image_input_mode: auto
   verbose: false
   reasoning_effort: medium
-  # 全局语言：用户中文输入时全程简体中文（进度、说明、报告均不得用英文）
-  system_prompt: |
-    用户用中文与你交流时，你必须全程使用简体中文回复，包括：
+  system_prompt: '用户用中文与你交流时，你必须全程使用简体中文回复，包括：
+
     - 工具调用前的进度说明（步骤 1～6 最多 2 句，用中文）
+
     - 中间推理与状态说明
+
     - 最终输出报告
+
     禁止用英文叙述采集步骤或写英文调查报告。已加载 Skill 时严格遵守其中文输出格式与三节结构。
+
+    '
   personalities:
     helpful: 你是 Hermes 数据采集助手。用户用中文时全程简体中文；遵守已加载 Skill 的步骤与输出格式；禁止英文调查报告体。
     concise: You are a concise assistant. Keep responses brief and to the point.
@@ -99,6 +89,14 @@ compression:
   protect_first_n: 3
 prompt_caching:
   cache_ttl: 5m
+auxiliary:
+  vision:
+    provider: openai
+    model: Qwen2.5-VL-32B-Instruct
+    base_url: http://172.200.200.1:2015/v1
+    api_key: sk-dummy
+    timeout: 120
+    download_timeout: 60
 display:
   compact: false
   busy_input_mode: interrupt
@@ -128,13 +126,33 @@ memory:
 delegation:
   max_iterations: 50
 skills:
-  creation_nudge_interval: 0
   write_approval: true
+  creation_nudge_interval: 0
+command_allowlist:
+  - script execution via -e/-c flag
+  - recursive delete
+hooks:
+  pre_llm_call:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
+  post_tool_call:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
+  on_session_end:
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
+hooks_auto_accept: true
 code_execution:
   timeout: 300
   max_tool_calls: 50
+tools:
+  tool_search:
+    enabled: false
 streaming:
   enabled: false
+onboarding:
+  seen:
+    tool_progress_prompt: true
 updates:
   pre_update_backup: false
   backup_keep: 5
@@ -147,7 +165,6 @@ session_reset:
 group_sessions_per_user: true
 platform_toolsets:
   cli:
-    # 01 采集试验：禁用 web（web_search/web_extract）与 browser（内置浏览器）
     - clarify
     - code_execution
     - cronjob
@@ -198,7 +215,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   weixin_search:
     enabled: true
     command: D:/environment/python/Scripts/weixin_search_mcp.exe
@@ -212,7 +228,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   weixin_read:
     enabled: true
     command: D:/environment/python/python.exe
@@ -225,7 +240,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   trends_hub:
     enabled: true
     command: D:/environment/node/node_cache/mcp-trends-hub.cmd
@@ -233,7 +247,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 120
-
   bilibili:
     enabled: true
     command: D:/environment/python/python.exe
@@ -245,7 +258,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   reddit:
     enabled: true
     command: D:/environment/node/node_cache/reddit-mcp-buddy.cmd
@@ -257,7 +269,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   firecrawl:
     enabled: true
     command: D:/environment/node/node_cache/firecrawl-mcp.cmd
@@ -267,7 +278,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   playwright:
     enabled: false
     command: D:/environment/node/node_cache/playwright-mcp.cmd
@@ -281,14 +291,12 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 600
     connect_timeout: 180
-
   brightdata:
     enabled: false
     url: ${BRIGHTDATA_MCP_URL}
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-
   apify:
     enabled: true
     command: D:/environment/node/node_cache/actors-mcp-server.cmd
@@ -304,7 +312,6 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 600
     connect_timeout: 120
-
   maigret:
     enabled: true
     command: D:/environment/python/python.exe
@@ -322,7 +329,6 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 360
     connect_timeout: 120
-
   twitter:
     enabled: true
     command: D:/environment/python/python.exe
@@ -352,7 +358,6 @@ mcp_servers:
         - get_user_following
         - get_trends
         - get_timeline
-
   ocr:
     enabled: true
     command: D:/environment/python/python.exe
@@ -370,7 +375,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 120
     connect_timeout: 120
-
   youtube:
     enabled: true
     command: C:/nvm4w/nodejs/node.exe
@@ -405,21 +409,46 @@ custom_providers:
     models:
       ds:
         context_length: 262144
-# 01 采集入库 Hook（自动写 MySQL，模型无需记 INSERT）
-hooks_auto_accept: true
-hooks:
-  pre_llm_call:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
-  post_tool_call:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
-  on_session_end:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
+      deepseek-v4-flash:
+        context_length: 1000000
 known_plugin_toolsets:
   cli:
     - spotify
-onboarding:
-  seen:
-    tool_progress_prompt: true
+
+# ── Security ──────────────────────────────────────────────────────────
+# Secret redaction is ON by default — strings that look like API keys,
+# tokens, and passwords are masked in tool output, logs, and chat
+# responses before the model or user ever sees them. Set redact_secrets
+# to false to disable (e.g. when developing the redactor itself).
+# tirith pre-exec scanning is enabled by default when the tirith binary
+# is available. Configure via security.tirith_* keys or env vars
+# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
+#
+# security:
+#   redact_secrets: true
+#   tirith_enabled: true
+#   tirith_path: "tirith"
+#   tirith_timeout: 5
+#   tirith_fail_open: true
+
+# ── Fallback Model ────────────────────────────────────────────────────
+# Automatic provider failover when primary is unavailable.
+# Uncomment and configure to enable. Triggers on rate limits (429),
+# overload (529), service errors (503), or connection failures.
+#
+# Supported providers:
+#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
+#   openai-codex (OAuth — hermes auth) — OpenAI Codex
+#   nous         (OAuth — hermes auth) — Nous Portal
+#   zai          (ZAI_API_KEY)         — Z.AI / GLM
+#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
+#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
+#   minimax      (MINIMAX_API_KEY)     — MiniMax
+#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
+#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
+#
+# For custom OpenAI-compatible endpoints, add base_url and key_env.
+#
+# fallback_model:
+#   provider: openrouter
+#   model: anthropic/claude-sonnet-4

@@ -5,10 +5,11 @@ from __future__ import annotations
 import json
 import logging
 import sys
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Optional
 
 from collect_01.config import hermes_home
 from collect_01.db import DbError
+from collect_01.gates import get_step_status
 from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
 from collect_01.phases import (
@@ -22,6 +23,15 @@ from collect_01.task_store import TaskStore, is_collect_intent
 _LOG_DIR = hermes_home() / "logs"
 _LOG_FILE = _LOG_DIR / "collect_01_sink.log"
 logger = logging.getLogger(__name__)
+
+# 记录最近一次 Apify Actor，供 get_dataset_items 推断平台
+_LAST_APIFY_HINT: Dict[str, str] = {}
+# 不参与业务步骤推进的工具
+_SKIP_STEP_TOOLS = frozenset({"skill_view", "clarify", "tool_search", "describe_tool", "todo", "terminal"})
+# 步骤四入口工具（首次调用时收口步骤三）
+_STEP4_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
+# 每个任务已处理的工具调用（防重）
+_SEEN_TOOL_CALLS: set = set()
 
 
 def _setup_logging() -> None:
@@ -42,13 +52,6 @@ def _setup_logging() -> None:
 
 
 _setup_logging()
-
-# 记录最近一次 Apify Actor，供 get_dataset_items 推断平台
-_LAST_APIFY_HINT: Dict[str, str] = {}
-# 不参与业务步骤推进的工具
-_SKIP_STEP_TOOLS = frozenset({"skill_view", "clarify", "tool_search", "describe_tool"})
-# 每个任务已处理的工具调用（防重）
-_SEEN_TOOL_CALLS: set = set()
 
 
 def handle_event(payload: Dict[str, Any]) -> None:
@@ -88,7 +91,6 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
     msg = (user_message or str(ex.get("user_message") or "")).strip()
     if msg and is_collect_intent(msg):
         return store.ensure_task(session_id=session_id, user_message=msg)
-    # post_tool 兜底：pre_llm 失败时，仅从 MCP 参数推断种子（禁止「自动补建」脏任务）
     tool_name = str(payload.get("tool_name") or "")
     if session_id and tool_name.startswith("mcp_"):
         tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
@@ -111,8 +113,12 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
         if not task_id:
             return
         store = _store()
-        store.set_step_status(task_id, "step1_seed", "running", message="等待种子账号资料采集…")
-        # 仅首轮写入用户原话，避免每轮 pre_llm 重复插 dialogue
+        if get_step_status(task_id, "step1_seed") not in {"completed", "running"}:
+            store.set_step_status(task_id, "step1_seed", "running", message="等待种子账号资料采集…")
+        task = store.get_task(task_id) or {}
+        if int(task.get("cross_platform") or 0) == 1:
+            if get_step_status(task_id, "step2_cross_platform") not in {"completed", "running", "skipped"}:
+                store.set_step_status(task_id, "step2_cross_platform", "running", message="等待 Maigret 跨平台扫描…")
         if ex.get("is_first_turn"):
             store.save_dialogue(
                 task_id,
@@ -123,6 +129,92 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
             )
     except DbError as exc:
         logger.warning("%s", exc)
+
+
+def _mark_step3_closed(store: TaskStore, task_id: str) -> None:
+    """进入步骤四时收口步骤三（仅首次）。"""
+    if get_step_status(task_id, "step3_profiles") != "completed":
+        store.set_step_status(
+            task_id,
+            "step3_profiles",
+            "completed",
+            message="进入步骤四，候选主页采集结束",
+        )
+
+
+def _enter_step4(store: TaskStore, task_id: str) -> None:
+    """首次 OCR/Vision：收口步骤三，启动步骤四子步骤（不提前 completed）。"""
+    _mark_step3_closed(store, task_id)
+    if get_step_status(task_id, "step3_streams") == "pending":
+        store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中")
+    if get_step_status(task_id, "step4_image_compare") == "pending":
+        store.set_step_status(task_id, "step4_image_compare", "running", message="图片流 OCR/Vision 比对中")
+
+
+def _on_step4_tool_success(store: TaskStore, task_id: str) -> None:
+    """OCR/Vision 成功后按头像进度更新图片比对；全部就绪后再推进文本比对与步骤五。"""
+    from collect_01.gates import count_image_streams, count_step4_tool_success, is_image_compare_ready
+
+    n_img = count_image_streams(task_id)
+    n_done = count_step4_tool_success(task_id)
+    if not is_image_compare_ready(task_id):
+        store.set_step_status(
+            task_id,
+            "step4_image_compare",
+            "running",
+            message=f"图片流比对中 {n_done}/{n_img}",
+        )
+        return
+    if get_step_status(task_id, "step4_image_compare") != "completed":
+        msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 OCR/Vision 完成 ({n_done}/{n_img})"
+        store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+    _advance_text_and_validate(store, task_id)
+
+
+def _advance_text_and_validate(store: TaskStore, task_id: str) -> None:
+    """图片比对完成后：文本流比对 → 流拆分收口 → 可信账号收敛。"""
+    from collect_01.gates import can_advance_to_step45
+
+    gate = can_advance_to_step45(task_id)
+    if not gate.get("ok"):
+        logger.info("跳过流水线推进 task=%s: %s", task_id, gate.get("message"))
+        return
+    if get_step_status(task_id, "step4_image_compare") != "completed":
+        return
+    if get_step_status(task_id, "step4_text_compare") != "completed":
+        store.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
+        store.run_text_compare(task_id)
+    if get_step_status(task_id, "step3_streams") != "completed":
+        store.set_step_status(task_id, "step3_streams", "completed", message="文本/图片流拆分完成")
+    if get_step_status(task_id, "step5_validated") != "completed":
+        store.run_validated_accounts(task_id)
+
+
+def _advance_without_image_tools(store: TaskStore, task_id: str) -> None:
+    """未调用 OCR/Vision 时的兜底：图片流保持 pending，仅推进文本比对与步骤五。"""
+    from collect_01.gates import can_advance_to_step45
+
+    _mark_step3_closed(store, task_id)
+    gate = can_advance_to_step45(task_id)
+    if not gate.get("ok"):
+        logger.info("跳过无图像工具兜底推进 task=%s: %s", task_id, gate.get("message"))
+        return
+    if get_step_status(task_id, "step3_streams") == "pending":
+        store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中（未调用 OCR/Vision）")
+    if get_step_status(task_id, "step4_image_compare") == "pending":
+        store.set_step_status(task_id, "step4_image_compare", "pending", message="未调用 OCR/Vision，头像图片流保留 pending")
+    if get_step_status(task_id, "step4_text_compare") != "completed":
+        store.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
+        store.run_text_compare(task_id)
+    if get_step_status(task_id, "step3_streams") != "completed":
+        store.set_step_status(task_id, "step3_streams", "completed", message="文本流拆分完成，图片流待补充 OCR/Vision")
+    if get_step_status(task_id, "step5_validated") != "completed":
+        store.run_validated_accounts(task_id)
+
+
+def _maybe_advance_pipeline(store: TaskStore, task_id: str) -> None:
+    """兼容旧调用；须 step4_image_compare 已 completed。"""
+    _advance_text_and_validate(store, task_id)
 
 
 def _on_post_tool(payload: Dict[str, Any]) -> None:
@@ -144,15 +236,23 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         )
         return
 
-    store = _store()
     if tool_name in _SKIP_STEP_TOOLS:
-        if tool_name == "clarify":
-            logger.warning("采集任务禁止 clarify，模型仍调用了 clarify session=%s", payload.get("session_id"))
         return
+
+    store = _store()
+
+    if tool_name in _STEP4_TOOLS:
+        _enter_step4(store, task_id)
+
+    if tool_name == "mcp_maigret_collect_accounts":
+        logger.info("maigret post_tool task=%s call_id=%s", task_id, tool_call_id or "(none)")
 
     step_key = TOOL_PRIMARY_STEP.get(tool_name)
     if step_key:
-        store.set_step_status(task_id, step_key, "running", message=f"执行 {tool_name}")
+        cur = get_step_status(task_id, step_key)
+        if cur not in {"completed", "failed", "skipped"}:
+            label = "Maigret 跨平台扫描中" if tool_name == "mcp_maigret_collect_accounts" else f"执行 {tool_name}"
+            store.set_step_status(task_id, step_key, "running", message=label)
 
     tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     result = ex.get("result")
@@ -178,16 +278,17 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             mcp_server=infer_mcp_server(tool_name),
         )
     except DbError as exc:
-        logger.warning("%s", exc)
+        logger.warning("写 tool_outputs 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
+        return
+    except Exception as exc:
+        logger.exception("写 tool_outputs 异常 tool=%s task=%s: %s", tool_name, task_id, exc)
         return
 
     if tool_call_id:
         _SEEN_TOOL_CALLS.add(tool_call_id)
 
-    # Apify Actor 上下文
     if tool_name in APIFY_POST_TOOLS:
-        hint = tool_name.replace("mcp_apify_", "")
-        _LAST_APIFY_HINT[task_id] = hint
+        _LAST_APIFY_HINT[task_id] = tool_name.replace("mcp_apify_", "")
 
     ctx: Dict[str, Any] = {
         "task_id": task_id,
@@ -199,51 +300,69 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     }
 
     if status != "success":
-        if step_key:
+        if tool_name in _STEP4_TOOLS:
+            store.set_step_status(
+                task_id,
+                "step4_image_compare",
+                "pending",
+                message=str(ex.get("error_message") or "图片 OCR/Vision 失败")[:500],
+            )
+        elif step_key and get_step_status(task_id, step_key) == "running":
             store.set_step_status(task_id, step_key, "failed", message=ex.get("error_message") or "工具失败")
         return
 
-    result_data = dispatch(tool_name, tool_output, ctx)
+    result_data: Dict[str, Any] = {"profiles": [], "posts": [], "candidates": [], "platforms": []}
+    try:
+        result_data = dispatch(tool_name, tool_output, ctx)
+    except Exception as exc:
+        logger.exception("normalizer 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
+        if tool_name != "mcp_maigret_collect_accounts":
+            return
+
     _persist_normalized(store, task_id, result_data)
+    _update_steps_after_tool(store, task_id, tool_name, result_data)
 
-    _update_steps_after_tool(store, task_id, tool_name, step_key, result_data)
+    if result_data.get("profiles"):
+        for prof in result_data["profiles"]:
+            store.build_streams_from_profile(task_id, prof)
 
-    # 子步骤：分平台发文（步骤三 profile 阶段的 dataset 不得误标 step6 完成）
+    if tool_name == "mcp_maigret_collect_accounts":
+        n_cand = len(result_data.get("candidates") or [])
+        store.set_step_status(
+            task_id,
+            "step2_cross_platform",
+            "completed",
+            message=f"Maigret 跨平台扫描完成，候选 {n_cand} 条",
+        )
+
+    if tool_name in TOOL_POST_PLATFORM and get_step_status(task_id, "step5_validated") != "completed":
+        _advance_without_image_tools(store, task_id)
+
     post_platform = TOOL_POST_PLATFORM.get(tool_name)
     if not post_platform and tool_name == "mcp_apify_get_dataset_items":
         plats = result_data.get("platforms") or []
         post_platform = plats[0] if plats else None
     post_count = len(result_data.get("posts") or [])
-    if post_platform and (tool_name in TOOL_POST_PLATFORM or post_count > 0):
+    if post_platform and tool_name in TOOL_POST_PLATFORM:
         child = post_step_key(post_platform)
         store.ensure_post_steps(task_id, [post_platform])
-        child_status = "completed" if post_count > 0 else "pending"
-        store.set_step_status(
-            task_id,
-            child,
-            child_status,
-            message=f"已采集 {post_platform} 发文 {post_count} 条",
-            payload={"post_count": post_count},
-        )
+        if post_count > 0:
+            store.set_step_status(
+                task_id,
+                child,
+                "completed",
+                message=f"已采集 {post_platform} 发文 {post_count} 条",
+                payload={"post_count": post_count},
+            )
 
-    # 步骤三～五：profile / 候选入库后触发规则流水线
-    if result_data.get("profiles"):
-        for prof in result_data["profiles"]:
-            store.build_streams_from_profile(task_id, prof)
-    if tool_name == "mcp_maigret_collect_accounts":
-        store.set_step_status(task_id, "step2_cross_platform", "completed", message="Maigret 跨平台扫描完成")
-    if tool_name in {"mcp_ocr_perform_ocr", "mcp_vision_analyze"}:
-        store.set_step_status(task_id, "step4_image_compare", "running")
-        store.set_step_status(task_id, "step4_image_compare", "completed", message="图片流 OCR/Vision 完成")
-
-    _maybe_advance_pipeline(store, task_id)
+    if tool_name in _STEP4_TOOLS:
+        _on_step4_tool_success(store, task_id)
 
 
 def _update_steps_after_tool(
     store: TaskStore,
     task_id: str,
     tool_name: str,
-    step_key: Optional[str],
     result_data: Dict[str, Any],
 ) -> None:
     if tool_name == "mcp_twitter_get_user_info":
@@ -251,28 +370,14 @@ def _update_steps_after_tool(
         return
     if tool_name == "mcp_maigret_collect_accounts":
         return
+    step_key = TOOL_PRIMARY_STEP.get(tool_name)
     if step_key == "step3_profiles":
         n_prof = len(result_data.get("profiles") or [])
-        n_post = len(result_data.get("posts") or [])
-        if n_prof or n_post:
-            store.set_step_status(
-                task_id,
-                "step3_profiles",
-                "completed",
-                message=f"{tool_name} 完成，profile {n_prof} 条",
-            )
-        elif tool_name == "mcp_apify_get_dataset_items":
-            store.set_step_status(
-                task_id,
-                "step3_profiles",
-                "running",
-                message=f"{tool_name} 无 profile 数据，已记录",
-            )
-        else:
-            store.set_step_status(task_id, step_key, "completed", message=f"{tool_name} 完成")
-        return
-    if step_key:
-        store.set_step_status(task_id, step_key, "completed", message=f"{tool_name} 完成")
+        msg = f"{tool_name} 执行中"
+        if n_prof:
+            msg = f"{tool_name} 已入库 profile {n_prof} 条"
+        if get_step_status(task_id, "step3_profiles") != "completed":
+            store.set_step_status(task_id, "step3_profiles", "running", message=msg)
 
 
 def _persist_normalized(store: TaskStore, task_id: str, data: Dict[str, Any]) -> None:
@@ -283,36 +388,6 @@ def _persist_normalized(store: TaskStore, task_id: str, data: Dict[str, Any]) ->
     posts = data.get("posts") or []
     if posts:
         store.save_post_rows(posts)
-    plats = data.get("platforms") or []
-    if plats:
-        store.ensure_post_steps(task_id, plats)
-
-
-def _maybe_advance_pipeline(store: TaskStore, task_id: str) -> None:
-    """在有关键数据后自动推进文本比对与可信账号收敛。"""
-    from collect_01 import db
-
-    task = store.get_task(task_id) or {}
-    seed = {}
-    try:
-        import json as _json
-
-        seed = _json.loads(task.get("seed_json") or "{}")
-    except Exception:
-        pass
-    seed_platform = seed.get("platform", "twitter")
-    seed_profile = db.fetch_one(
-        "SELECT 1 AS ok FROM collect_profiles WHERE task_id=%s AND platform=%s LIMIT 1",
-        (task_id, seed_platform),
-    )
-    if not seed_profile:
-        logger.info("跳过流水线推进：种子平台 %s 尚无 profile task=%s", seed_platform, task_id)
-        return
-    n = db.fetch_one("SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,))
-    if int((n or {}).get("c") or 0) < 1:
-        return
-    store.run_text_compare(task_id)
-    store.run_validated_accounts(task_id)
 
 
 def _on_turn_end(payload: Dict[str, Any]) -> None:
@@ -334,7 +409,6 @@ def _extract_account_id(tool_args: Dict[str, Any]) -> Optional[str]:
 
 
 def _read_stdin() -> str:
-    """读取 Hermes Hook stdin。Windows 下父进程 subprocess text=True 常为 GBK。"""
     if hasattr(sys.stdin, "buffer"):
         data = sys.stdin.buffer.read()
     else:
@@ -352,7 +426,11 @@ def main() -> int:
         raw = _read_stdin()
         if not raw.strip():
             return 0
-        payload = json.loads(raw)
+        try:
+            payload = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            logger.error("hook JSON 解析失败 len=%s err=%s", len(raw), exc)
+            return 1
         if isinstance(payload, dict):
             handle_event(payload)
     except DbError as exc:

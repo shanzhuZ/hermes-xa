@@ -42,7 +42,9 @@ steps:
       必须自动执行，禁止 clarify。
       对步骤3成功的账号 + 种子：
       文本流：昵称/handle/简介/互链/邮箱 → 与种子比对 → 表 2.1
-      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze；无工具则登记 URL 为 pending，继续后续步骤
+      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze。
+      若 vision_analyze 直接传远程 URL 失败：先下载头像到本地临时文件，再用本地文件路径重试 1 次；仍失败则登记 avatar_url 并标记为 pending / 403 / invalid_source，继续后续步骤。
+      无工具则登记 URL 为 pending，继续后续步骤
     forbid: [发文工具, 写最终报告, clarify, 询问用户是否跳过]
 
   "5_validated":

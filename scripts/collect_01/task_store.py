@@ -13,6 +13,7 @@ from typing import Any, Dict, List, Optional
 from collect_01 import db
 from collect_01.phases import (
     PHASE_COLLECT,
+    PHASE_ACCOUNT_FINALIZE,
     PHASE_CROSS_PLATFORM,
     PHASE_DONE,
     PHASE_RESOLVE_SEED,
@@ -20,6 +21,8 @@ from collect_01.phases import (
     TASK_TYPE,
     PLATFORM_LABELS,
     post_step_key,
+    post_step_node,
+    post_step_order,
     post_step_title,
     step_phase,
 )
@@ -74,6 +77,14 @@ def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
     """stream_id 列 VARCHAR(64)，超长 account_id 用摘要。"""
     digest = hashlib.md5(f"{task_id}:{platform}:{account_id}".encode("utf-8")).hexdigest()[:16]
     return f"{task_id[:8]}:{platform[:8]}:{digest}"
+
+
+def _step_status(task_id: str, step_key: str) -> str:
+    row = db.fetch_one(
+        "SELECT status FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+        (task_id, step_key),
+    )
+    return str((row or {}).get("status") or "").strip() or "pending"
 
 
 class TaskStore:
@@ -149,12 +160,14 @@ class TaskStore:
                     cur.execute(
                         """
                         INSERT IGNORE INTO collect_phase_steps
-                          (task_id, step_key, parent_step_key, step_order, title, status)
-                        VALUES (%s, %s, %s, %s, %s, 'pending')
+                          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                         """,
-                        (new_id, step.step_key, step.parent_step_key, step.step_order, step.title),
+                        (new_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
                     )
         self.set_step_status(new_id, "step1_seed", "running", message="等待种子账号资料采集…")
+        if not cross_platform:
+            self.set_step_status(new_id, "step2_cross_platform", "skipped", message="用户未要求跨平台采集")
         logger.info("创建采集任务 task_id=%s session=%s", new_id, session_id)
         return new_id
 
@@ -181,24 +194,23 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, title, status)
-                VALUES (%s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, step.step_key, step.parent_step_key, step.step_order, step.title),
+                (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
             )
 
     def ensure_post_steps(self, task_id: str, platforms: List[str]) -> None:
         parent = "step6_posts"
-        order_base = 610
-        for i, platform in enumerate(sorted(set(platforms))):
+        for platform in sorted(set(platforms), key=post_step_order):
             key = post_step_key(platform)
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, title, status)
-                VALUES (%s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, key, parent, order_base + i, post_step_title(platform)),
+                (task_id, key, parent, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
             )
 
     def set_task_phase(self, task_id: str, phase: str) -> None:
@@ -218,12 +230,23 @@ class TaskStore:
         progress_pct: Optional[int] = None,
     ) -> None:
         self.ensure_step_row(task_id, step_key)
+        current = db.fetch_one(
+            "SELECT status, finished_at FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+            (task_id, step_key),
+        )
+        cur_status = str((current or {}).get("status") or "")
+
         fields = ["status=%s", "updated_at=NOW(3)"]
         params: List[Any] = [status]
         if status == "running":
             fields.append("started_at=COALESCE(started_at, NOW(3))")
-        if status in {"completed", "failed", "skipped"}:
-            fields.append("finished_at=NOW(3)")
+            if cur_status in {"completed", "failed", "skipped"}:
+                fields.append("finished_at=NULL")
+        elif status == "pending":
+            fields.append("finished_at=NULL")
+        elif status in {"completed", "failed", "skipped"}:
+            # 终态时间只写一次，避免后续流程把 finished_at 往后推造成「假顺序」
+            fields.append("finished_at=COALESCE(finished_at, NOW(3))")
         if message is not None:
             fields.append("message=%s")
             params.append(message[:2000])
@@ -249,10 +272,10 @@ class TaskStore:
                 db.execute(
                     """
                     INSERT IGNORE INTO collect_phase_steps
-                      (task_id, step_key, parent_step_key, step_order, title, status)
-                    VALUES (%s, %s, %s, %s, %s, 'pending')
+                      (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                     """,
-                    (task_id, step.step_key, step.parent_step_key, step.step_order, step.title),
+                    (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
                 )
                 return
         if step_key.startswith("step6_post_"):
@@ -260,10 +283,10 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, title, status)
-                VALUES (%s, %s, 'step6_posts', %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                VALUES (%s, %s, 'step6_posts', %s, %s, %s, 'pending')
                 """,
-                (task_id, step_key, 610, post_step_title(platform)),
+                (task_id, step_key, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
             )
 
     def save_tool_output(
@@ -408,15 +431,10 @@ class TaskStore:
                 """,
                 (sid, task_id, platform, account_id, avatar),
             )
-        self.set_step_status(
-            task_id,
-            "step3_streams",
-            "completed",
-            message=f"已从 {PLATFORM_LABELS.get(platform, platform)} 资料拆分文本/图片流",
-        )
+        # 仅写 collect_identity_streams，不更新步骤状态（避免 step1 期间误亮「步骤四：流拆分」）
 
     def run_text_compare(self, task_id: str) -> None:
-        """步骤四：文本流与种子简单比对（规则，不依赖模型）。"""
+        """步骤四：文本流与种子比对（规则，不依赖模型）。"""
         task = self.get_task(task_id)
         if not task:
             return
@@ -426,6 +444,7 @@ class TaskStore:
         except json.JSONDecodeError:
             pass
         seed_platform = seed.get("platform", "twitter")
+        seed_handle = (seed.get("account_handle") or seed.get("account_hint") or "").lower().strip().lstrip("@")
         seed_rows = db.fetch_all(
             """
             SELECT * FROM collect_identity_streams
@@ -451,10 +470,34 @@ class TaskStore:
         )
         matched = 0
         for row in all_text:
-            text = (row.get("payload_text") or "").lower()
+            platform = row.get("source_platform") or ""
+            field = row.get("source_field") or ""
+            text = (row.get("payload_text") or "").lower().strip()
             if not text:
                 continue
-            status = "pass" if (not seed_text or text in seed_text or seed_text in text) else "fail"
+            if platform == seed_platform:
+                status = "pass"
+            elif field == "account_handle":
+                # handle 仅允许精确匹配，禁止子串误伤（如 tiktok 空号同名 handle）
+                status = "pass" if seed_handle and text.lstrip("@") == seed_handle else "fail"
+            elif field in ("display_name", "bio"):
+                seed_vals = [
+                    (r.get("payload_text") or "").lower().strip()
+                    for r in seed_rows
+                    if r.get("source_field") == field
+                ]
+                status = "fail"
+                for sv in seed_vals:
+                    if not sv or len(text) < 2:
+                        continue
+                    if text == sv:
+                        status = "pass"
+                        break
+                    if len(text) >= 4 and len(sv) >= 4 and (text in sv or sv in text):
+                        status = "pass"
+                        break
+            else:
+                status = "fail"
             if status == "pass":
                 matched += 1
             db.execute(
@@ -490,13 +533,21 @@ class TaskStore:
             is_seed = int(platform == seed_platform)
             streams = db.fetch_all(
                 """
-                SELECT stream_id, validation_status FROM collect_identity_streams
+                SELECT stream_id, validation_status, source_field FROM collect_identity_streams
                 WHERE task_id=%s AND source_platform=%s AND source_account_id=%s
                 """,
                 (task_id, platform, account_id),
             )
             passes = [s for s in streams if s.get("validation_status") == "pass"]
-            verdict = "validated" if is_seed or passes else "insufficient"
+            substantive = [
+                s for s in passes if s.get("source_field") in ("display_name", "bio")
+            ]
+            if is_seed:
+                verdict = "validated"
+            elif substantive:
+                verdict = "validated"
+            else:
+                verdict = "insufficient"
             if verdict == "validated":
                 platforms_for_posts.append(platform)
                 count += 1
@@ -519,6 +570,21 @@ class TaskStore:
             )
         if platforms_for_posts:
             self.ensure_post_steps(task_id, platforms_for_posts)
+        keep_keys = {post_step_key(p) for p in platforms_for_posts}
+        existing_post_steps = db.fetch_all(
+            """
+            SELECT step_key, status FROM collect_phase_steps
+            WHERE task_id=%s AND parent_step_key='step6_posts'
+            """,
+            (task_id,),
+        )
+        for row in existing_post_steps:
+            step_key = str(row.get("step_key") or "")
+            if not step_key or step_key in keep_keys:
+                continue
+            status = str(row.get("status") or "")
+            if status not in {"completed", "skipped"}:
+                self.set_step_status(step_key=step_key, task_id=task_id, status="skipped", message="未纳入可信账号，跳过该平台发文采集")
         self.set_step_status(
             task_id,
             "step5_validated",
@@ -546,6 +612,12 @@ class TaskStore:
             (task_id,),
         )
         platforms = [r["platform"] for r in plats]
+        step2 = _step_status(task_id, "step2_cross_platform")
+        step5 = _step_status(task_id, "step5_validated")
+        step6 = _step_status(task_id, "step6_posts")
+        step2_ok = step2 in {"completed", "skipped"}
+        step5_ok = step5 == "completed"
+        ready_done = step2_ok and step5_ok and (step6 == "completed" or poc > 0)
         db.execute(
             """
             INSERT INTO collect_task_summaries
@@ -565,14 +637,25 @@ class TaskStore:
                 pc,
                 poc,
                 db.json_dumps(platforms),
-                f"采集完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文",
+                (
+                    f"采集完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
+                    if ready_done
+                    else f"采集未收口：step2={step2}，step5={step5}，当前 {pc} 条资料，{poc} 条发文"
+                ),
             ),
-        )
-        db.execute(
-            "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=NOW(3) WHERE task_id=%s",
-            (PHASE_DONE, task_id),
         )
         if poc > 0:
             self.set_step_status(task_id, "step6_posts", "completed", message=f"分平台发文采集结束，共 {poc} 条")
         else:
             self.set_step_status(task_id, "step6_posts", "pending", message="未采集到发文，步骤六未完成")
+        if ready_done:
+            db.execute(
+                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s",
+                (PHASE_DONE, task_id),
+            )
+        else:
+            current_phase = PHASE_ACCOUNT_FINALIZE if not step5_ok else PHASE_COLLECT
+            db.execute(
+                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s",
+                (current_phase, task_id),
+            )

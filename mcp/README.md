@@ -49,7 +49,7 @@ pip install mcp-server-weibo weixin_search_mcp
 ### 2. Node 全局包（若 cmd 不存在）
 
 ```powershell
-npm install -g mcp-trends-hub @anthropic/mcp-reddit firecrawl-mcp @playwright/mcp @apify/actors-mcp-server
+npm install -g mcp-trends-hub reddit-mcp-buddy firecrawl-mcp @playwright/mcp @apify/actors-mcp-server
 ```
 
 （实际包名以本机 `D:\environment\node\node_cache\*.cmd` 为准。）

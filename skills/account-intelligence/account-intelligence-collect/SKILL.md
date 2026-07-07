@@ -30,7 +30,7 @@ metadata:
 2. **步骤 1～6**：禁止输出「一、」「二、」「三、」任何内容；最多 2 句进度
 3. **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
 4. **步骤 3 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具
-5. **步骤 4** 必须 OCR+vision（有头像）+ 2.1/2.2 表数据
+5. **步骤 4** 必须 OCR+vision（有头像）+ 2.1/2.2 表数据；若 `vision_analyze(image_url=远程URL)` 失败，先下载到本地临时文件，再用本地路径重试 1 次
 6. **步骤 6** 才对 `validated_accounts` 采发文
 7. **步骤 7** 一次性按 `collect-rules.yaml` 输出三节
 

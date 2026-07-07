@@ -39,7 +39,7 @@ def normalize_profile(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
 
 def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     data = raw if isinstance(raw, dict) else {}
-    tweets = data.get("tweets") or data.get("data") or data.get("items") or []
+    tweets = raw if isinstance(raw, list) else (data.get("tweets") or data.get("data") or data.get("items") or [])
     if isinstance(tweets, dict):
         tweets = tweets.get("tweets") or tweets.get("items") or []
     account_id = first_str(
