@@ -391,7 +391,7 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
   server.tool(
     'get-channel-stats',
     youtubeCollectMode
-      ? '【01采集-仅步骤3】频道 profile：标题、订阅、头像 URL 等。禁止步骤3调用 analyze-channel-videos。'
+      ? '获取 YouTube 频道主页信息，包括标题、订阅数、视频数、总播放量、创建时间、头像 URL 等基础资料。'
       : 'Get statistical information for a specific YouTube channel (subscriber count, total views, video count, etc.)',
     {
       channelId: z.string().min(1)
@@ -568,7 +568,7 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
   server.tool(
     'analyze-channel-videos',
     youtubeCollectMode
-      ? '【01采集-仅步骤6】采频道近期视频发文列表。禁止在步骤3-5调用；步骤3只用 get-channel-stats。'
+      ? '获取 YouTube 频道近期视频列表及其统计信息，可用于发文采集、内容分析和活跃度观察。'
       : 'Analyze recent videos from a specific channel to identify performance trends',
     {
       channelId: z.string().min(1),

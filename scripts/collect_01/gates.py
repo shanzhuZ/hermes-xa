@@ -74,24 +74,25 @@ def count_image_streams(task_id: str) -> int:
     return int((row or {}).get("c") or 0)
 
 
-def count_step4_tool_success(task_id: str) -> int:
+def count_image_streams_processed(task_id: str) -> int:
+    """已处理（含失败）的图片流数量。"""
     row = db.fetch_one(
-        f"""
-        SELECT COUNT(*) AS c FROM hermes_tool_outputs
-        WHERE task_id=%s AND tool_name IN ({",".join("%s" for _ in _STEP4_TOOL_NAMES)})
-          AND status='success'
+        """
+        SELECT COUNT(*) AS c FROM collect_identity_streams
+        WHERE task_id=%s AND stream_type='image'
+          AND validation_status IN ('processed', 'pass', 'fail')
         """,
-        (task_id, *_STEP4_TOOL_NAMES),
+        (task_id,),
     )
     return int((row or {}).get("c") or 0)
 
 
 def is_image_compare_ready(task_id: str) -> bool:
-    """每个头像图片流至少一次 OCR/Vision 成功；无图片流则视为已就绪。"""
+    """每条图片流均已完成 Vision 处理（成功或失败）；无图片流则视为已就绪。"""
     n_img = count_image_streams(task_id)
     if n_img == 0:
         return True
-    return count_step4_tool_success(task_id) >= n_img
+    return count_image_streams_processed(task_id) >= n_img
 
 
 def can_advance_to_step45(task_id: str) -> Dict[str, Any]:

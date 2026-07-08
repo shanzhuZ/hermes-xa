@@ -18,7 +18,7 @@ from collect_01.phases import (
     TOOL_PRIMARY_STEP,
     post_step_key,
 )
-from collect_01.task_store import TaskStore, is_collect_intent
+from collect_01.task_store import TaskStore, is_collect_intent, is_three_section_report
 
 _LOG_DIR = hermes_home() / "logs"
 _LOG_FILE = _LOG_DIR / "collect_01_sink.log"
@@ -60,8 +60,10 @@ def handle_event(payload: Dict[str, Any]) -> None:
         _on_pre_llm(payload)
     elif event == "post_tool_call":
         _on_post_tool(payload)
-    elif event in {"post_llm_call", "on_session_end"}:
-        _on_turn_end(payload)
+    elif event == "post_llm_call":
+        _on_post_llm_call(payload)
+    elif event == "on_session_end":
+        _on_session_end(payload)
     else:
         return
 
@@ -80,14 +82,45 @@ def _is_cross_platform_task(task_id: str) -> bool:
     return int(row.get("cross_platform") or 0) == 1
 
 
+def _java_task_id_from_session_key(payload: Dict[str, Any]) -> Optional[str]:
+    """解析 X-Hermes-Session-Key: task:{java_task_id}（不要求已落库）。"""
+    ex = _extra(payload)
+    for key in ("gateway_session_key", "session_key"):
+        raw = str(ex.get(key) or "").strip()
+        if raw.startswith("task:"):
+            tid = raw[5:].strip()
+            if tid:
+                return tid
+    return None
+
+
 def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optional[str]:
     ex = _extra(payload)
-    tid = str(ex.get("task_id") or "").strip()
     session_id = str(payload.get("session_id") or "").strip()
     store = _store()
+
+    java_tid = _java_task_id_from_session_key(payload)
+    if java_tid:
+        row = store.get_task(java_tid)
+        if row:
+            if session_id:
+                store.bind_session(java_tid, session_id)
+            return java_tid
+        msg = (user_message or str(ex.get("user_message") or "")).strip()
+        if msg and is_collect_intent(msg):
+            return store.ensure_task(session_id=session_id, user_message=msg, task_id=java_tid)
+        if session_id:
+            store.bind_session(java_tid, session_id)
+        return java_tid
+
+    tid = str(ex.get("task_id") or "").strip()
+    # Gateway api_server 把 effective_task_id 设为 session_id；Java 用 taskId 建 session 时二者相同
+    preset_tid = tid if tid and session_id and tid == session_id else None
     if tid:
         row = store.get_task(tid)
         if row:
+            if session_id and row.get("session_id") != session_id:
+                store.bind_session(tid, session_id)
             return row["task_id"]
     if session_id:
         row = store.get_task_by_session(session_id)
@@ -95,14 +128,14 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
             return row["task_id"]
     msg = (user_message or str(ex.get("user_message") or "")).strip()
     if msg and is_collect_intent(msg):
-        return store.ensure_task(session_id=session_id, user_message=msg)
+        return store.ensure_task(session_id=session_id, user_message=msg, task_id=preset_tid)
     tool_name = str(payload.get("tool_name") or "")
     if session_id and tool_name.startswith("mcp_"):
         tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
         handle = _extract_account_id(tool_args) or ""
         if handle:
             seed_msg = f"account-intelligence-collect 采集 @{handle}"
-            return store.ensure_task(session_id=session_id, user_message=seed_msg)
+            return store.ensure_task(session_id=session_id, user_message=seed_msg, task_id=preset_tid)
     return None
 
 
@@ -124,7 +157,7 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
         if int(task.get("cross_platform") or 0) == 1:
             if get_step_status(task_id, "step2_cross_platform") not in {"completed", "running", "skipped"}:
                 store.set_step_status(task_id, "step2_cross_platform", "running", message="等待 Maigret 跨平台扫描…")
-        if ex.get("is_first_turn"):
+        if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
             store.save_dialogue(
                 task_id,
                 payload.get("session_id"),
@@ -154,14 +187,51 @@ def _enter_step4(store: TaskStore, task_id: str) -> None:
         store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中")
     if get_step_status(task_id, "step4_image_compare") == "pending":
         store.set_step_status(task_id, "step4_image_compare", "running", message="图片流 OCR/Vision 比对中")
+    if get_step_status(task_id, "step4_text_compare") == "pending":
+        store.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
+    _maybe_advance_step45(store, task_id)
 
 
-def _on_step4_tool_success(store: TaskStore, task_id: str) -> None:
-    """OCR/Vision 成功后按头像进度更新图片比对；全部就绪后再推进文本比对与步骤五。"""
-    from collect_01.gates import count_image_streams, count_step4_tool_success, is_image_compare_ready
+def _maybe_advance_step45(store: TaskStore, task_id: str) -> None:
+    """文本流可先行完成；步骤四父节点须等文本流与图片流均完成。"""
+    from collect_01.gates import can_advance_to_step45
+
+    gate = can_advance_to_step45(task_id)
+    if not gate.get("ok"):
+        logger.info("跳过流水线推进 task=%s: %s", task_id, gate.get("message"))
+        return
+    if get_step_status(task_id, "step4_text_compare") != "completed":
+        store.run_text_compare(task_id)
+    _try_complete_step3_and_step5(store, task_id)
+
+
+def _try_complete_step3_and_step5(store: TaskStore, task_id: str) -> None:
+    if get_step_status(task_id, "step4_text_compare") != "completed":
+        return
+    if get_step_status(task_id, "step4_image_compare") != "completed":
+        return
+    if get_step_status(task_id, "step3_streams") != "completed":
+        store.set_step_status(task_id, "step3_streams", "completed", message="文本/图片流拆分完成")
+    if get_step_status(task_id, "step5_validated") != "completed":
+        store.run_validated_accounts(task_id)
+
+
+def _on_step4_tool_after(
+    store: TaskStore,
+    task_id: str,
+    tool_name: str,
+    tool_args: Dict[str, Any],
+    *,
+    success: bool,
+) -> None:
+    """OCR/Vision 调用后按图片流粒度更新进度；全部就绪后再收口步骤四。"""
+    from collect_01.gates import count_image_streams, count_image_streams_processed, is_image_compare_ready
+
+    if tool_name in _STEP4_TOOLS:
+        store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success)
 
     n_img = count_image_streams(task_id)
-    n_done = count_step4_tool_success(task_id)
+    n_done = count_image_streams_processed(task_id)
     if not is_image_compare_ready(task_id):
         store.set_step_status(
             task_id,
@@ -171,33 +241,14 @@ def _on_step4_tool_success(store: TaskStore, task_id: str) -> None:
         )
         return
     if get_step_status(task_id, "step4_image_compare") != "completed":
-        msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 OCR/Vision 完成 ({n_done}/{n_img})"
+        msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
         store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
-    _advance_text_and_validate(store, task_id)
-
-
-def _advance_text_and_validate(store: TaskStore, task_id: str) -> None:
-    """图片比对完成后：文本流比对 → 流拆分收口 → 可信账号收敛。"""
-    from collect_01.gates import can_advance_to_step45
-
-    gate = can_advance_to_step45(task_id)
-    if not gate.get("ok"):
-        logger.info("跳过流水线推进 task=%s: %s", task_id, gate.get("message"))
-        return
-    if get_step_status(task_id, "step4_image_compare") != "completed":
-        return
-    if get_step_status(task_id, "step4_text_compare") != "completed":
-        store.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
-        store.run_text_compare(task_id)
-    if get_step_status(task_id, "step3_streams") != "completed":
-        store.set_step_status(task_id, "step3_streams", "completed", message="文本/图片流拆分完成")
-    if get_step_status(task_id, "step5_validated") != "completed":
-        store.run_validated_accounts(task_id)
+    _maybe_advance_step45(store, task_id)
 
 
 def _advance_without_image_tools(store: TaskStore, task_id: str) -> None:
-    """未调用 OCR/Vision 时的兜底：图片流保持 pending，仅推进文本比对与步骤五。"""
-    from collect_01.gates import can_advance_to_step45
+    """发文工具已调用但图片流未完成时的兜底：标记剩余图片流失败并尝试收口。"""
+    from collect_01.gates import can_advance_to_step45, is_image_compare_ready
 
     _mark_step3_closed(store, task_id)
     gate = can_advance_to_step45(task_id)
@@ -205,21 +256,26 @@ def _advance_without_image_tools(store: TaskStore, task_id: str) -> None:
         logger.info("跳过无图像工具兜底推进 task=%s: %s", task_id, gate.get("message"))
         return
     if get_step_status(task_id, "step3_streams") == "pending":
-        store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中（未调用 OCR/Vision）")
+        store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中")
     if get_step_status(task_id, "step4_image_compare") == "pending":
-        store.set_step_status(task_id, "step4_image_compare", "pending", message="未调用 OCR/Vision，头像图片流保留 pending")
-    if get_step_status(task_id, "step4_text_compare") != "completed":
+        store.set_step_status(task_id, "step4_image_compare", "running", message="等待图片流 OCR/Vision…")
+    if get_step_status(task_id, "step4_text_compare") == "pending":
         store.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
-        store.run_text_compare(task_id)
-    if get_step_status(task_id, "step3_streams") != "completed":
-        store.set_step_status(task_id, "step3_streams", "completed", message="文本流拆分完成，图片流待补充 OCR/Vision")
-    if get_step_status(task_id, "step5_validated") != "completed":
-        store.run_validated_accounts(task_id)
+    if not is_image_compare_ready(task_id):
+        n_skip = store.mark_remaining_image_streams_failed(task_id, "发文阶段兜底：未完成 vision")
+        if n_skip:
+            store.set_step_status(
+                task_id,
+                "step4_image_compare",
+                "completed",
+                message=f"图片流未完成 vision，兜底跳过 {n_skip} 条",
+            )
+    _maybe_advance_step45(store, task_id)
 
 
 def _maybe_advance_pipeline(store: TaskStore, task_id: str) -> None:
-    """兼容旧调用；须 step4_image_compare 已 completed。"""
-    _advance_text_and_validate(store, task_id)
+    """兼容旧调用。"""
+    _maybe_advance_step45(store, task_id)
 
 
 def _on_post_tool(payload: Dict[str, Any]) -> None:
@@ -305,13 +361,9 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     }
 
     if status != "success":
-        if tool_name in _STEP4_TOOLS:
-            store.set_step_status(
-                task_id,
-                "step4_image_compare",
-                "pending",
-                message=str(ex.get("error_message") or "图片 OCR/Vision 失败")[:500],
-            )
+        if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
+            _enter_step4(store, task_id)
+            _on_step4_tool_after(store, task_id, tool_name, tool_args, success=False)
         elif step_key and get_step_status(task_id, step_key) == "running":
             store.set_step_status(task_id, step_key, "failed", message=ex.get("error_message") or "工具失败")
         return
@@ -361,7 +413,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             )
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
-        _on_step4_tool_success(store, task_id)
+        _on_step4_tool_after(store, task_id, tool_name, tool_args, success=True)
 
 
 def _update_steps_after_tool(
@@ -395,12 +447,99 @@ def _persist_normalized(store: TaskStore, task_id: str, data: Dict[str, Any]) ->
         store.save_post_rows(posts)
 
 
-def _on_turn_end(payload: Dict[str, Any]) -> None:
+def _on_post_llm_call(payload: Dict[str, Any]) -> None:
+    """每轮 LLM 结束后保存助手最终回复（含步骤七三节报告）。"""
+    ex = _extra(payload)
+    assistant = str(ex.get("assistant_response") or "").strip()
+    session_id = payload.get("session_id")
+    logger.info(
+        "post_llm_call session=%s len=%d empty=%s",
+        session_id,
+        len(assistant),
+        not bool(assistant) or assistant == "(empty)",
+    )
+    if not assistant or assistant == "(empty)":
+        return
+    user_message = str(ex.get("user_message") or "").strip()
+    task_id = _resolve_task_id(payload, user_message=user_message)
+    if not task_id:
+        logger.info(
+            "post_llm_call 跳过：无采集 task session=%s len=%d",
+            payload.get("session_id"),
+            len(assistant),
+        )
+        return
+    try:
+        _store().save_assistant_output(
+            task_id,
+            payload.get("session_id"),
+            assistant,
+        )
+    except DbError as exc:
+        logger.warning("保存助手输出失败 task=%s: %s", task_id, exc)
+
+
+def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
+    """从 Hermes state.db 读取本会话最后一条有效助手输出（post_llm_call 未触发时兜底）。"""
+    if not session_id:
+        return None
+    db_path = hermes_home() / "state.db"
+    if not db_path.is_file():
+        return None
+    import sqlite3
+
+    conn = sqlite3.connect(str(db_path))
+    try:
+        rows = conn.execute(
+            """
+            SELECT content FROM messages
+            WHERE session_id=? AND role='assistant'
+              AND content IS NOT NULL AND TRIM(content) != ''
+              AND TRIM(content) != '(empty)'
+            ORDER BY id DESC
+            LIMIT 30
+            """,
+            (session_id,),
+        ).fetchall()
+    finally:
+        conn.close()
+    if not rows:
+        return None
+    for row in rows:
+        text = str(row[0] or "").strip()
+        if is_three_section_report(text):
+            return text
+    for row in rows:
+        text = str(row[0] or "").strip()
+        if len(text) >= 200:
+            return text
+    return str(rows[0][0] or "").strip() or None
+
+
+def _on_session_end(payload: Dict[str, Any]) -> None:
+    """每轮结束时落库助手终稿（兜底）并刷新任务统计。"""
     task_id = _resolve_task_id(payload)
     if not task_id:
         return
+    session_id = str(payload.get("session_id") or "").strip() or None
+    store = _store()
     try:
-        _store().finalize_task(task_id)
+        assistant = _load_assistant_output_from_state(session_id or "")
+        if assistant:
+            saved = store.save_assistant_output(task_id, session_id, assistant)
+            if saved:
+                logger.info(
+                    "on_session_end 兜底入库 task=%s session=%s len=%d",
+                    task_id,
+                    session_id,
+                    len(assistant),
+                )
+    except DbError as exc:
+        logger.warning("on_session_end 保存助手输出失败 task=%s: %s", task_id, exc)
+    except Exception as exc:
+        logger.warning("on_session_end 读取 state.db 失败 task=%s: %s", task_id, exc)
+    try:
+        store.finalize_task(task_id)
     except DbError as exc:
         logger.warning("%s", exc)
 

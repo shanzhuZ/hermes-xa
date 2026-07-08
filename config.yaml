@@ -133,14 +133,19 @@ command_allowlist:
   - recursive delete
 hooks:
   pre_llm_call:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
   post_tool_call:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
+  post_llm_call:
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
   on_session_end:
-    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-      timeout: 120
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
+hooks_auto_accept: true
+hooks_auto_accept: true
 hooks_auto_accept: true
 code_execution:
   timeout: 300

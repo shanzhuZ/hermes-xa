@@ -5,10 +5,12 @@ from __future__ import annotations
 import json
 import logging
 import hashlib
+import os
 import re
 import uuid
 from datetime import datetime
 from typing import Any, Dict, List, Optional
+from urllib.parse import urlparse
 
 from collect_01 import db
 from collect_01.phases import (
@@ -74,10 +76,84 @@ def is_collect_intent(user_message: str) -> bool:
     return bool(_COLLECT_INTENT.search(user_message or ""))
 
 
+def is_three_section_report(content: str) -> bool:
+    """判断是否为步骤七「三节报告」终稿。"""
+    text = (content or "").replace(" ", "").replace("\u3000", "")
+    if len(text) < 30:
+        return False
+    markers = ("一、个人信息", "二、账号核验", "三、发文")
+    return sum(1 for m in markers if m in text) >= 2
+
+
 def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
     """stream_id 列 VARCHAR(64)，超长 account_id 用摘要。"""
     digest = hashlib.md5(f"{task_id}:{platform}:{account_id}".encode("utf-8")).hexdigest()[:16]
     return f"{task_id[:8]}:{platform[:8]}:{digest}"
+
+
+def _extract_image_source(tool_args: Dict[str, Any]) -> str:
+    for key in ("image_url", "input_data", "image_path", "file_path", "url"):
+        val = tool_args.get(key)
+        if isinstance(val, str) and val.strip():
+            return val.strip()
+    return ""
+
+
+def _find_image_stream_for_tool(task_id: str, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    source = _extract_image_source(tool_args)
+    if not source:
+        return None
+    streams = db.fetch_all(
+        """
+        SELECT stream_id, source_platform, source_account_id, payload_url, validation_status, validation_detail
+        FROM collect_identity_streams
+        WHERE task_id=%s AND stream_type='image'
+        """,
+        (task_id,),
+    )
+    if not streams:
+        return None
+    if source.startswith(("http://", "https://")):
+        for row in streams:
+            if (row.get("payload_url") or "").strip() == source:
+                return row
+        base = source.split("?")[0]
+        for row in streams:
+            url = (row.get("payload_url") or "").split("?")[0]
+            if url == base:
+                return row
+        return None
+    basename = os.path.basename(source).lower()
+    hints: List[str] = []
+    if any(k in basename for k in ("twitter", "tw_", "x.com")):
+        hints.append("twitter")
+    if any(k in basename for k in ("youtube", "yt_", "yt3")):
+        hints.append("youtube")
+    if "instagram" in basename or "ig_" in basename:
+        hints.append("instagram")
+    if "tiktok" in basename:
+        hints.append("tiktok")
+    if "weibo" in basename:
+        hints.append("weibo")
+    if "bilibili" in basename or "bili" in basename:
+        hints.append("bilibili")
+    for platform in hints:
+        pending = [
+            row
+            for row in streams
+            if row.get("source_platform") == platform and row.get("validation_status") == "pending"
+        ]
+        waiting = [
+            row for row in pending if "OCR" in str(row.get("validation_detail") or "")
+        ]
+        if len(waiting) == 1:
+            return waiting[0]
+        if len(pending) == 1:
+            return pending[0]
+    pending = [row for row in streams if row.get("validation_status") == "pending"]
+    if len(pending) == 1:
+        return pending[0]
+    return None
 
 
 def _step_status(task_id: str, step_key: str) -> str:
@@ -106,6 +182,43 @@ class TaskStore:
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         return db.fetch_one("SELECT * FROM hermes_tasks WHERE task_id=%s", (task_id,))
 
+    def has_user_dialogue(self, task_id: str, msg_type: str = "user_input") -> bool:
+        row = db.fetch_one(
+            """
+            SELECT id FROM hermes_user_dialogues
+            WHERE task_id=%s AND msg_type=%s
+            LIMIT 1
+            """,
+            (task_id, msg_type),
+        )
+        return bool(row)
+
+    def bind_session(self, task_id: str, session_id: str) -> None:
+        """Java 预建任务后绑定 Hermes session，并标记为 running。"""
+        if not task_id or not session_id:
+            return
+        db.execute(
+            """
+            UPDATE hermes_tasks
+            SET session_id=%s,
+                status=CASE WHEN status='pending' THEN 'running' ELSE status END,
+                started_at=COALESCE(started_at, NOW(3)),
+                updated_at=NOW(3)
+            WHERE task_id=%s
+            """,
+            (session_id, task_id),
+        )
+
+    def mark_task_failed(self, task_id: str, error_message: str) -> None:
+        db.execute(
+            """
+            UPDATE hermes_tasks
+            SET status='failed', error_message=%s, finished_at=NOW(3), updated_at=NOW(3)
+            WHERE task_id=%s
+            """,
+            (error_message[:2000], task_id),
+        )
+
     def ensure_task(
         self,
         *,
@@ -118,11 +231,8 @@ class TaskStore:
         if task_id:
             row = self.get_task(task_id)
             if row:
-                if session_id and row.get("session_id") != session_id:
-                    db.execute(
-                        "UPDATE hermes_tasks SET session_id=%s, updated_at=NOW(3) WHERE task_id=%s",
-                        (session_id, task_id),
-                    )
+                if session_id:
+                    self.bind_session(task_id, session_id)
                 return task_id
         existing = self.get_task_by_session(session_id) if session_id else None
         if existing:
@@ -196,6 +306,53 @@ class TaskStore:
             """,
             (task_id, session_id, role, content[:65535], msg_type),
         )
+
+    def save_assistant_output(
+        self,
+        task_id: str,
+        session_id: Optional[str],
+        content: str,
+    ) -> bool:
+        """保存模型输出到 MySQL hermes_user_dialogues。"""
+        text = (content or "").strip()
+        if not text or not task_id or text == "(empty)":
+            return False
+        clipped = text[:65535]
+        is_report = is_three_section_report(text)
+        msg_type = "summary" if is_report else "assistant_reply"
+        if is_report:
+            existing = db.fetch_one(
+                """
+                SELECT id FROM hermes_user_dialogues
+                WHERE task_id=%s AND msg_type='summary'
+                LIMIT 1
+                """,
+                (task_id,),
+            )
+            if existing:
+                db.execute(
+                    """
+                    UPDATE hermes_user_dialogues
+                    SET session_id=%s, role='assistant', content=%s, created_at=NOW(3)
+                    WHERE id=%s
+                    """,
+                    (session_id, clipped, existing["id"]),
+                )
+                logger.info("已更新采集终稿 task=%s len=%d", task_id, len(text))
+                return True
+        dup = db.fetch_one(
+            """
+            SELECT id FROM hermes_user_dialogues
+            WHERE task_id=%s AND role='assistant' AND msg_type=%s AND content=%s
+            LIMIT 1
+            """,
+            (task_id, msg_type, clipped),
+        )
+        if dup:
+            return False
+        self.save_dialogue(task_id, session_id, "assistant", text, msg_type)
+        logger.info("已保存助手输出 task=%s type=%s len=%d", task_id, msg_type, len(text))
+        return True
 
     def init_phase_steps(self, task_id: str) -> None:
         for step in ROOT_STEPS:
@@ -441,11 +598,80 @@ class TaskStore:
             )
         # 仅写 collect_identity_streams，不更新步骤状态（避免 step1 期间误亮「步骤四：流拆分」）
 
+    def mark_image_stream_progress(
+        self,
+        task_id: str,
+        tool_name: str,
+        tool_args: Dict[str, Any],
+        *,
+        success: bool,
+    ) -> bool:
+        """OCR/Vision 调用后更新对应图片流；vision 成功/失败才视为该流处理完毕。"""
+        if tool_name not in {"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"}:
+            return False
+        stream = _find_image_stream_for_tool(task_id, tool_args)
+        if not stream:
+            return False
+        stream_id = str(stream.get("stream_id") or "")
+        if not stream_id:
+            return False
+        if tool_name == "mcp_ocr_perform_ocr":
+            if success:
+                db.execute(
+                    """
+                    UPDATE collect_identity_streams
+                    SET validation_detail=%s, updated_at=NOW(3)
+                    WHERE stream_id=%s AND validation_status='pending'
+                    """,
+                    ("OCR 完成，等待 vision", stream_id),
+                )
+            return True
+        status = "processed" if success else "fail"
+        detail = "vision 分析完成" if success else "vision 分析失败"
+        if not success:
+            source = _extract_image_source(tool_args)
+            if source.startswith(("http://", "https://")):
+                # 远程 URL 失败通常还会本地下载重试，暂不标记终态
+                db.execute(
+                    """
+                    UPDATE collect_identity_streams
+                    SET validation_detail=%s, updated_at=NOW(3)
+                    WHERE stream_id=%s AND validation_status='pending'
+                    """,
+                    ("vision 远程 URL 失败，等待本地重试", stream_id),
+                )
+                return True
+        db.execute(
+            """
+            UPDATE collect_identity_streams
+            SET validation_status=%s, validation_detail=%s, updated_at=NOW(3)
+            WHERE stream_id=%s
+            """,
+            (status, detail, stream_id),
+        )
+        return True
+
+    def mark_remaining_image_streams_failed(self, task_id: str, detail: str) -> int:
+        """图片流仍未处理时兜底标记失败，避免步骤四永久卡住。"""
+        with db.transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    UPDATE collect_identity_streams
+                    SET validation_status='fail', validation_detail=%s, updated_at=NOW(3)
+                    WHERE task_id=%s AND stream_type='image' AND validation_status='pending'
+                    """,
+                    (detail[:500], task_id),
+                )
+                return int(cur.rowcount or 0)
+
     def run_text_compare(self, task_id: str) -> None:
         """步骤四：文本流与种子比对（规则，不依赖模型）。"""
         task = self.get_task(task_id)
         if not task:
             return
+        if _step_status(task_id, "step4_text_compare") != "completed":
+            self.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
         seed = {}
         try:
             seed = json.loads(task.get("seed_json") or "{}")
