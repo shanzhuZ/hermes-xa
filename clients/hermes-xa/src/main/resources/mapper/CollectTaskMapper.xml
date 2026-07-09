@@ -1,0 +1,202 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.aw.collect.mapper.CollectTaskMapper">
+
+    <select id="selectTaskById" resultType="java.util.HashMap">
+        SELECT task_id, session_id, status, current_phase, cross_platform,
+               started_at, finished_at, created_at, updated_at
+        FROM hermes_tasks
+        WHERE task_id = #{taskId}
+        LIMIT 1
+    </select>
+
+    <select id="selectActiveTaskBySessionId" resultType="java.util.HashMap">
+        SELECT task_id, session_id, status
+        FROM hermes_tasks
+        WHERE session_id = #{sessionId}
+          AND task_type = 'account_collect'
+          AND status IN ('pending', 'running')
+        ORDER BY created_at DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectTasksBySessionId" resultType="java.util.HashMap">
+        SELECT task_id, session_id, status, created_at
+        FROM hermes_tasks
+        WHERE session_id = #{sessionId}
+          AND task_type = 'account_collect'
+        ORDER BY created_at DESC
+        LIMIT 50
+    </select>
+
+    <insert id="insertTask">
+        INSERT INTO hermes_tasks
+            (task_id, task_type, session_id, status, current_phase, cross_platform, seed_json)
+        VALUES
+            (#{taskId}, 'account_collect', #{sessionId}, 'pending', 'resolve_seed', #{crossPlatform}, #{seedJson})
+    </insert>
+
+    <insert id="insertUserDialogue">
+        INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, msg_type)
+        VALUES (#{taskId}, #{sessionId}, 'user', #{content}, 'user_input')
+    </insert>
+
+    <insert id="insertPhaseStep">
+        INSERT IGNORE INTO collect_phase_steps
+            (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+        VALUES
+            (#{taskId}, #{stepKey}, #{parentStepKey}, #{stepOrder}, #{stepNode}, #{title}, 'pending')
+    </insert>
+
+    <update id="updateStepSkipped">
+        UPDATE collect_phase_steps
+        SET status = 'skipped', message = #{message}, updated_at = NOW(3)
+        WHERE task_id = #{taskId} AND step_key = #{stepKey}
+    </update>
+
+    <update id="markTaskFailed">
+        UPDATE hermes_tasks
+        SET status = 'failed',
+            error_message = #{errorMessage},
+            finished_at = NOW(3),
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId}
+    </update>
+
+    <select id="selectUserInput" resultType="java.util.HashMap">
+        SELECT content, created_at
+        FROM hermes_user_dialogues
+        WHERE task_id = #{taskId} AND msg_type = 'user_input'
+        ORDER BY id ASC
+        LIMIT 1
+    </select>
+
+    <select id="selectSummary" resultType="java.util.HashMap">
+        SELECT content, created_at
+        FROM hermes_user_dialogues
+        WHERE task_id = #{taskId} AND msg_type = 'summary'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <select id="selectPhaseSteps" resultType="java.util.HashMap">
+        SELECT step_key, parent_step_key, step_order, step_node, title,
+               status, message, progress_pct, started_at, finished_at
+        FROM collect_phase_steps
+        WHERE task_id = #{taskId}
+        ORDER BY step_order ASC, step_key ASC
+    </select>
+
+    <select id="selectToolOutputs" resultType="java.util.HashMap">
+        SELECT id, tool_name, status, duration_ms, executed_at, phase
+        FROM hermes_tool_outputs
+        WHERE task_id = #{taskId}
+        ORDER BY id ASC
+    </select>
+
+    <select id="selectSuccessToolOutputsByTaskAndPhase" resultType="java.util.HashMap">
+        SELECT task_id, phase, mcp_server, tool_name
+        FROM hermes_tool_outputs
+        WHERE task_id = #{taskId}
+          AND phase = #{phase}
+          AND status = 'success'
+        ORDER BY id ASC
+    </select>
+
+    <select id="selectToolOutputById" resultType="java.util.HashMap">
+        SELECT id, tool_name, tool_args, tool_output, status, duration_ms, executed_at
+        FROM hermes_tool_outputs
+        WHERE task_id = #{taskId} AND id = #{toolId}
+        LIMIT 1
+    </select>
+
+    <select id="selectPhaseStep" resultType="java.util.HashMap">
+        SELECT step_key, title, status, message, payload_json, started_at, finished_at
+        FROM collect_phase_steps
+        WHERE task_id = #{taskId} AND step_key = #{stepKey}
+        LIMIT 1
+    </select>
+
+    <select id="selectTaskSeedJson" resultType="java.util.HashMap">
+        SELECT seed_json FROM hermes_tasks WHERE task_id = #{taskId} LIMIT 1
+    </select>
+
+    <select id="selectProfilesByTaskId" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, account_handle, display_name, bio, avatar_url,
+               profile_url, follower_count, following_count, content_count, verified,
+               visibility, collect_status, collected_at
+        FROM collect_profiles
+        WHERE task_id = #{taskId}
+        ORDER BY collected_at ASC, id ASC
+    </select>
+
+    <select id="selectProfilesByTaskAndPlatform" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, account_handle, display_name, bio, avatar_url,
+               profile_url, follower_count, following_count, content_count, verified,
+               visibility, collect_status, collected_at
+        FROM collect_profiles
+        WHERE task_id = #{taskId} AND platform = #{platform}
+        ORDER BY collected_at ASC, id ASC
+    </select>
+
+    <select id="selectCrossPlatformCandidates" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, account_handle, confidence, evidence_json,
+               match_strategy, status, created_at
+        FROM cross_platform_candidates
+        WHERE task_id = #{taskId}
+        ORDER BY confidence DESC, id ASC
+    </select>
+
+    <select id="selectIdentityStreams" resultType="java.util.HashMap">
+        SELECT stream_id, stream_type, source_platform, source_account_id, source_field,
+               payload_text, payload_url, validation_status, validation_detail, created_at, updated_at
+        FROM collect_identity_streams
+        WHERE task_id = #{taskId}
+        ORDER BY created_at ASC
+    </select>
+
+    <select id="selectIdentityStreamsByType" resultType="java.util.HashMap">
+        SELECT stream_id, stream_type, source_platform, source_account_id, source_field,
+               payload_text, payload_url, validation_status, validation_detail, created_at, updated_at
+        FROM collect_identity_streams
+        WHERE task_id = #{taskId} AND stream_type = #{streamType}
+        ORDER BY created_at ASC
+    </select>
+
+    <select id="selectValidatedAccounts" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, account_handle, confidence, verdict,
+               stream_ids_json, is_seed, created_at
+        FROM collect_validated_accounts
+        WHERE task_id = #{taskId}
+        ORDER BY is_seed DESC, confidence DESC, id ASC
+    </select>
+
+    <select id="selectPostsByTaskId" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, content_id, content_type, title, content_text,
+               content_url, published_at, view_count, like_count, comment_count, repost_count,
+               created_at
+        FROM collect_posts
+        WHERE task_id = #{taskId}
+        ORDER BY published_at DESC, id DESC
+    </select>
+
+    <select id="selectPostsByTaskAndPlatform" resultType="java.util.HashMap">
+        SELECT id, platform, account_id, content_id, content_type, title, content_text,
+               content_url, published_at, view_count, like_count, comment_count, repost_count,
+               created_at
+        FROM collect_posts
+        WHERE task_id = #{taskId} AND platform = #{platform}
+        ORDER BY published_at DESC, id DESC
+    </select>
+
+    <select id="selectLatestAssistantReply" resultType="java.util.HashMap">
+        SELECT content, created_at, msg_type
+        FROM hermes_user_dialogues
+        WHERE task_id = #{taskId} AND role = 'assistant'
+          AND msg_type IN ('summary', 'assistant_reply')
+        ORDER BY FIELD(msg_type, 'summary'), id DESC
+        LIMIT 1
+    </select>
+
+</mapper>

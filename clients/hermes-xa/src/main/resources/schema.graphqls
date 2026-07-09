@@ -1,0 +1,16 @@
+scalar Object
+
+type Result {
+    code:Int
+    message:String
+    totalCount:Int
+    totalPage:Int
+    records:Object
+
+}
+
+
+
+type Query{
+    ping: String
+}

@@ -1,0 +1,45 @@
+server:
+  port: 4377
+  #171服务器
+  #port: 8035
+  tomcat:
+    max-swallow-size: -1
+    # 深分页查询耗时较长，避免 Tomcat 提前断开连接（10分钟）
+    connection-timeout: 600000
+  max-http-form-post-size: -1
+
+
+
+
+ribbon:
+  ReadTimeout: 30000;
+
+mybatis:
+  configuration:
+    map-underscore-to-camel-case: true
+  type-aliases-package: com.example.aw.entity
+  mapper-locations: classpath:mapper/*.xml
+
+
+
+graphiql:
+  enabled: true
+
+spring:
+  application:
+    name: hermes
+  servlet:
+    multipart:
+      max-file-size: 1024MB
+      max-request-size: 1024MB
+  datasource:
+    url: jdbc:mysql://127.0.0.1:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    username: root
+    password: 123456
+
+#hermes:
+#  base-url: http://127.0.0.1:8642
+#  api-key: zhr123456
+#  model: hermes-persona
+#  connect-timeout-ms: 10000
+#  read-timeout-ms: 1800000   # 画像任务可能很久，30 分钟

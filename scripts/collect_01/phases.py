@@ -72,9 +72,12 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_apify_apify__instagram_scraper": "step3_profiles",
     "mcp_apify_clockworks__tiktok_scraper": "step3_profiles",
     "mcp_apify_vujeen__telegram_channel_scraper": "step3_profiles",
+    "mcp_apify_headlessagent__facebook_profile_post_scraper": "step3_profiles",
+    "mcp_apify_knotless_cadence__github_profile_scraper": "step3_profiles",
     "mcp_apify_get_dataset_items": "step3_profiles",
     "mcp_ocr_perform_ocr": "step4_image_compare",
     "mcp_vision_analyze": "step4_image_compare",
+    "vision_analyze": "step4_image_compare",
     "mcp_twitter_get_user_tweets": "step6_posts",
     "mcp_youtube_analyze_channel_videos": "step6_posts",
     "mcp_weibo_get_user_feeds": "step6_posts",
@@ -91,6 +94,8 @@ APIFY_POST_TOOLS = {
     "mcp_apify_apify__instagram_scraper",
     "mcp_apify_clockworks__tiktok_scraper",
     "mcp_apify_vujeen__telegram_channel_scraper",
+    "mcp_apify_headlessagent__facebook_profile_post_scraper",
+    "mcp_apify_knotless_cadence__github_profile_scraper",
 }
 
 
@@ -123,6 +128,19 @@ def initial_steps(cross_platform: bool) -> List[StepDef]:
     if cross_platform:
         return list(ROOT_STEPS)
     return [s for s in ROOT_STEPS if s.step_key in {"step1_seed", "step6_posts"}]
+
+
+def tool_step_key(tool_name: str) -> str:
+    """工具调用归属的步骤键，与 collect_phase_steps.step_key 一致。"""
+    platform = TOOL_POST_PLATFORM.get(tool_name)
+    if platform:
+        return post_step_key(platform)
+    return TOOL_PRIMARY_STEP.get(tool_name, "step6_posts")
+
+
+def is_step_key(value: Optional[str]) -> bool:
+    """判断 phase 字段是否已是步骤键（step1_seed / step6_post_twitter 等）。"""
+    return bool(value) and str(value).startswith("step")
 
 
 def step_phase(step_key: str) -> Optional[str]:

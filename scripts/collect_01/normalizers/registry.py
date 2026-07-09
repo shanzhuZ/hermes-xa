@@ -23,6 +23,8 @@ REGISTRY: Dict[str, Tuple[Handler, str]] = {
     "mcp_apify_apify__instagram_scraper": (apify.normalize_actor_run, "noop"),
     "mcp_apify_clockworks__tiktok_scraper": (apify.normalize_actor_run, "noop"),
     "mcp_apify_vujeen__telegram_channel_scraper": (apify.normalize_actor_run, "noop"),
+    "mcp_apify_headlessagent__facebook_profile_post_scraper": (apify.normalize_actor_run, "noop"),
+    "mcp_apify_knotless_cadence__github_profile_scraper": (apify.normalize_actor_run, "noop"),
 }
 
 

@@ -179,6 +179,34 @@ class TaskStore:
             (session_id, TASK_TYPE),
         )
 
+    def get_active_task_by_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """同一会话下 pending/running 的采集任务（Java 预插后 Hook 靠此对齐 task_id）。"""
+        if not session_id:
+            return None
+        return db.fetch_one(
+            """
+            SELECT * FROM hermes_tasks
+            WHERE session_id=%s AND task_type=%s AND status IN ('pending', 'running')
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (session_id, TASK_TYPE),
+        )
+
+    def list_tasks_by_session(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
+        if not session_id:
+            return []
+        return db.fetch_all(
+            """
+            SELECT task_id, session_id, status, current_phase, cross_platform,
+                   started_at, finished_at, created_at, updated_at
+            FROM hermes_tasks
+            WHERE session_id=%s AND task_type=%s
+            ORDER BY created_at DESC
+            LIMIT %s
+            """,
+            (session_id, TASK_TYPE, limit),
+        )
+
     def get_task(self, task_id: str) -> Optional[Dict[str, Any]]:
         return db.fetch_one("SELECT * FROM hermes_tasks WHERE task_id=%s", (task_id,))
 
@@ -219,6 +247,74 @@ class TaskStore:
             (error_message[:2000], task_id),
         )
 
+    def create_pending_task(
+        self,
+        task_id: str,
+        session_id: str,
+        user_message: str,
+        *,
+        cross_platform: Optional[int] = None,
+    ) -> str:
+        """Java/Spring 在调 Gateway 前预建任务（status=pending），Hook 接手后转 running。"""
+        if not task_id or not session_id:
+            raise ValueError("task_id 与 session_id 不能为空")
+        if not is_collect_intent(user_message):
+            raise ValueError("非采集意图消息，无法创建任务")
+        existing = self.get_task(task_id)
+        if existing:
+            return task_id
+        active = self.get_active_task_by_session(session_id)
+        if active:
+            raise ValueError(
+                f"会话 {session_id} 已有进行中的任务 {active['task_id']}，请等待结束后再发起"
+            )
+        seed = _parse_seed(user_message)
+        if cross_platform is None:
+            cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
+        initial_phase_steps = initial_steps(bool(cross_platform))
+        with db.transaction() as conn:
+            with conn.cursor() as cur:
+                cur.execute(
+                    """
+                    INSERT INTO hermes_tasks
+                      (task_id, task_type, session_id, status, current_phase, cross_platform, seed_json)
+                    VALUES (%s, %s, %s, 'pending', %s, %s, %s)
+                    """,
+                    (
+                        task_id,
+                        TASK_TYPE,
+                        session_id,
+                        PHASE_RESOLVE_SEED,
+                        cross_platform,
+                        db.json_dumps(seed),
+                    ),
+                )
+                cur.execute(
+                    """
+                    INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, msg_type)
+                    VALUES (%s, %s, 'user', %s, 'user_input')
+                    """,
+                    (task_id, session_id, user_message[:65535]),
+                )
+                for step in initial_phase_steps:
+                    cur.execute(
+                        """
+                        INSERT IGNORE INTO collect_phase_steps
+                          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                        """,
+                        (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                    )
+        if not cross_platform:
+            self.set_step_status(task_id, "step2_cross_platform", "skipped", message="用户未要求跨平台采集")
+            self.set_step_status(task_id, "step3_profiles", "skipped", message="单平台任务，跳过候选主页采集")
+            self.set_step_status(task_id, "step3_streams", "skipped", message="单平台任务，跳过跨平台流拆分")
+            self.set_step_status(task_id, "step4_text_compare", "skipped", message="单平台任务，跳过跨平台文本流比对")
+            self.set_step_status(task_id, "step4_image_compare", "skipped", message="单平台任务，跳过跨平台图片流比对")
+            self.set_step_status(task_id, "step5_validated", "skipped", message="单平台任务，默认种子账号直接进入发文采集")
+        logger.info("预建采集任务 task_id=%s session=%s", task_id, session_id)
+        return task_id
+
     def ensure_task(
         self,
         *,
@@ -234,7 +330,7 @@ class TaskStore:
                 if session_id:
                     self.bind_session(task_id, session_id)
                 return task_id
-        existing = self.get_task_by_session(session_id) if session_id else None
+        existing = self.get_active_task_by_session(session_id) if session_id else None
         if existing:
             return existing["task_id"]
 
@@ -477,6 +573,7 @@ class TaskStore:
               tool_output=VALUES(tool_output),
               duration_ms=VALUES(duration_ms),
               status=VALUES(status),
+              phase=VALUES(phase),
               executed_at=NOW(3)
             """,
             (
@@ -490,6 +587,15 @@ class TaskStore:
                 duration_ms,
                 status,
             ),
+        )
+
+    def update_tool_output_phase(self, tool_output_id: int, step_key: str) -> None:
+        """将工具调用记录的 phase 修正为 collect_phase_steps.step_key。"""
+        if not step_key:
+            return
+        db.execute(
+            "UPDATE hermes_tool_outputs SET phase=%s WHERE id=%s",
+            (step_key, tool_output_id),
         )
 
     def save_profile_row(self, row: Dict[str, Any]) -> None:

@@ -4,12 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from collect_01.normalizers.base import first_str, post_row, profile_row, safe_int
+from collect_01.normalizers.base import first_str, parse_fuzzy_count, post_row, profile_row, safe_int
 
 _PLATFORM_FROM_CTX = {
     "instagram": "instagram",
     "tiktok": "tiktok",
     "telegram": "telegram",
+    "facebook": "facebook",
+    "github": "github",
 }
 
 
@@ -36,6 +38,10 @@ def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         profiles, posts = _tiktok_items(ctx, items)
     elif platform == "telegram":
         profiles, posts = _telegram_items(ctx, items)
+    elif platform == "facebook":
+        profiles, posts = _facebook_items(ctx, items)
+    elif platform == "github":
+        profiles, posts = _github_items(ctx, items)
 
     plats = [platform] if profiles or posts else []
     return {"profiles": profiles, "posts": posts, "candidates": [], "platforms": plats}
@@ -54,6 +60,15 @@ def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
             return "tiktok"
         if "channelUsername" in sample or sample.get("message"):
             return "telegram"
+        item_type = str(sample.get("type") or "").lower()
+        if item_type == "profile" and (
+            "profile_intro_text" in sample or "facebook.com" in str(sample.get("url", "")).lower()
+        ):
+            return "facebook"
+        if item_type == "post" and ("post_id" in sample or "facebook.com" in str(sample.get("url", "")).lower()):
+            return "facebook"
+        if "username" in sample and ("repos" in sample or "publicRepos" in sample):
+            return "github"
     return ""
 
 
@@ -171,6 +186,131 @@ def _telegram_items(ctx: Dict[str, Any], items: List[Any]):
                     content_text=first_str(item.get("text"), item.get("message")),
                     view_count=safe_int(item.get("views")),
                     raw=item,
+                )
+            )
+    return profiles, posts
+
+
+def _facebook_handle_from_url(url: str) -> str:
+    text = (url or "").strip().rstrip("/")
+    if not text:
+        return ""
+    if "facebook.com/" in text:
+        slug = text.split("facebook.com/", 1)[-1].split("/", 1)[0]
+        if slug and slug not in {"profile.php", "people", "pages", "groups"}:
+            return slug
+    return ""
+
+
+def _facebook_items(ctx: Dict[str, Any], items: List[Any]):
+    profiles: List[Dict[str, Any]] = []
+    posts: List[Dict[str, Any]] = []
+    profile_ids = set()
+    default_account_id = ""
+
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        item_type = str(item.get("type") or "").lower()
+        if item_type == "profile":
+            account_id = first_str(item.get("id"), _facebook_handle_from_url(str(item.get("url") or "")))
+            if not account_id or account_id in profile_ids:
+                continue
+            profile_ids.add(account_id)
+            default_account_id = account_id
+            handle = _facebook_handle_from_url(str(item.get("url") or "")) or account_id
+            profiles.append(
+                profile_row(
+                    ctx,
+                    platform="facebook",
+                    account_id=account_id,
+                    account_handle=handle,
+                    display_name=first_str(item.get("name")),
+                    bio=first_str(item.get("profile_intro_text"), item.get("category")),
+                    avatar_url=first_str(item.get("profile_picture")),
+                    profile_url=first_str(item.get("url")),
+                    follower_count=parse_fuzzy_count(item.get("followers")),
+                    following_count=parse_fuzzy_count(item.get("following")),
+                    verified=1 if item.get("verified") else 0,
+                    raw=item,
+                )
+            )
+            continue
+        if item_type != "post":
+            continue
+        author = item.get("author") if isinstance(item.get("author"), dict) else {}
+        account_id = first_str(author.get("id"), default_account_id) or "unknown"
+        post_id = first_str(item.get("post_id"), item.get("id"))
+        if not post_id:
+            continue
+        reactions = item.get("reactions_summary") if isinstance(item.get("reactions_summary"), dict) else {}
+        comments = item.get("comments_summary") if isinstance(item.get("comments_summary"), dict) else {}
+        posts.append(
+            post_row(
+                ctx,
+                platform="facebook",
+                account_id=account_id,
+                content_id=str(post_id),
+                content_text=first_str(item.get("message")),
+                content_url=first_str(item.get("url")),
+                like_count=safe_int(reactions.get("total_reactions")),
+                comment_count=safe_int(comments.get("total_comments")),
+                raw=item,
+            )
+        )
+    return profiles, posts
+
+
+def _github_items(ctx: Dict[str, Any], items: List[Any]):
+    profiles: List[Dict[str, Any]] = []
+    posts: List[Dict[str, Any]] = []
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        username = first_str(item.get("username"))
+        if not username:
+            continue
+        if not profiles:
+            profiles.append(
+                profile_row(
+                    ctx,
+                    platform="github",
+                    account_id=username,
+                    account_handle=username,
+                    display_name=first_str(item.get("name")),
+                    bio=first_str(item.get("bio"), item.get("company"), item.get("location")),
+                    avatar_url=first_str(item.get("avatar")),
+                    profile_url=first_str(item.get("profileUrl"), f"https://github.com/{username}"),
+                    follower_count=safe_int(item.get("followers")),
+                    following_count=safe_int(item.get("following")),
+                    content_count=safe_int(item.get("publicRepos")),
+                    raw=item,
+                )
+            )
+        repos = item.get("repos") or []
+        if not isinstance(repos, list):
+            continue
+        for repo in repos:
+            if not isinstance(repo, dict):
+                continue
+            repo_name = first_str(repo.get("name"))
+            if not repo_name:
+                continue
+            full_name = first_str(repo.get("fullName"), f"{username}/{repo_name}")
+            posts.append(
+                post_row(
+                    ctx,
+                    platform="github",
+                    account_id=username,
+                    content_id=full_name,
+                    content_type="repo",
+                    title=repo_name,
+                    content_text=first_str(repo.get("description")),
+                    content_url=first_str(repo.get("url"), f"https://github.com/{username}/{repo_name}"),
+                    like_count=safe_int(repo.get("stars")),
+                    comment_count=safe_int(repo.get("openIssues")),
+                    repost_count=safe_int(repo.get("forks")),
+                    raw=repo,
                 )
             )
     return profiles, posts

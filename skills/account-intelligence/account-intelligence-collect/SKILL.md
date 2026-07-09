@@ -71,6 +71,8 @@ metadata:
 | Instagram | `mcp_apify_apify__instagram_scraper` → run → dataset |
 | TikTok | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
 | Telegram | `mcp_apify_vujeen__telegram_channel_scraper` → run → dataset |
+| Facebook | `mcp_apify_headlessagent__facebook_profile_post_scraper`（`profileUrls`，步骤3 limit≤5）→ run → dataset |
+| GitHub | `mcp_apify_knotless_cadence__github_profile_scraper`（`usernames`，`maxRepos`≤5）→ run → dataset |
 
 **禁止步骤 3**：`get_user_tweets`、`get_user_feeds`、`analyze_channel_videos`、YouTube 搜视频。
 

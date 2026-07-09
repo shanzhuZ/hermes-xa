@@ -50,6 +50,28 @@ def safe_int(value: Any) -> Optional[int]:
         return None
 
 
+def parse_fuzzy_count(value: Any) -> Optional[int]:
+    """解析 3M / 1.2K / 3,078,658 等粉丝数字符串。"""
+    if value is None:
+        return None
+    direct = safe_int(value)
+    if direct is not None:
+        return direct
+    text = str(value).strip().replace(",", "")
+    if not text:
+        return None
+    m = re.match(r"^([\d.]+)\s*([KkMmBb])?$", text)
+    if not m:
+        return None
+    try:
+        num = float(m.group(1))
+    except ValueError:
+        return None
+    suffix = (m.group(2) or "").upper()
+    mult = {"K": 1_000, "M": 1_000_000, "B": 1_000_000_000}.get(suffix, 1)
+    return int(num * mult)
+
+
 def safe_bool(value: Any) -> Optional[int]:
     if value is None:
         return None

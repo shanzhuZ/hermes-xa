@@ -1,0 +1,132 @@
+# 账号扩建 — 唯一参考（Skill 只加载本文件）
+version: "1.0.0"
+
+identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
+
+# 四节输出的语义映射（步骤 → 章节）
+section_map:
+  一_账号扩建收集: 步骤2 Maigret MCP 发现的原始候选（去重），未核查
+  二_多平台信息采集: 步骤3 一次采到的 profile 原文 + 发文原文（同源，账号信息与发文合并，每平台一块）
+  三_账号核查: 步骤4/5 核查（文本流 6 项 + 头像图片流）+ 判定
+  四_账号: 步骤5 判定为 HIGH 的账号（+种子）列表，每条附判断依据（MEDIUM/LOW 不展示，不含 profile、不含发文）
+
+forbidden_always:
+  tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 五、]
+
+steps:
+  "1_seed":
+    do: 种子平台 MCP profile（Twitter→mcp_twitter_get_user_info）
+    forbid: [get_user_tweets, maigret, vision]
+
+  "2_discover":
+    when: 用户要求跨平台扩建（默认扩建即跨平台）
+    do: |
+      Maigret 单 MCP 发现：
+      1) mcp_maigret_collect_accounts(username=种子, top_sites=30, timeout=180)
+         → 站库广、能从简介挖关联 handle（如 Telegram 简介里的小号）
+         → top_sites=30 提升覆盖率，timeout=180 给足扫描时间
+      整理为「原始候选」集合：
+      - 按平台+handle 去重
+      - maigret 的 discovery_only 泛匹配站（GitHubGist 等）标注「疑似误报，待步骤4核查」
+      - 每条候选登记：平台 / handle / URL / 是否有 MCP
+    then: 读 maigret 的 summary.accounts + agent_must_do_next；进第一节素材
+    forbid: 写报告；禁止此刻做核查判断（核查在步骤4）；MCP 失败→记录并继续，不中止
+
+  "3_collect":
+    do: |
+      对每个账号在**同一次主页采集里同时拿 profile + 发文**，确保账号信息与发文同源真实
+      （不再分两步、不再二次采集）。采集范围：
+      - 候选账号（summary.accounts，种子平台除外）：采 profile + 发文
+      - 种子账号：步骤1已采 profile，这里**用同源方式补采种子发文**（同一工具，如 Twitter get_user_tweets(50)），
+        供第四步文本流「发文内容」维度做比对基准
+      各平台工具：
+      - 有 MCP：
+        - Twitter → get_user_info(profile) + get_user_tweets(50)
+        - YouTube → get_channel_stats(channelId)(profile) + analyze_channel_videos(channelId)(发文)
+        - 微博 → get_profile(profile) + get_user_feeds(发文)
+      - 无 MCP：Instagram/Telegram/Facebook/TikTok/GitHub → Apify（resultsLimit≤50）
+        一次 run 同时取 profile 字段 + 发文原文（从同一 dataset 读）
+      - discovery_only（Discord/ImgInn 等）：只记 URL，无 profile/发文
+      每个账号产出：profile 原文字段 + 发文原文（供第二节合并、第四步文本流对比、图片流取 avatar_url）
+      失败处理：
+      - 首次失败→立即重试 1 次（相同参数）
+      - 二次失败→再重试 1 次（相同参数）
+      - 三次均失败→跳过该候选，标记"采集失败（原因）"，继续下一个
+      禁止：web_search 替代、换工具重试、超过 2 次重试
+    forbid: [vision, ocr, 任何报告文字, web_search]
+
+  "4_streams":
+    do: |
+      对步骤3成功的账号 + 种子，每个账号输出一块。核查分**文本流**与**图片流**两条，两条都要做：
+      1. 判定等级标题（HIGH/MEDIUM/LOW）
+      2. 文本流（账号信息 + 发文信息），六个维度逐条对比（昵称/handle/简介/互链/邮箱/发文内容）
+         - 每条格式：字段名：候选值（vs 种子：种子值）→ 相似度分析
+         - 发文内容：分析候选平台发文主题、风格、观点是否与种子一致（基于步骤3与 profile 同源采集的发文原文）
+      3. 图片流（**只用头像 avatar_url**，不用背景图、不用发文图片；头像来自步骤3 profile）：
+         - 对候选 profile 里的头像 URL：
+           a. mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim+eng") 提取头像内文字（水印/logo/handle 等）
+           b. vision_analyze(image_url=头像URL, user_prompt="描述这张头像的外观、风格、颜色、主体内容，用于与种子账号头像做相似度比对")
+         - 同样对种子头像做 OCR+vision（作为比对基准）
+         - 输出：图内文字（候选：xxx vs 种子：xxx）+ 视觉描述（候选：xxx vs 种子：xxx）→ 相似度分析
+         - 候选或种子无头像：注明"无头像"
+         - OCR/vision 调用失败：标注"图片分析失败（原因）"，继续，不中止
+         - **不分析背景图、不分析发文图片**（图片流只针对头像 avatar_url）
+      4. 综合判定：基于文本流 + 图片流给出判定理由
+      禁止：维度横向对比表格、单独的 3.2 核查判定小节、独立的图片流表（图片流并入每块，紧跟文本流）
+    forbid: [写最终报告, 3.2核查判定小节, 维度横向表格, 背景图OCR, 背景图vision, 发文图片OCR, 发文图片vision]
+
+  "5_verify":
+    do: |
+      基于步骤4文本流+图片流核查中的判定等级，确定第四节纳入账号：
+      - HIGH → 纳入「账号」（第四节列表），并为每条准备一句判断依据（概括文本流/图片流里最关键的命中项）
+      - MEDIUM / LOW → 不纳入第四节、不在第四节展示；仅在第三节核查块中保留其判定与理由
+      纳入集合 = 种子 + HIGH 候选（仅相似度极高者）
+    forbid: [一切发文工具]
+
+  "6_output":
+    once: true
+    sections: [一、账号扩建收集, 二、多平台信息采集, 三、账号核查, 四、账号]
+    section1: |
+      每条原始候选一行，格式：平台：xxxx | URL：xxxx
+      禁止输出：发现来源、是否有 MCP、序号、分隔线、任何其他字段
+      示例：
+      Instagram：https://www.instagram.com/whyyoutouzhele/
+      Twitter：https://twitter.com/whyyoutouzhele
+    section2: |
+      每平台账号一块：先 profile 原文字段逐条，紧接该账号发文原文逐条（步骤3同源采集）。
+      账号信息与发文合并在同一块，禁止把发文拆到第四节，禁止主题归纳。
+    section3: |
+      无 3.2 小节，仅按候选平台一块一块输出（文本流 + 图片流，两条流并入同一块）。
+      每个候选平台一块，格式：
+      【平台·@handle】判定：HIGH/MEDIUM/LOW
+      文本流（账号信息 + 发文）：
+      - 昵称：候选值（vs 种子：种子值）→ 分析
+      - handle：候选值（vs 种子：种子值）→ 分析
+      - 简介：候选值（vs 种子：种子值）→ 分析
+      - 互链：候选值（vs 种子：种子值）→ 分析
+      - 邮箱：候选值（vs 种子：种子值）→ 分析
+      - 发文内容：分析候选平台发文主题、风格、观点与种子发文的相似度（基于步骤3同源采集的发文文字）
+      图片流（只用头像 avatar_url，不用背景图、不用发文图片）：
+      - 头像：OCR文字（候选：xxx vs 种子：xxx）+ 视觉描述（候选：xxx vs 种子：xxx）→ 相似度分析
+        （基于步骤3 profile 的头像 URL + 步骤4 mcp_ocr_perform_ocr + vision_analyze；无头像→"无头像"；图片分析失败→标注原因）
+      - 综合判定：基于文本流 + 图片流给出判定理由
+      禁止：维度横向表格、单独的 3.2 小节、独立的图片流表、分析背景图或发文图片
+    section4: |
+      仅相似度极高的账号列表：只保留判定为 HIGH 的账号（含种子），MEDIUM/LOW 一律不展示。
+      每行格式：平台·@handle + 等级（种子/HIGH） + 判断依据。
+      判断依据为一句话，概括文本流 + 图片流里最关键的命中项（如"昵称+handle 完全一致，头像同图，发文同调"）。
+      示例：
+      - Twitter·@whyyoutouzhele 种子
+      - YouTube·@whyyoutouzhele HIGH — 判断依据：昵称与 handle 完全一致，头像为同一张图，发文主题与种子推文同调
+      纯列表，禁止出现 profile 字段、禁止出现任何发文原文、禁止展示 MEDIUM/LOW 账号。
+
+apify:
+  contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
+  instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
+  tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
+  telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
+  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
+  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
+
+midflight: 步骤1-5 对用户最多 2 句进度；禁止输出一、二、三、四、任何一节

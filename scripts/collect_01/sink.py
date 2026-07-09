@@ -17,6 +17,7 @@ from collect_01.phases import (
     TOOL_POST_PLATFORM,
     TOOL_PRIMARY_STEP,
     post_step_key,
+    tool_step_key,
 )
 from collect_01.task_store import TaskStore, is_collect_intent, is_three_section_report
 
@@ -113,9 +114,13 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
             store.bind_session(java_tid, session_id)
         return java_tid
 
+    # Java 预插 pending/running 任务：同 session 多次采集靠此对齐 task_id
+    if session_id:
+        active = store.get_active_task_by_session(session_id)
+        if active:
+            return active["task_id"]
+
     tid = str(ex.get("task_id") or "").strip()
-    # Gateway api_server 把 effective_task_id 设为 session_id；Java 用 taskId 建 session 时二者相同
-    preset_tid = tid if tid and session_id and tid == session_id else None
     if tid:
         row = store.get_task(tid)
         if row:
@@ -124,18 +129,18 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
             return row["task_id"]
     if session_id:
         row = store.get_task_by_session(session_id)
-        if row:
+        if row and str(row.get("status") or "") in {"pending", "running"}:
             return row["task_id"]
     msg = (user_message or str(ex.get("user_message") or "")).strip()
     if msg and is_collect_intent(msg):
-        return store.ensure_task(session_id=session_id, user_message=msg, task_id=preset_tid)
+        return store.ensure_task(session_id=session_id, user_message=msg)
     tool_name = str(payload.get("tool_name") or "")
     if session_id and tool_name.startswith("mcp_"):
         tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
         handle = _extract_account_id(tool_args) or ""
         if handle:
             seed_msg = f"account-intelligence-collect 采集 @{handle}"
-            return store.ensure_task(session_id=session_id, user_message=seed_msg, task_id=preset_tid)
+            return store.ensure_task(session_id=session_id, user_message=seed_msg)
     return None
 
 
@@ -151,6 +156,9 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
         if not task_id:
             return
         store = _store()
+        session_id = str(payload.get("session_id") or "").strip()
+        if session_id:
+            store.bind_session(task_id, session_id)
         if get_step_status(task_id, "step1_seed") not in {"completed", "running"}:
             store.set_step_status(task_id, "step1_seed", "running", message="等待种子账号资料采集…")
         task = store.get_task(task_id) or {}
@@ -323,8 +331,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         tool_output = str(result or "")
 
     status = "success" if ex.get("status") == "ok" else "error"
-    phase = store.get_task(task_id)
-    current_phase = (phase or {}).get("current_phase")
+    output_step_key = tool_step_key(tool_name)
 
     try:
         tool_output_id = store.save_tool_output(
@@ -335,7 +342,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             tool_call_id=tool_call_id or f"anon-{tool_name}-{len(_SEEN_TOOL_CALLS)}",
             duration_ms=ex.get("duration_ms"),
             status=status,
-            phase=current_phase,
+            phase=output_step_key,
             mcp_server=infer_mcp_server(tool_name),
         )
     except DbError as exc:
@@ -411,6 +418,17 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 message=f"已采集 {post_platform} 发文 {post_count} 条",
                 payload={"post_count": post_count},
             )
+    elif tool_name == "mcp_apify_get_dataset_items" and post_platform and post_count > 0:
+        child = post_step_key(post_platform)
+        store.ensure_post_steps(task_id, [post_platform])
+        store.update_tool_output_phase(tool_output_id, child)
+        store.set_step_status(
+            task_id,
+            child,
+            "completed",
+            message=f"已采集 {post_platform} 发文 {post_count} 条",
+            payload={"post_count": post_count},
+        )
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
         _on_step4_tool_after(store, task_id, tool_name, tool_args, success=True)

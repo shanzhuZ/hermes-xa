@@ -1,0 +1,25 @@
+{
+  "mappings": {
+    "properties": {
+      "username": {
+        "type": "text",
+        "fields": {
+          "keyword": {
+            "type": "keyword",
+            "ignore_above": 256
+          }
+        }
+      },
+      "last_login_time": {
+        "type": "date",
+        "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis||strict_date_optional_time"
+      },
+      "has_logged_in": {
+        "type": "boolean"
+      },
+      "login_type": {
+        "type": "keyword"
+      }
+    }
+  }
+}
