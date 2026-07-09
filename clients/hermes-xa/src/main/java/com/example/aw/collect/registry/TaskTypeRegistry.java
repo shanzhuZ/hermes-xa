@@ -1,0 +1,116 @@
+package com.example.aw.collect.registry;
+
+import org.springframework.stereotype.Component;
+
+import java.util.HashMap;
+import java.util.Locale;
+import java.util.Map;
+import java.util.regex.Pattern;
+
+/**
+ * 前端 taskType → 库内 task_type、Hermes skill 名、发往模型的消息前缀。
+ */
+@Component
+public class TaskTypeRegistry {
+
+    public static final String DEFAULT_FRONTEND_TYPE = "collect";
+
+    private static final Pattern SKILL_PREFIX = Pattern.compile(
+            "^(account-intelligence-collect|account-expansion|account-intelligence-expand|"
+                    + "account-intelligence-verify|account-intelligence-profile)\\b",
+            Pattern.CASE_INSENSITIVE);
+
+    private final Map<String, TaskTypeDef> byFrontendType = new HashMap<String, TaskTypeDef>();
+
+    public TaskTypeRegistry() {
+        byFrontendType.put("collect", new TaskTypeDef(
+                "collect", "account_collect", "account-intelligence-collect", "账号信息采集"));
+        byFrontendType.put("expand", new TaskTypeDef(
+                "expand", "account_expand", "account-expansion", "账号扩建"));
+        byFrontendType.put("verify", new TaskTypeDef(
+                "verify", "account_verify", "account-intelligence-verify", "账号核查"));
+        byFrontendType.put("profile", new TaskTypeDef(
+                "profile", "account_profile", "account-intelligence-profile", "画像写报"));
+    }
+
+    /**
+     * 解析前端 taskType，未知值回退为 collect。
+     */
+    public TaskTypeDef resolve(String frontendType) {
+        String key = normalize(frontendType);
+        TaskTypeDef def = byFrontendType.get(key);
+        if (def != null) {
+            return def;
+        }
+        return byFrontendType.get(DEFAULT_FRONTEND_TYPE);
+    }
+
+    /**
+     * 构造发往 Gateway 的 user message（确保带 skill 前缀供 Hermes 路由）。
+     */
+    public String buildGatewayMessage(String frontendType, String userMessage) {
+        TaskTypeDef def = resolve(frontendType);
+        String msg = userMessage == null ? "" : userMessage.trim();
+        if (msg.isEmpty()) {
+            return msg;
+        }
+        if (SKILL_PREFIX.matcher(msg).find()) {
+            return msg;
+        }
+        if (msg.toLowerCase(Locale.ROOT).contains(def.skillName.toLowerCase(Locale.ROOT))) {
+            return msg;
+        }
+        return def.skillName + " " + msg;
+    }
+
+    /**
+     * 判断用户消息是否匹配某 task_type 的意图（Hook 兜底用，Java 侧与 Python 规则近似）。
+     */
+    public boolean matchesIntent(String dbTaskType, String userMessage) {
+        String msg = userMessage == null ? "" : userMessage;
+        if ("account_expand".equals(dbTaskType)) {
+            return msg.matches("(?is).*(account-expansion|account-intelligence-expand|账号扩建|扩建).*");
+        }
+        if ("account_collect".equals(dbTaskType)) {
+            return msg.matches("(?is).*(account-intelligence-collect|账号信息采集|采集).*");
+        }
+        return true;
+    }
+
+    private String normalize(String frontendType) {
+        if (frontendType == null || frontendType.trim().isEmpty()) {
+            return DEFAULT_FRONTEND_TYPE;
+        }
+        return frontendType.trim().toLowerCase(Locale.ROOT);
+    }
+
+    public static final class TaskTypeDef {
+        private final String frontendType;
+        private final String dbTaskType;
+        private final String skillName;
+        private final String label;
+
+        public TaskTypeDef(String frontendType, String dbTaskType, String skillName, String label) {
+            this.frontendType = frontendType;
+            this.dbTaskType = dbTaskType;
+            this.skillName = skillName;
+            this.label = label;
+        }
+
+        public String getFrontendType() {
+            return frontendType;
+        }
+
+        public String getDbTaskType() {
+            return dbTaskType;
+        }
+
+        public String getSkillName() {
+            return skillName;
+        }
+
+        public String getLabel() {
+            return label;
+        }
+    }
+}

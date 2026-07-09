@@ -1,4 +1,4 @@
-"""Hermes Hook 入口 — 01 账号采集入库（stdin JSON）。"""
+"""Hermes Hook 入口 — 02 账号扩建入库（stdin JSON）。"""
 
 from __future__ import annotations
 
@@ -7,22 +7,22 @@ import logging
 import sys
 from typing import Any, Dict, Optional
 
-from collect_01.config import hermes_home
+from expand_02.config import hermes_home
 from collect_01.db import DbError
-from collect_01.gates import get_step_status
+from expand_02.gates import get_step_status
 from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
-from collect_01.phases import (
+from expand_02.phases import (
     APIFY_POST_TOOLS,
     TOOL_POST_PLATFORM,
     TOOL_PRIMARY_STEP,
     post_step_key,
     tool_step_key,
 )
-from collect_01.task_store import TaskStore, is_collect_intent, is_three_section_report
+from expand_02.task_store import TaskStore, is_expand_intent, is_four_section_report
 
 _LOG_DIR = hermes_home() / "logs"
-_LOG_FILE = _LOG_DIR / "collect_01_sink.log"
+_LOG_FILE = _LOG_DIR / "expand_02_sink.log"
 logger = logging.getLogger(__name__)
 
 # 记录最近一次 Apify Actor，供 get_dataset_items 推断平台
@@ -39,7 +39,7 @@ def _setup_logging() -> None:
     if logger.handlers:
         return
     logger.setLevel(logging.INFO)
-    fmt = logging.Formatter("%(asctime)s [collect_01] %(message)s")
+    fmt = logging.Formatter("%(asctime)s [expand_02] %(message)s")
     sh = logging.StreamHandler(sys.stderr)
     sh.setFormatter(fmt)
     logger.addHandler(sh)
@@ -108,7 +108,7 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
                 store.bind_session(java_tid, session_id)
             return java_tid
         msg = (user_message or str(ex.get("user_message") or "")).strip()
-        if msg and is_collect_intent(msg):
+        if msg and is_expand_intent(msg):
             return store.ensure_task(session_id=session_id, user_message=msg, task_id=java_tid)
         if session_id:
             store.bind_session(java_tid, session_id)
@@ -132,14 +132,14 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
         if row and str(row.get("status") or "") in {"pending", "running"}:
             return row["task_id"]
     msg = (user_message or str(ex.get("user_message") or "")).strip()
-    if msg and is_collect_intent(msg):
+    if msg and is_expand_intent(msg):
         return store.ensure_task(session_id=session_id, user_message=msg)
     tool_name = str(payload.get("tool_name") or "")
     if session_id and tool_name.startswith("mcp_"):
         tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
         handle = _extract_account_id(tool_args) or ""
         if handle:
-            seed_msg = f"account-intelligence-collect 采集 @{handle}"
+            seed_msg = f"account-expansion 账号扩建 @{handle}"
             return store.ensure_task(session_id=session_id, user_message=seed_msg)
     return None
 
@@ -149,7 +149,7 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
     user_message = str(ex.get("user_message") or "").strip()
     if not user_message:
         return
-    if not is_collect_intent(user_message):
+    if not is_expand_intent(user_message):
         return
     try:
         task_id = _resolve_task_id(payload, user_message=user_message)
@@ -455,13 +455,16 @@ def _update_steps_after_tool(
     tool_name: str,
     result_data: Dict[str, Any],
 ) -> None:
+    from collect_01.step_reconcile import maybe_skip_maigret_on_profile
+
     if tool_name == "mcp_twitter_get_user_info":
-        store.set_step_status(task_id, "step1_seed", "completed", message="种子 Twitter 资料已入库")
+        store.set_step_status(task_id, "step1_seed", "completed", message="种子资料已入库")
         return
     if tool_name == "mcp_maigret_collect_accounts":
         return
     step_key = TOOL_PRIMARY_STEP.get(tool_name)
     if step_key == "step3_profiles":
+        maybe_skip_maigret_on_profile(store, task_id)
         n_prof = len(result_data.get("profiles") or [])
         msg = f"{tool_name} 执行中"
         if n_prof:
@@ -497,7 +500,7 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
     task_id = _resolve_task_id(payload, user_message=user_message)
     if not task_id:
         logger.info(
-            "post_llm_call 跳过：无采集 task session=%s len=%d",
+            "post_llm_call 跳过：无扩建 task session=%s len=%d",
             payload.get("session_id"),
             len(assistant),
         )
@@ -540,7 +543,7 @@ def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
         return None
     for row in rows:
         text = str(row[0] or "").strip()
-        if is_three_section_report(text):
+        if is_four_section_report(text):
             return text
     for row in rows:
         text = str(row[0] or "").strip()
@@ -613,7 +616,7 @@ def main() -> int:
     except DbError as exc:
         logger.warning("%s", exc)
     except Exception as exc:
-        logger.exception("collect_01 sink 异常: %s", exc)
+        logger.exception("expand_02 sink 异常: %s", exc)
         return 1
     return 0
 

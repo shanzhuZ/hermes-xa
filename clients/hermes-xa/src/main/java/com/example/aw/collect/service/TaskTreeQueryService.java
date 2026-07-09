@@ -105,6 +105,7 @@ public class TaskTreeQueryService {
 
         Map<String, Object> tree = new LinkedHashMap<String, Object>();
         tree.put("taskId", taskId);
+        tree.put("taskType", task.get("task_type"));
         tree.put("sessionId", task.get("session_id"));
         tree.put("status", task.get("status"));
         tree.put("currentPhase", task.get("current_phase"));

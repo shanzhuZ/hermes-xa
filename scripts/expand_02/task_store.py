@@ -1,4 +1,4 @@
-"""01 采集任务与步骤状态写入。"""
+"""02 账号扩建任务与步骤状态写入。"""
 
 from __future__ import annotations
 
@@ -13,7 +13,7 @@ from typing import Any, Dict, List, Optional
 from urllib.parse import urlparse
 
 from collect_01 import db
-from collect_01.phases import (
+from expand_02.phases import (
     PHASE_COLLECT,
     PHASE_ACCOUNT_FINALIZE,
     PHASE_CROSS_PLATFORM,
@@ -32,8 +32,8 @@ from collect_01.phases import (
 
 logger = logging.getLogger(__name__)
 
-_COLLECT_INTENT = re.compile(
-    r"(account-intelligence-collect|账号信息采集|采集.*?(推特|twitter|微博|weibo|@))",
+_EXPAND_INTENT = re.compile(
+    r"(account-expansion|account-intelligence-expand|账号扩建|扩建.*?(推特|twitter|微博|weibo|@))",
     re.I,
 )
 _CROSS_YES = re.compile(r"(跨平台|cross.?platform)", re.I)
@@ -72,16 +72,16 @@ def _parse_seed(user_message: str) -> Dict[str, Any]:
     }
 
 
-def is_collect_intent(user_message: str) -> bool:
-    return bool(_COLLECT_INTENT.search(user_message or ""))
+def is_expand_intent(user_message: str) -> bool:
+    return bool(_EXPAND_INTENT.search(user_message or ""))
 
 
-def is_three_section_report(content: str) -> bool:
-    """判断是否为步骤七「三节报告」终稿。"""
+def is_four_section_report(content: str) -> bool:
+    """判断是否为扩建四节终稿。"""
     text = (content or "").replace(" ", "").replace("\u3000", "")
     if len(text) < 30:
         return False
-    markers = ("一、个人信息", "二、账号核验", "三、发文")
+    markers = ("一、账号扩建收集", "二、多平台信息采集", "三、账号核查", "四、账号")
     return sum(1 for m in markers if m in text) >= 2
 
 
@@ -165,7 +165,7 @@ def _step_status(task_id: str, step_key: str) -> str:
 
 
 class TaskStore:
-    """01 账号采集入库门面。"""
+    """02 账号扩建入库门面。"""
 
     def get_task_by_session(self, session_id: str) -> Optional[Dict[str, Any]]:
         if not session_id:
@@ -258,8 +258,8 @@ class TaskStore:
         """Java/Spring 在调 Gateway 前预建任务（status=pending），Hook 接手后转 running。"""
         if not task_id or not session_id:
             raise ValueError("task_id 与 session_id 不能为空")
-        if not is_collect_intent(user_message):
-            raise ValueError("非采集意图消息，无法创建任务")
+        if not is_expand_intent(user_message):
+            raise ValueError("非账号扩建意图消息，无法创建任务")
         existing = self.get_task(task_id)
         if existing:
             return task_id
@@ -270,7 +270,7 @@ class TaskStore:
             )
         seed = _parse_seed(user_message)
         if cross_platform is None:
-            cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
+            cross_platform = 1
         initial_phase_steps = initial_steps(bool(cross_platform))
         with db.transaction() as conn:
             with conn.cursor() as cur:
@@ -305,14 +305,7 @@ class TaskStore:
                         """,
                         (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
                     )
-        if not cross_platform:
-            self.set_step_status(task_id, "step2_cross_platform", "skipped", message="用户未要求跨平台采集")
-            self.set_step_status(task_id, "step3_profiles", "skipped", message="单平台任务，跳过候选主页采集")
-            self.set_step_status(task_id, "step3_streams", "skipped", message="单平台任务，跳过跨平台流拆分")
-            self.set_step_status(task_id, "step4_text_compare", "skipped", message="单平台任务，跳过跨平台文本流比对")
-            self.set_step_status(task_id, "step4_image_compare", "skipped", message="单平台任务，跳过跨平台图片流比对")
-            self.set_step_status(task_id, "step5_validated", "skipped", message="单平台任务，默认种子账号直接进入发文采集")
-        logger.info("预建采集任务 task_id=%s session=%s", task_id, session_id)
+        logger.info("预建扩建任务 task_id=%s session=%s", task_id, session_id)
         return task_id
 
     def ensure_task(
@@ -322,7 +315,7 @@ class TaskStore:
         user_message: str,
         task_id: Optional[str] = None,
     ) -> Optional[str]:
-        if not is_collect_intent(user_message):
+        if not is_expand_intent(user_message):
             return None
         if task_id:
             row = self.get_task(task_id)
@@ -336,9 +329,7 @@ class TaskStore:
 
         new_id = task_id or str(uuid.uuid4())
         seed = _parse_seed(user_message)
-        cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
-        if cross_platform == 1 and _CROSS_YES.search(user_message or ""):
-            cross_platform = 1
+        cross_platform = 1
         initial_phase_steps = initial_steps(bool(cross_platform))
         with db.transaction() as conn:
             with conn.cursor() as cur:
@@ -374,15 +365,8 @@ class TaskStore:
                         (new_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
                     )
         self.set_step_status(new_id, "step1_seed", "running", message="等待种子账号资料采集…")
-        if not cross_platform:
-            self.set_step_status(new_id, "step2_cross_platform", "skipped", message="用户未要求跨平台采集")
-            self.set_step_status(new_id, "step3_profiles", "skipped", message="单平台任务，跳过候选主页采集")
-            self.set_step_status(new_id, "step3_streams", "skipped", message="单平台任务，跳过跨平台流拆分")
-            self.set_step_status(new_id, "step4_text_compare", "skipped", message="单平台任务，跳过跨平台文本流比对")
-            self.set_step_status(new_id, "step4_image_compare", "skipped", message="单平台任务，跳过跨平台图片流比对")
-            self.set_step_status(new_id, "step5_validated", "skipped", message="单平台任务，默认种子账号直接进入发文采集")
-            self.set_task_phase(new_id, PHASE_RESOLVE_SEED)
-        logger.info("创建采集任务 task_id=%s session=%s", new_id, session_id)
+        self.set_step_status(new_id, "step2_cross_platform", "running", message="等待 Maigret 跨平台发现…")
+        logger.info("创建扩建任务 task_id=%s session=%s", new_id, session_id)
         return new_id
 
     def save_dialogue(
@@ -414,7 +398,7 @@ class TaskStore:
         if not text or not task_id or text == "(empty)":
             return False
         clipped = text[:65535]
-        is_report = is_three_section_report(text)
+        is_report = is_four_section_report(text)
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
             existing = db.fetch_one(
@@ -434,7 +418,7 @@ class TaskStore:
                     """,
                     (session_id, clipped, existing["id"]),
                 )
-                logger.info("已更新采集终稿 task=%s len=%d", task_id, len(text))
+                logger.info("已更新扩建终稿 task=%s len=%d", task_id, len(text))
                 return True
         dup = db.fetch_one(
             """
@@ -940,7 +924,7 @@ class TaskStore:
             reconcile_stuck_pipeline,
         )
 
-        reconcile_stuck_pipeline(self, task_id, allow_skip_maigret=False)
+        reconcile_stuck_pipeline(self, task_id, allow_skip_maigret=True)
         reconcile_post_child_steps(self, task_id)
 
         profiles = db.fetch_one(
@@ -987,9 +971,9 @@ class TaskStore:
                 poc,
                 db.json_dumps(platforms),
                 (
-                    f"采集完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
+                    f"扩建完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
                     if ready_done
-                    else f"采集未收口：step2={step2}，step5={step5}，当前 {pc} 条资料，{poc} 条发文"
+                    else f"扩建未收口：step2={step2}，step5={step5}，当前 {pc} 条资料，{poc} 条发文"
                 ),
             ),
         )

@@ -126,7 +126,7 @@ apify:
   instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
   tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
   telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
-  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
-  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
+  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper, input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] } }
+  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper, input: { usernames: ["{u}"], maxRepos: 5 } }
 
 midflight: 步骤1-5 对用户最多 2 句进度；禁止输出一、二、三、四、任何一节

@@ -16,16 +16,17 @@ import java.util.regex.Pattern;
  * 采集任务预建：在调 Gateway 之前写入 hermes_tasks、用户一句话、步骤行。
  */
 @Service
-public class CollectTaskCreateService {
+public class CollectTaskCreateService implements TaskCreateService {
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
-    /**
-     * Java 生成 taskId 并预插库；Hook 后续靠 session 下 active 任务对齐此 ID。
-     *
-     * @return 新建或已存在的 taskId
-     */
+    @Override
+    public String dbTaskType() {
+        return "account_collect";
+    }
+
+    @Override
     @Transactional(rollbackFor = Exception.class)
     public String createPendingTask(String taskId, String sessionId, String userMessage) {
         if (taskId == null || taskId.trim().isEmpty()) {
@@ -55,7 +56,7 @@ public class CollectTaskCreateService {
         int crossPlatform = parseCrossPlatform(userMessage);
         String seedJson = JSON.toJSONString(buildSeedJson(userMessage));
 
-        collectTaskMapper.insertTask(taskId, sessionId, crossPlatform, seedJson);
+        collectTaskMapper.insertTask(taskId, sessionId, dbTaskType(), crossPlatform, seedJson);
         String clipped = userMessage.length() > 65535 ? userMessage.substring(0, 65535) : userMessage;
         collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped);
 

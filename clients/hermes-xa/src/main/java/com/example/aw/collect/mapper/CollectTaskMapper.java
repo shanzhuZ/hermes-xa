@@ -20,6 +20,7 @@ public interface CollectTaskMapper {
 
     void insertTask(@Param("taskId") String taskId,
                     @Param("sessionId") String sessionId,
+                    @Param("taskType") String taskType,
                     @Param("crossPlatform") int crossPlatform,
                     @Param("seedJson") String seedJson);
 

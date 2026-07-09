@@ -83,7 +83,7 @@ public class CollectApiController {
             err.put("hint", "第一轮新对话请用 POST /api/collect/start，无需传 sessionId");
             return ResponseEntity.badRequest().body(err);
         }
-        return doSubmit(sessionId, taskId, message);
+        return doSubmit(sessionId, taskId, message, firstNonBlank(req, "taskType", "task_type"));
     }
 
     /**
@@ -100,9 +100,16 @@ public class CollectApiController {
             err.put("error", "message_required");
             return ResponseEntity.badRequest().body(err);
         }
+        String taskType = firstNonBlank(req, "taskType", "task_type");
+        if (taskType.isEmpty()) {
+            taskType = "collect";
+        }
         try {
             Map<String, Object> body = collectSubmitService.submitCollectStart(
-                    sessionId.isEmpty() ? null : sessionId, taskId.isEmpty() ? null : taskId, message);
+                    sessionId.isEmpty() ? null : sessionId,
+                    taskId.isEmpty() ? null : taskId,
+                    message,
+                    taskType);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
         } catch (IllegalStateException e) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
@@ -120,15 +127,19 @@ public class CollectApiController {
         }
     }
 
-    private ResponseEntity<Map<String, Object>> doSubmit(String sessionId, String taskId, String message) {
+    private ResponseEntity<Map<String, Object>> doSubmit(
+            String sessionId, String taskId, String message, String taskType) {
         if (message.isEmpty()) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
             err.put("error", "message_required");
             return ResponseEntity.badRequest().body(err);
         }
+        if (taskType == null || taskType.trim().isEmpty()) {
+            taskType = "collect";
+        }
         try {
             Map<String, Object> body = collectSubmitService.submitCollect(
-                    sessionId, taskId.isEmpty() ? null : taskId, message);
+                    sessionId, taskId.isEmpty() ? null : taskId, message, taskType);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
         } catch (IllegalStateException e) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
@@ -159,6 +170,7 @@ public class CollectApiController {
         }
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("taskId", task.get("task_id"));
+        body.put("taskType", task.get("task_type"));
         body.put("sessionId", task.get("session_id"));
         body.put("status", task.get("status"));
         body.put("currentPhase", task.get("current_phase"));
@@ -250,6 +262,7 @@ public class CollectApiController {
                 Map<String, Object> item = new LinkedHashMap<String, Object>();
                 Object tid = row.get("task_id");
                 item.put("taskId", tid);
+                item.put("taskType", row.get("task_type"));
                 item.put("status", row.get("status"));
                 item.put("createdAt", row.get("created_at"));
                 item.put("treeUrl", "/api/tasks/" + tid + "/tree");

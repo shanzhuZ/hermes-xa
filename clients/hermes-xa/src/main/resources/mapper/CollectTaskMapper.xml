@@ -4,7 +4,7 @@
 <mapper namespace="com.example.aw.collect.mapper.CollectTaskMapper">
 
     <select id="selectTaskById" resultType="java.util.HashMap">
-        SELECT task_id, session_id, status, current_phase, cross_platform,
+        SELECT task_id, session_id, status, current_phase, cross_platform, task_type,
                started_at, finished_at, created_at, updated_at
         FROM hermes_tasks
         WHERE task_id = #{taskId}
@@ -15,17 +15,15 @@
         SELECT task_id, session_id, status
         FROM hermes_tasks
         WHERE session_id = #{sessionId}
-          AND task_type = 'account_collect'
           AND status IN ('pending', 'running')
         ORDER BY created_at DESC
         LIMIT 1
     </select>
 
     <select id="selectTasksBySessionId" resultType="java.util.HashMap">
-        SELECT task_id, session_id, status, created_at
+        SELECT task_id, session_id, status, task_type, created_at
         FROM hermes_tasks
         WHERE session_id = #{sessionId}
-          AND task_type = 'account_collect'
         ORDER BY created_at DESC
         LIMIT 50
     </select>
@@ -34,7 +32,7 @@
         INSERT INTO hermes_tasks
             (task_id, task_type, session_id, status, current_phase, cross_platform, seed_json)
         VALUES
-            (#{taskId}, 'account_collect', #{sessionId}, 'pending', 'resolve_seed', #{crossPlatform}, #{seedJson})
+            (#{taskId}, #{taskType}, #{sessionId}, 'pending', 'resolve_seed', #{crossPlatform}, #{seedJson})
     </insert>
 
     <insert id="insertUserDialogue">

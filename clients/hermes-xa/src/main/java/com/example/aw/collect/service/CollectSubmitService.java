@@ -1,59 +1,72 @@
 package com.example.aw.collect.service;
 
+import com.example.aw.collect.registry.TaskTypeRegistry;
 import com.example.aw.gateway.HermesGatewayClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.UUID;
 
 /**
- * 编排：预建任务 + 异步调 Gateway。
+ * 编排：预建任务 + 异步调 Gateway（支持多 taskType）。
  */
 @Service
 public class CollectSubmitService {
 
     @Autowired
-    private CollectTaskCreateService collectTaskCreateService;
+    private TaskCreateRegistry taskCreateRegistry;
+
+    @Autowired
+    private TaskTypeRegistry taskTypeRegistry;
 
     @Autowired
     private HermesGatewayClient hermesGatewayClient;
 
-    /**
-     * 完整提交一次采集：先写库拿 taskId，再后台调 Hermes。
-     *
-     * @return 含 taskId、轮询地址等字段的 Map
-     */
-    public Map<String, Object> submitCollect(String sessionId, String taskId, String message) throws Exception {
-        String finalTaskId = collectTaskCreateService.createPendingTask(taskId, sessionId, message);
-        hermesGatewayClient.submitCollectAsync(sessionId, finalTaskId, message);
-        return buildAcceptedBody(sessionId, finalTaskId, false);
+    public Map<String, Object> submitCollect(String sessionId, String taskId, String message, String taskType)
+            throws Exception {
+        return submitInternal(sessionId, taskId, message, taskType, false);
     }
 
-    /**
-     * 前端推荐入口：无 sessionId 时自动建会话（第一轮新对话），再下任务。
-     *
-     * @param sessionId 可为空；空则调 Gateway 新建 session
-     * @return 含 sessionId、taskId、是否新会话、轮询 tree 地址
-     */
-    public Map<String, Object> submitCollectStart(String sessionId, String taskId, String message) throws Exception {
+    public Map<String, Object> submitCollectStart(String sessionId, String taskId, String message, String taskType)
+            throws Exception {
         boolean newConversation = false;
         if (sessionId == null || sessionId.trim().isEmpty()) {
             sessionId = hermesGatewayClient.createSession();
             newConversation = true;
         }
-        String finalTaskId = collectTaskCreateService.createPendingTask(taskId, sessionId, message);
-        hermesGatewayClient.submitCollectAsync(sessionId, finalTaskId, message);
-        return buildAcceptedBody(sessionId, finalTaskId, newConversation);
+        return submitInternal(sessionId, taskId, message, taskType, newConversation);
     }
 
-    /**
-     * 组装 202 响应体，前端拿 taskId 轮询 pollTreeUrl 即可。
-     */
-    private Map<String, Object> buildAcceptedBody(String sessionId, String taskId, boolean newConversation) {
+    private Map<String, Object> submitInternal(
+            String sessionId, String taskId, String message, String taskType, boolean newConversation)
+            throws Exception {
+        if (message == null || message.trim().isEmpty()) {
+            throw new IllegalArgumentException("message 不能为空");
+        }
+        TaskTypeRegistry.TaskTypeDef typeDef = taskTypeRegistry.resolve(taskType);
+        String gatewayMessage = taskTypeRegistry.buildGatewayMessage(taskType, message);
+
+        if (taskId == null || taskId.trim().isEmpty()) {
+            taskId = UUID.randomUUID().toString();
+        }
+
+        taskCreateRegistry.resolve(typeDef.getFrontendType())
+                .createPendingTask(taskId, sessionId, gatewayMessage);
+
+        hermesGatewayClient.submitCollectAsync(sessionId, taskId, gatewayMessage);
+        return buildAcceptedBody(sessionId, taskId, typeDef, newConversation);
+    }
+
+    private Map<String, Object> buildAcceptedBody(
+            String sessionId, String taskId, TaskTypeRegistry.TaskTypeDef typeDef, boolean newConversation) {
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("sessionId", sessionId);
         body.put("taskId", taskId);
+        body.put("taskType", typeDef.getFrontendType());
+        body.put("dbTaskType", typeDef.getDbTaskType());
+        body.put("skillName", typeDef.getSkillName());
         body.put("newConversation", newConversation);
         body.put("status", "pending");
         body.put("pollTreeUrl", "/api/tasks/" + taskId + "/tree");

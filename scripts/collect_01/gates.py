@@ -111,8 +111,8 @@ def can_advance_to_step45(task_id: str) -> Dict[str, Any]:
     cross = int(task.get("cross_platform") or 0)
     s2 = get_step_status(task_id, "step2_cross_platform")
     if cross:
-        if s2 != "completed":
-            return {"ok": False, "message": f"step2_cross_platform={s2 or 'pending'}，跨平台任务须先完成 Maigret"}
+        if s2 not in ("completed", "skipped"):
+            return {"ok": False, "message": f"step2_cross_platform={s2 or 'pending'}，跨平台任务须先完成或跳过 Maigret"}
     elif s2 not in ("completed", "skipped"):
         return {"ok": False, "message": f"step2_cross_platform={s2 or 'pending'}，应标记为 skipped"}
 
