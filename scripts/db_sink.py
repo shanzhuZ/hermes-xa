@@ -21,6 +21,29 @@ from collect_01.task_store import is_collect_intent
 from expand_02.task_store import is_expand_intent
 
 
+def _ensure_utf8_stdio() -> None:
+    """Hook 子进程在 Windows 上默认 GBK，强制 UTF-8 避免 stderr 日志炸掉。"""
+    import io
+
+    for name in ("stdin", "stdout", "stderr"):
+        stream = getattr(sys, name, None)
+        if stream is None:
+            continue
+        if hasattr(stream, "reconfigure"):
+            try:
+                stream.reconfigure(encoding="utf-8", errors="replace")
+            except Exception:
+                pass
+        elif hasattr(stream, "buffer"):
+            wrapper = io.TextIOWrapper(
+                stream.buffer,
+                encoding="utf-8",
+                errors="replace",
+                line_buffering=True,
+            )
+            setattr(sys, name, wrapper)
+
+
 def _extra(payload: Dict[str, Any]) -> Dict[str, Any]:
     ex = payload.get("extra")
     return ex if isinstance(ex, dict) else {}
@@ -88,6 +111,7 @@ def _resolve_sink_module(payload: Dict[str, Any]):
 
 
 def main() -> int:
+    _ensure_utf8_stdio()
     try:
         if hasattr(sys.stdin, "buffer"):
             data = sys.stdin.buffer.read()

@@ -598,7 +598,7 @@ class TaskStore:
             (step_key, tool_output_id),
         )
 
-    def save_profile_row(self, row: Dict[str, Any]) -> None:
+    def save_profile_row(self, row: Dict[str, Any], *, step_key: str = "step3_profiles") -> None:
         db.execute(
             """
             INSERT INTO collect_profiles
@@ -620,8 +620,14 @@ class TaskStore:
             """,
             row,
         )
+        try:
+            from collect_01.display_store import sync_profile_display
 
-    def save_candidate_rows(self, rows: List[Dict[str, Any]]) -> None:
+            sync_profile_display(row, step_key=step_key)
+        except Exception as exc:
+            logger.warning("展示层双写 profile 失败: %s", exc)
+
+    def save_candidate_rows(self, rows: List[Dict[str, Any]], *, step_key: str = "step2_cross_platform") -> None:
         for row in rows:
             db.execute(
                 """
@@ -643,8 +649,14 @@ class TaskStore:
                     row.get("tool_output_id"),
                 ),
             )
+            try:
+                from collect_01.display_store import sync_candidate_display
 
-    def save_post_rows(self, rows: List[Dict[str, Any]]) -> None:
+                sync_candidate_display(row["task_id"], row["platform"], row["account_id"], step_key=step_key)
+            except Exception as exc:
+                logger.warning("展示层双写 candidate 失败: %s", exc)
+
+    def save_post_rows(self, rows: List[Dict[str, Any]], *, step_key: str = "step6_posts") -> None:
         for row in rows:
             db.execute(
                 """
@@ -664,6 +676,12 @@ class TaskStore:
                 """,
                 row,
             )
+            try:
+                from collect_01.display_store import sync_post_display_for_tool
+
+                sync_post_display_for_tool(row, step_key=step_key)
+            except Exception as exc:
+                logger.warning("展示层双写 post 失败: %s", exc)
 
     def build_streams_from_profile(self, task_id: str, profile: Dict[str, Any]) -> None:
         """步骤四：从 profile 拆文本流/图片流。"""
@@ -689,6 +707,12 @@ class TaskStore:
                 """,
                 (sid, task_id, platform, account_id, field, str(value)[:4000]),
             )
+            try:
+                from collect_01.display_store import sync_stream_display
+
+                sync_stream_display(sid, step_key="step3_streams")
+            except Exception as exc:
+                logger.warning("展示层双写 stream 失败: %s", exc)
         avatar = profile.get("avatar_url")
         if avatar:
             sid = f"{stream_id_base}:image:avatar"
@@ -702,6 +726,12 @@ class TaskStore:
                 """,
                 (sid, task_id, platform, account_id, avatar),
             )
+            try:
+                from collect_01.display_store import sync_stream_display
+
+                sync_stream_display(sid, step_key="step3_streams")
+            except Exception as exc:
+                logger.warning("展示层双写 stream 失败: %s", exc)
         # 仅写 collect_identity_streams，不更新步骤状态（避免 step1 期间误亮「步骤四：流拆分」）
 
     def mark_image_stream_progress(
@@ -755,6 +785,12 @@ class TaskStore:
             """,
             (status, detail, stream_id),
         )
+        try:
+            from collect_01.display_store import sync_stream_display
+
+            sync_stream_display(stream_id, step_key="step4_image_compare")
+        except Exception as exc:
+            logger.warning("展示层双写 stream 失败: %s", exc)
         return True
 
     def mark_remaining_image_streams_failed(self, task_id: str, detail: str) -> int:
@@ -769,7 +805,14 @@ class TaskStore:
                     """,
                     (detail[:500], task_id),
                 )
-                return int(cur.rowcount or 0)
+                n = int(cur.rowcount or 0)
+        try:
+            from collect_01.display_store import sync_streams_for_task
+
+            sync_streams_for_task(task_id, step_key="step4_image_compare", stream_type="image")
+        except Exception as exc:
+            logger.warning("展示层双写 image streams 失败: %s", exc)
+        return n
 
     def run_text_compare(self, task_id: str) -> None:
         """步骤四：文本流与种子比对（规则，不依赖模型）。"""
@@ -844,6 +887,12 @@ class TaskStore:
                 "UPDATE collect_identity_streams SET validation_status=%s, validation_detail=%s WHERE stream_id=%s",
                 (status, "文本流规则比对", row["stream_id"]),
             )
+        try:
+            from collect_01.display_store import sync_streams_for_task
+
+            sync_streams_for_task(task_id, step_key="step4_text_compare", stream_type="text")
+        except Exception as exc:
+            logger.warning("展示层双写 text streams 失败: %s", exc)
         self.set_step_status(
             task_id,
             "step4_text_compare",
@@ -908,6 +957,12 @@ class TaskStore:
                     db.json_dumps([s["stream_id"] for s in passes]),
                 ),
             )
+            try:
+                from collect_01.display_store import sync_validated_display
+
+                sync_validated_display(task_id, platform, account_id, step_key="step5_validated")
+            except Exception as exc:
+                logger.warning("展示层双写 validated 失败: %s", exc)
         if platforms_for_posts:
             self.ensure_post_steps(task_id, platforms_for_posts)
         keep_keys = {post_step_key(p) for p in platforms_for_posts}
@@ -940,7 +995,7 @@ class TaskStore:
             reconcile_stuck_pipeline,
         )
 
-        reconcile_stuck_pipeline(self, task_id, allow_skip_maigret=False)
+        reconcile_stuck_pipeline(self, task_id)
         reconcile_post_child_steps(self, task_id)
 
         profiles = db.fetch_one(

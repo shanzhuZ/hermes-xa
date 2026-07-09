@@ -95,10 +95,33 @@ def is_image_compare_ready(task_id: str) -> bool:
     return count_image_streams_processed(task_id) >= n_img
 
 
+def _expand_post_child_pending(task_id: str) -> Optional[str]:
+    """扩建任务：步骤二下分平台发文子步骤须全部终态（排除遗留 step6_posts）。"""
+    task = db.fetch_one(
+        "SELECT task_type FROM hermes_tasks WHERE task_id=%s",
+        (task_id,),
+    )
+    if (task or {}).get("task_type") != "account_expand":
+        return None
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key='step3_profiles'
+          AND step_key LIKE %s AND step_key <> 'step6_posts'
+        """,
+        (task_id, "step6_post_%"),
+    )
+    for row in rows:
+        st = str(row.get("status") or "")
+        if st in ("pending", "running"):
+            return f"{row.get('step_key')}={st}"
+    return None
+
+
 def can_advance_to_step45(task_id: str) -> Dict[str, Any]:
     """step4 文本比对 / step5 收敛前门禁：step1 完成，step2 完成或跳过，step3 完成。"""
     task = db.fetch_one(
-        "SELECT cross_platform FROM hermes_tasks WHERE task_id=%s",
+        "SELECT cross_platform, task_type FROM hermes_tasks WHERE task_id=%s",
         (task_id,),
     )
     if not task:
@@ -118,6 +141,13 @@ def can_advance_to_step45(task_id: str) -> Dict[str, Any]:
 
     s3 = get_step_status(task_id, "step3_profiles")
     if s3 != "completed":
+        pending_child = _expand_post_child_pending(task_id)
+        if pending_child:
+            return {"ok": False, "message": f"步骤二发文子步骤未全部完成（{pending_child}）"}
         return {"ok": False, "message": f"step3_profiles={s3 or 'pending'}，候选主页未采完"}
+
+    pending_child = _expand_post_child_pending(task_id)
+    if pending_child:
+        return {"ok": False, "message": f"步骤二发文子步骤未全部完成（{pending_child}）"}
 
     return {"ok": True, "message": "满足 step4/5 推进条件"}

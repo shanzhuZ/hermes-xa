@@ -1,7 +1,7 @@
 ---
 name: account-expansion
 description: "账号扩建@种子。种子profile→Maigret跨平台发现→候选主页采集→文本流核查→发文→一次输出四节(扩建收集/多平台采集/账号核查/账号)。禁画像禁web_search。"
-version: 1.0.0
+version: 1.1.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -26,7 +26,7 @@ metadata:
 2. **步骤 1～5**：禁止输出「一、」「二、」「三、」「四、」任何一节；最多 2 句进度
 3. **种子唯一**：只有用户指定的 @种子 是目标；禁止把 Maigret/简介里其他 handle 当种子
 4. **步骤 2 发现**：跑 `mcp_maigret_collect_accounts`；去重后进第一节；失败→记录并继续，不中止；**禁止**按 MCP 返回写画像
-5. **步骤 3 采主页 + 发文（一次采完，同源）**：遍历候选（**种子平台除外**），对每个候选在**同一次主页采集里同时**拿 profile **和** 发文——profile 用 `get_user_info`/`get_channel_stats`/`get_profile`，发文用 `get_user_tweets`/`analyze_channel_videos`/`get_user_feeds`/Apify dataset；两者取自同一次采集，确保账号信息与发文**同源真实**（不再分两步、不二次采集）；**种子的发文也在本步同源补采**（种子 profile 已在步骤1采）；有 MCP→MCP，无 MCP→Apify；**失败重试最多 2 次**，三次均失败→跳过并标记"采集失败"；不换工具、不用 web_search
+5. **步骤 3 采主页 + 发文（平台顺序稳定）**：Maigret 结束后，先按“步骤二已确认的平台列表”建立本轮要采集的平台顺序；之后按平台顺序逐个平台完成采集。每个平台允许在同一步内拿 profile + 发文，但**禁止**只先跑种子 Twitter 发文、再回头补其他平台主页；也**禁止**步骤 4 先于步骤 3 全量采集启动。有 MCP→MCP，无 MCP→Apify；失败重试最多 2 次，三次均失败→跳过并标记"采集失败"；不换工具、不用 web_search
 6. **步骤 4** 双流核查（候选 vs 种子），两条流都要做：
    - **文本流**（账号信息 + 发文信息）：昵称 / handle / 简介 / 互链 / 邮箱 / 发文内容，共 6 项逐条对比
    - **图片流**（**只用头像 avatar_url**，不用背景图、不用发文图片）：对步骤 3 profile 里的头像 URL 调 `mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim+eng")` 提取图内文字 **+** `vision_analyze` 描述画面，候选头像 vs 种子头像做比对
@@ -40,7 +40,7 @@ metadata:
 |----|------|
 | 1 | 种子平台 MCP profile |
 | 2 | Maigret MCP（跨平台发现） |
-| 3 | 各候选主页：**一次采完 profile + 发文**（MCP **或** Apify，小 limit）；profile 与发文同源；失败跳过 |
+| 3 | 按步骤二的平台顺序，逐个平台采集 profile + 发文（MCP **或** Apify，小 limit）；禁止只先跑单个平台发文 |
 | 4 | 文本流（账号信息+发文内容）+ 图片流（**头像 avatar_url** OCR+vision）vs 种子（核查打分） |
 | 5 | 判定核查通过账号（**仅 HIGH 纳入**，MEDIUM/LOW 排除）→ 决定第四节列表 |
 | 6 | **一次**输出四节 |

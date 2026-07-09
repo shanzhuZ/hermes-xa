@@ -188,6 +188,13 @@
         ORDER BY published_at DESC, id DESC
     </select>
 
+    <select id="selectDisplayRecordsByStepKey" resultType="java.util.HashMap">
+        SELECT id, record_title, platform, display_fields
+        FROM collect_display_records
+        WHERE task_id = #{taskId} AND step_key = #{stepKey}
+        ORDER BY id ASC
+    </select>
+
     <select id="selectLatestAssistantReply" resultType="java.util.HashMap">
         SELECT content, created_at, msg_type
         FROM hermes_user_dialogues

@@ -22,6 +22,7 @@ from expand_02.phases import (
     ROOT_STEPS,
     TASK_TYPE,
     PLATFORM_LABELS,
+    POST_PARENT_STEP_KEY,
     initial_steps,
     post_step_key,
     post_step_node,
@@ -162,6 +163,71 @@ def _step_status(task_id: str, step_key: str) -> str:
         (task_id, step_key),
     )
     return str((row or {}).get("status") or "").strip() or "pending"
+
+
+def _expand_post_step_rows(task_id: str) -> List[Dict[str, Any]]:
+    return db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+          AND step_key LIKE %s AND step_key <> 'step6_posts'
+        ORDER BY step_order, step_key
+        """,
+        (task_id, POST_PARENT_STEP_KEY, "step6_post_%"),
+    )
+
+
+def _reconcile_expand_post_child_steps(store: "TaskStore", task_id: str) -> int:
+    """02 扩建：发文子步骤挂在 step3_profiles 下，不再单独维护 step6_posts 根节点。"""
+    post_counts = {
+        str(r["platform"]): int(r["c"])
+        for r in db.fetch_all(
+            "SELECT platform, COUNT(*) AS c FROM collect_posts WHERE task_id=%s GROUP BY platform",
+            (task_id,),
+        )
+    }
+    validated = {
+        str(r["platform"])
+        for r in db.fetch_all(
+            """
+            SELECT DISTINCT platform FROM collect_validated_accounts
+            WHERE task_id=%s AND verdict='validated'
+            """,
+            (task_id,),
+        )
+    }
+    expected = validated | set(post_counts.keys())
+    if expected:
+        store.ensure_post_steps(task_id, sorted(expected))
+    updated = 0
+    for row in _expand_post_step_rows(task_id):
+        step_key = str(row.get("step_key") or "")
+        if not step_key.startswith("step6_post_"):
+            continue
+        platform = step_key.replace("step6_post_", "", 1)
+        cur = str(row.get("status") or "")
+        if cur in {"completed", "skipped", "failed"}:
+            continue
+        cnt = post_counts.get(platform, 0)
+        if cnt > 0:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "completed",
+                message=f"已采集 {platform} 发文 {cnt} 条",
+                payload={"post_count": cnt},
+            )
+            updated += 1
+            continue
+        if platform in validated:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "skipped",
+                message=f"{platform} 已纳入可信账号，但未采集到发文",
+            )
+            updated += 1
+    return updated
 
 
 class TaskStore:
@@ -446,7 +512,7 @@ class TaskStore:
             )
 
     def ensure_post_steps(self, task_id: str, platforms: List[str]) -> None:
-        parent = "step6_posts"
+        parent = POST_PARENT_STEP_KEY
         for platform in sorted(set(platforms), key=post_step_order):
             key = post_step_key(platform)
             db.execute(
@@ -529,9 +595,9 @@ class TaskStore:
                 """
                 INSERT IGNORE INTO collect_phase_steps
                   (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, 'step6_posts', %s, %s, %s, 'pending')
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, step_key, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
+                (task_id, step_key, POST_PARENT_STEP_KEY, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
             )
 
     def save_tool_output(
@@ -582,7 +648,7 @@ class TaskStore:
             (step_key, tool_output_id),
         )
 
-    def save_profile_row(self, row: Dict[str, Any]) -> None:
+    def save_profile_row(self, row: Dict[str, Any], *, step_key: str = "step3_profiles") -> None:
         db.execute(
             """
             INSERT INTO collect_profiles
@@ -604,8 +670,14 @@ class TaskStore:
             """,
             row,
         )
+        try:
+            from collect_01.display_store import sync_profile_display
 
-    def save_candidate_rows(self, rows: List[Dict[str, Any]]) -> None:
+            sync_profile_display(row, step_key=step_key)
+        except Exception as exc:
+            logger.warning("展示层双写 profile 失败: %s", exc)
+
+    def save_candidate_rows(self, rows: List[Dict[str, Any]], *, step_key: str = "step2_cross_platform") -> None:
         for row in rows:
             db.execute(
                 """
@@ -627,8 +699,14 @@ class TaskStore:
                     row.get("tool_output_id"),
                 ),
             )
+            try:
+                from collect_01.display_store import sync_candidate_display
 
-    def save_post_rows(self, rows: List[Dict[str, Any]]) -> None:
+                sync_candidate_display(row["task_id"], row["platform"], row["account_id"], step_key=step_key)
+            except Exception as exc:
+                logger.warning("展示层双写 candidate 失败: %s", exc)
+
+    def save_post_rows(self, rows: List[Dict[str, Any]], *, step_key: str = POST_PARENT_STEP_KEY) -> None:
         for row in rows:
             db.execute(
                 """
@@ -648,6 +726,12 @@ class TaskStore:
                 """,
                 row,
             )
+            try:
+                from collect_01.display_store import sync_post_display_for_tool
+
+                sync_post_display_for_tool(row, step_key=step_key)
+            except Exception as exc:
+                logger.warning("展示层双写 post 失败: %s", exc)
 
     def build_streams_from_profile(self, task_id: str, profile: Dict[str, Any]) -> None:
         """步骤四：从 profile 拆文本流/图片流。"""
@@ -673,6 +757,12 @@ class TaskStore:
                 """,
                 (sid, task_id, platform, account_id, field, str(value)[:4000]),
             )
+            try:
+                from collect_01.display_store import sync_stream_display
+
+                sync_stream_display(sid, step_key="step3_streams")
+            except Exception as exc:
+                logger.warning("展示层双写 stream 失败: %s", exc)
         avatar = profile.get("avatar_url")
         if avatar:
             sid = f"{stream_id_base}:image:avatar"
@@ -686,6 +776,12 @@ class TaskStore:
                 """,
                 (sid, task_id, platform, account_id, avatar),
             )
+            try:
+                from collect_01.display_store import sync_stream_display
+
+                sync_stream_display(sid, step_key="step3_streams")
+            except Exception as exc:
+                logger.warning("展示层双写 stream 失败: %s", exc)
         # 仅写 collect_identity_streams，不更新步骤状态（避免 step1 期间误亮「步骤四：流拆分」）
 
     def mark_image_stream_progress(
@@ -739,6 +835,12 @@ class TaskStore:
             """,
             (status, detail, stream_id),
         )
+        try:
+            from collect_01.display_store import sync_stream_display
+
+            sync_stream_display(stream_id, step_key="step4_image_compare")
+        except Exception as exc:
+            logger.warning("展示层双写 stream 失败: %s", exc)
         return True
 
     def mark_remaining_image_streams_failed(self, task_id: str, detail: str) -> int:
@@ -753,7 +855,14 @@ class TaskStore:
                     """,
                     (detail[:500], task_id),
                 )
-                return int(cur.rowcount or 0)
+                n = int(cur.rowcount or 0)
+        try:
+            from collect_01.display_store import sync_streams_for_task
+
+            sync_streams_for_task(task_id, step_key="step4_image_compare", stream_type="image")
+        except Exception as exc:
+            logger.warning("展示层双写 image streams 失败: %s", exc)
+        return n
 
     def run_text_compare(self, task_id: str) -> None:
         """步骤四：文本流与种子比对（规则，不依赖模型）。"""
@@ -828,6 +937,12 @@ class TaskStore:
                 "UPDATE collect_identity_streams SET validation_status=%s, validation_detail=%s WHERE stream_id=%s",
                 (status, "文本流规则比对", row["stream_id"]),
             )
+        try:
+            from collect_01.display_store import sync_streams_for_task
+
+            sync_streams_for_task(task_id, step_key="step4_text_compare", stream_type="text")
+        except Exception as exc:
+            logger.warning("展示层双写 text streams 失败: %s", exc)
         self.set_step_status(
             task_id,
             "step4_text_compare",
@@ -892,15 +1007,21 @@ class TaskStore:
                     db.json_dumps([s["stream_id"] for s in passes]),
                 ),
             )
+            try:
+                from collect_01.display_store import sync_validated_display
+
+                sync_validated_display(task_id, platform, account_id, step_key="step5_validated")
+            except Exception as exc:
+                logger.warning("展示层双写 validated 失败: %s", exc)
         if platforms_for_posts:
             self.ensure_post_steps(task_id, platforms_for_posts)
         keep_keys = {post_step_key(p) for p in platforms_for_posts}
         existing_post_steps = db.fetch_all(
             """
             SELECT step_key, status FROM collect_phase_steps
-            WHERE task_id=%s AND parent_step_key='step6_posts'
+            WHERE task_id=%s AND parent_step_key=%s
             """,
-            (task_id,),
+            (task_id, POST_PARENT_STEP_KEY),
         )
         for row in existing_post_steps:
             step_key = str(row.get("step_key") or "")
@@ -918,14 +1039,10 @@ class TaskStore:
         )
 
     def finalize_task(self, task_id: str) -> None:
-        from collect_01.step_reconcile import (
-            reconcile_post_child_steps,
-            reconcile_step6_parent,
-            reconcile_stuck_pipeline,
-        )
+        from collect_01.step_reconcile import reconcile_stuck_pipeline
 
-        reconcile_stuck_pipeline(self, task_id, allow_skip_maigret=True)
-        reconcile_post_child_steps(self, task_id)
+        reconcile_stuck_pipeline(self, task_id)
+        _reconcile_expand_post_child_steps(self, task_id)
 
         profiles = db.fetch_one(
             "SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)
@@ -947,10 +1064,19 @@ class TaskStore:
         platforms = [r["platform"] for r in plats]
         step2 = _step_status(task_id, "step2_cross_platform")
         step5 = _step_status(task_id, "step5_validated")
-        step6 = _step_status(task_id, "step6_posts")
         step2_ok = step2 in {"completed", "skipped"}
         step5_ok = step5 in {"completed", "skipped"}
-        ready_done = step2_ok and step5_ok and (step6 == "completed" or poc > 0)
+        post_children = _expand_post_step_rows(task_id)
+        post_children_ok = all(str(r.get("status") or "") in {"completed", "skipped", "failed"} for r in post_children)
+        legacy_step6 = _step_status(task_id, "step6_posts")
+        if legacy_step6 == "pending":
+            self.set_step_status(
+                task_id,
+                "step6_posts",
+                "skipped",
+                message="02 扩建已改为在步骤二下直接展示分平台发文子步骤",
+            )
+        ready_done = step2_ok and step5_ok and (poc > 0 or post_children_ok or not post_children)
         db.execute(
             """
             INSERT INTO collect_task_summaries
@@ -973,11 +1099,10 @@ class TaskStore:
                 (
                     f"扩建完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
                     if ready_done
-                    else f"扩建未收口：step2={step2}，step5={step5}，当前 {pc} 条资料，{poc} 条发文"
+                    else f"扩建未收口：step2={step2}，step5={step5}，发文子步骤未结束，当前 {pc} 条资料，{poc} 条发文"
                 ),
             ),
         )
-        reconcile_step6_parent(self, task_id, poc)
         if ready_done:
             db.execute(
                 "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s",

@@ -29,6 +29,8 @@ class StepDef:
 
 
 # 共用 step_key；标题对应扩建四节输出语义
+POST_PARENT_STEP_KEY = "step3_profiles"
+
 ROOT_STEPS: Tuple[StepDef, ...] = (
     StepDef("step1_seed", "一、账号扩建收集：种子资料", 10, "1", None, PHASE_RESOLVE_SEED),
     StepDef("step2_cross_platform", "一、账号扩建收集：跨平台发现", 20, "1.2", None, PHASE_CROSS_PLATFORM),
@@ -37,7 +39,6 @@ ROOT_STEPS: Tuple[StepDef, ...] = (
     StepDef("step4_text_compare", "三、账号核查：文本流对比", 41, "3.1", None, PHASE_STREAM_VALIDATE),
     StepDef("step4_image_compare", "三、账号核查：图片流对比", 42, "3.2", None, PHASE_STREAM_VALIDATE),
     StepDef("step5_validated", "四、可信账号输出", 50, "4", None, PHASE_ACCOUNT_FINALIZE),
-    StepDef("step6_posts", "二、多平台信息采集：发文汇总", 60, "2.9", None, PHASE_COLLECT),
 )
 
 PLATFORM_LABELS: Dict[str, str] = {
@@ -82,12 +83,14 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_twitter_get_user_tweets": "step3_profiles",
     "mcp_youtube_analyze_channel_videos": "step3_profiles",
     "mcp_weibo_get_user_feeds": "step3_profiles",
+    "mcp_weibo_get_feeds": "step3_profiles",
 }
 
 TOOL_POST_PLATFORM: Dict[str, str] = {
     "mcp_twitter_get_user_tweets": "twitter",
     "mcp_youtube_analyze_channel_videos": "youtube",
     "mcp_weibo_get_user_feeds": "weibo",
+    "mcp_weibo_get_feeds": "weibo",
 }
 
 APIFY_POST_TOOLS = {
@@ -96,6 +99,14 @@ APIFY_POST_TOOLS = {
     "mcp_apify_vujeen__telegram_channel_scraper",
     "mcp_apify_headlessagent__facebook_profile_post_scraper",
     "mcp_apify_knotless_cadence__github_profile_scraper",
+}
+
+APIFY_TOOL_PLATFORM: Dict[str, str] = {
+    "mcp_apify_apify__instagram_scraper": "instagram",
+    "mcp_apify_clockworks__tiktok_scraper": "tiktok",
+    "mcp_apify_vujeen__telegram_channel_scraper": "telegram",
+    "mcp_apify_headlessagent__facebook_profile_post_scraper": "facebook",
+    "mcp_apify_knotless_cadence__github_profile_scraper": "github",
 }
 
 
@@ -113,11 +124,11 @@ def post_step_index(platform: str) -> int:
 
 
 def post_step_order(platform: str) -> int:
-    return 600 + post_step_index(platform)
+    return 300 + post_step_index(platform)
 
 
 def post_step_node(platform: str) -> str:
-    return f"6.{post_step_index(platform)}"
+    return f"2.{post_step_index(platform)}"
 
 
 def root_step_keys() -> List[str]:

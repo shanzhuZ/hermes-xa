@@ -1,5 +1,5 @@
 # 账号扩建 — 唯一参考（Skill 只加载本文件）
-version: "1.0.0"
+version: "1.1.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -30,13 +30,20 @@ steps:
       - 按平台+handle 去重
       - maigret 的 discovery_only 泛匹配站（GitHubGist 等）标注「疑似误报，待步骤4核查」
       - 每条候选登记：平台 / handle / URL / 是否有 MCP
-    then: 读 maigret 的 summary.accounts + agent_must_do_next；进第一节素材
+    then: |
+      读 maigret 的 summary.accounts + agent_must_do_next；进第一节素材。
+      同时生成本轮“步骤二平台清单”：种子平台 + 候选平台（去重后）；
+      后续步骤3必须按该平台清单顺序执行，不得先只跑 Twitter 发文再回头补其他平台主页。
     forbid: 写报告；禁止此刻做核查判断（核查在步骤4）；MCP 失败→记录并继续，不中止
 
   "3_collect":
     do: |
-      对每个账号在**同一次主页采集里同时拿 profile + 发文**，确保账号信息与发文同源真实
-      （不再分两步、不再二次采集）。采集范围：
+      严格按步骤二平台清单顺序，逐个平台完成采集。
+      对每个账号可在**同一步**里拿 profile + 发文，但必须满足：
+      - 当前平台未完成前，不跳到下一个平台
+      - 未完成全部平台采集前，禁止进入步骤4
+      - 禁止“只先跑种子 Twitter 发文，再回头补其他平台主页”
+      采集范围：
       - 候选账号（summary.accounts，种子平台除外）：采 profile + 发文
       - 种子账号：步骤1已采 profile，这里**用同源方式补采种子发文**（同一工具，如 Twitter get_user_tweets(50)），
         供第四步文本流「发文内容」维度做比对基准

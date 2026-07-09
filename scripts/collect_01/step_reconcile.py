@@ -11,7 +11,7 @@ from collect_01.phases import post_step_key
 POST_TOOL_BY_PLATFORM: Dict[str, str] = {
     "twitter": "mcp_twitter_get_user_tweets",
     "youtube": "mcp_youtube_analyze_channel_videos",
-    "weibo": "mcp_weibo_get_user_feeds",
+    "weibo": "mcp_weibo_get_feeds",
 }
 
 
@@ -166,10 +166,10 @@ def reconcile_step6_parent(store, task_id: str, poc: int) -> None:
         )
 
 
-def reconcile_stuck_pipeline(store, task_id: str, *, allow_skip_maigret: bool = False) -> None:
+def reconcile_stuck_pipeline(store, task_id: str) -> None:
     """会话结束前兜底：收口卡住的 step2 / step4 / step5。"""
     s2 = get_step_status(task_id, "step2_cross_platform")
-    if s2 == "running":
+    if s2 in {"running", "failed"}:
         if _maigret_success_count(task_id) > 0:
             row = db.fetch_one(
                 "SELECT COUNT(*) AS c FROM cross_platform_candidates WHERE task_id=%s",
@@ -181,20 +181,6 @@ def reconcile_stuck_pipeline(store, task_id: str, *, allow_skip_maigret: bool = 
                 "step2_cross_platform",
                 "completed",
                 message=f"Maigret 跨平台扫描完成，候选 {n} 条",
-            )
-        elif allow_skip_maigret and get_step_status(task_id, "step3_profiles") in {"running", "completed"}:
-            store.set_step_status(
-                task_id,
-                "step2_cross_platform",
-                "skipped",
-                message="未调用 Maigret，以多平台候选采集继续",
-            )
-        elif get_step_status(task_id, "step3_profiles") == "completed":
-            store.set_step_status(
-                task_id,
-                "step2_cross_platform",
-                "failed",
-                message="跨平台任务未成功执行 Maigret",
             )
 
     s4img = get_step_status(task_id, "step4_image_compare")
@@ -226,17 +212,3 @@ def reconcile_stuck_pipeline(store, task_id: str, *, allow_skip_maigret: bool = 
             store.set_step_status(task_id, "step3_streams", "completed", message="文本/图片流拆分完成")
         if get_step_status(task_id, "step5_validated") != "completed":
             store.run_validated_accounts(task_id)
-
-
-def maybe_skip_maigret_on_profile(store, task_id: str) -> None:
-    """扩建：步骤三已开始但 Maigret 未调用时，将 step2 从 running 收口为 skipped。"""
-    if get_step_status(task_id, "step2_cross_platform") != "running":
-        return
-    if _maigret_success_count(task_id) > 0:
-        return
-    store.set_step_status(
-        task_id,
-        "step2_cross_platform",
-        "skipped",
-        message="未调用 Maigret，以多平台候选采集继续",
-    )

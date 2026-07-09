@@ -1,7 +1,6 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -35,8 +34,8 @@ public class TaskStepDataQueryService {
         }
 
         String status = stringVal(step.get("status"));
-        List<Map<String, Object>> records = loadRecords(taskId, stepKey);
         String dataType = resolveDataType(stepKey);
+        List<Map<String, Object>> records = loadDisplayRecords(taskId, stepKey);
 
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("taskId", taskId);
@@ -52,79 +51,41 @@ public class TaskStepDataQueryService {
     }
 
     /**
-     * 根据 stepKey 决定查哪张业务表（与 01 采集流水线步骤一一对应）。
+     * 按 step_key 查询展示层 records（统一 [{label,value}] 结构）。
      */
-    private List<Map<String, Object>> loadRecords(String taskId, String stepKey) {
-        if ("step1_seed".equals(stepKey)) {
-            String platform = seedPlatform(taskId);
-            if (platform != null && platform.length() > 0) {
-                List<Map<String, Object>> rows = collectTaskMapper.selectProfilesByTaskAndPlatform(taskId, platform);
-                if (rows != null && !rows.isEmpty()) {
-                    return rows;
-                }
-            }
-            List<Map<String, Object>> all = collectTaskMapper.selectProfilesByTaskId(taskId);
-            return all != null ? all : new ArrayList<Map<String, Object>>();
+    private List<Map<String, Object>> loadDisplayRecords(String taskId, String stepKey) {
+        List<Map<String, Object>> rows = collectTaskMapper.selectDisplayRecordsByStepKey(taskId, stepKey);
+        if (rows == null || rows.isEmpty()) {
+            return new ArrayList<Map<String, Object>>();
         }
-        if ("step2_cross_platform".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectCrossPlatformCandidates(taskId);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", row.get("id"));
+            item.put("recordTitle", row.get("record_title"));
+            item.put("platform", row.get("platform"));
+            item.put("fields", parseDisplayFields(row.get("display_fields")));
+            out.add(item);
         }
-        if ("step3_profiles".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectProfilesByTaskId(taskId);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if ("step3_streams".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectIdentityStreams(taskId);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if ("step4_text_compare".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectIdentityStreamsByType(taskId, "text");
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if ("step4_image_compare".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectIdentityStreamsByType(taskId, "image");
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if ("step5_validated".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectValidatedAccounts(taskId);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if ("step6_posts".equals(stepKey)) {
-            List<Map<String, Object>> rows = collectTaskMapper.selectPostsByTaskId(taskId);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        if (stepKey.startsWith("step6_post_")) {
-            String platform = stepKey.substring("step6_post_".length());
-            List<Map<String, Object>> rows = collectTaskMapper.selectPostsByTaskAndPlatform(taskId, platform);
-            return rows != null ? rows : new ArrayList<Map<String, Object>>();
-        }
-        return new ArrayList<Map<String, Object>>();
+        return out;
     }
 
-    /**
-     * 从 hermes_tasks.seed_json 里取种子平台，步骤一优先展示该平台资料。
-     */
-    private String seedPlatform(String taskId) {
-        Map<String, Object> row = collectTaskMapper.selectTaskSeedJson(taskId);
-        if (row == null || row.get("seed_json") == null) {
-            return null;
+    private Object parseDisplayFields(Object raw) {
+        if (raw == null) {
+            return new ArrayList<Object>();
         }
-        Object raw = row.get("seed_json");
-        try {
-            JSONObject obj;
-            if (raw instanceof String) {
-                obj = JSON.parseObject((String) raw);
-            } else {
-                obj = JSON.parseObject(JSON.toJSONString(raw));
+        if (raw instanceof String) {
+            String text = ((String) raw).trim();
+            if (text.isEmpty()) {
+                return new ArrayList<Object>();
             }
-            if (obj == null) {
-                return null;
+            try {
+                return JSON.parse(text);
+            } catch (Exception e) {
+                return new ArrayList<Object>();
             }
-            return obj.getString("platform");
-        } catch (Exception e) {
-            return null;
         }
+        return raw;
     }
 
     /**

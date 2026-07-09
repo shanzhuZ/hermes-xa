@@ -14,11 +14,13 @@ from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
 from collect_01.phases import (
     APIFY_POST_TOOLS,
+    APIFY_TOOL_PLATFORM,
     TOOL_POST_PLATFORM,
     TOOL_PRIMARY_STEP,
     post_step_key,
     tool_step_key,
 )
+from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint
 from collect_01.task_store import TaskStore, is_collect_intent, is_three_section_report
 
 _LOG_DIR = hermes_home() / "logs"
@@ -38,6 +40,11 @@ _SEEN_TOOL_CALLS: set = set()
 def _setup_logging() -> None:
     if logger.handlers:
         return
+    if hasattr(sys.stderr, "reconfigure"):
+        try:
+            sys.stderr.reconfigure(encoding="utf-8", errors="replace")
+        except Exception:
+            pass
     logger.setLevel(logging.INFO)
     fmt = logging.Formatter("%(asctime)s [collect_01] %(message)s")
     sh = logging.StreamHandler(sys.stderr)
@@ -188,6 +195,64 @@ def _mark_step3_closed(store: TaskStore, task_id: str) -> None:
         )
 
 
+def _resolve_post_platform(
+    tool_name: str,
+    task_id: str,
+    tool_output_id: int,
+    result_data: Dict[str, Any],
+) -> Optional[str]:
+    post_platform = TOOL_POST_PLATFORM.get(tool_name)
+    if post_platform:
+        return post_platform
+    if tool_name != "mcp_apify_get_dataset_items":
+        return None
+    plats = result_data.get("platforms") or []
+    if plats:
+        return str(plats[0])
+    hint = resolve_apify_platform_hint(task_id, tool_output_id)
+    for actor_tool, platform in APIFY_TOOL_PLATFORM.items():
+        actor_hint = actor_tool.replace("mcp_apify_", "")
+        if hint == actor_hint or platform in hint:
+            return platform
+    return None
+
+
+def _sync_platform_post_step(
+    store: TaskStore,
+    task_id: str,
+    platform: str,
+    result_data: Dict[str, Any],
+    *,
+    tool_output_id: Optional[int] = None,
+) -> None:
+    child = post_step_key(platform)
+    store.ensure_post_steps(task_id, [platform])
+    n_prof = len(result_data.get("profiles") or [])
+    n_post = len(result_data.get("posts") or [])
+    if n_prof or n_post:
+        parts = []
+        if n_prof:
+            parts.append(f"profile {n_prof}")
+        if n_post:
+            parts.append(f"发文 {n_post}")
+        store.set_step_status(
+            task_id,
+            child,
+            "completed",
+            message=f"已采集 {platform} " + "，".join(parts),
+            payload={"post_count": n_post, "profile_count": n_prof},
+        )
+        if tool_output_id:
+            store.update_tool_output_phase(tool_output_id, child)
+    else:
+        store.set_step_status(
+            task_id,
+            child,
+            "skipped",
+            message=f"{platform} Apify 未采集到数据",
+        )
+
+
 def _enter_step4(store: TaskStore, task_id: str) -> None:
     """首次 OCR/Vision：收口步骤三，启动步骤四子步骤（不提前 completed）。"""
     _mark_step3_closed(store, task_id)
@@ -317,7 +382,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         logger.info("maigret post_tool task=%s call_id=%s", task_id, tool_call_id or "(none)")
 
     step_key = TOOL_PRIMARY_STEP.get(tool_name)
-    if step_key:
+    if step_key and tool_name not in _STEP4_TOOLS:
         cur = get_step_status(task_id, step_key)
         if cur not in {"completed", "failed", "skipped"}:
             label = "Maigret 跨平台扫描中" if tool_name == "mcp_maigret_collect_accounts" else f"执行 {tool_name}"
@@ -330,6 +395,14 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         child_cur = get_step_status(task_id, child)
         if child_cur not in {"completed", "failed", "skipped"}:
             store.set_step_status(task_id, child, "running", message=f"采集 {post_platform_early} 发文中…")
+
+    apify_platform_early = apify_platform_from_actor_tool(tool_name)
+    if apify_platform_early:
+        child = post_step_key(apify_platform_early)
+        store.ensure_post_steps(task_id, [apify_platform_early])
+        child_cur = get_step_status(task_id, child)
+        if child_cur not in {"completed", "failed", "skipped"}:
+            store.set_step_status(task_id, child, "running", message=f"Apify 采集 {apify_platform_early} 中…")
 
     tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
     result = ex.get("result")
@@ -366,13 +439,17 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if tool_name in APIFY_POST_TOOLS:
         _LAST_APIFY_HINT[task_id] = tool_name.replace("mcp_apify_", "")
 
+    platform_hint = _LAST_APIFY_HINT.get(task_id, "")
+    if tool_name == "mcp_apify_get_dataset_items":
+        platform_hint = resolve_apify_platform_hint(task_id, tool_output_id)
+
     ctx: Dict[str, Any] = {
         "task_id": task_id,
         "tool_output_id": tool_output_id,
         "tool_name": tool_name,
         "tool_args": tool_args,
         "account_id": _extract_account_id(tool_args),
-        "platform_hint": _LAST_APIFY_HINT.get(task_id, ""),
+        "platform_hint": platform_hint,
     }
 
     if status != "success":
@@ -391,7 +468,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         if tool_name != "mcp_maigret_collect_accounts":
             return
 
-    _persist_normalized(store, task_id, result_data)
+    _persist_normalized(store, task_id, result_data, display_step_key=output_step_key)
     _update_steps_after_tool(store, task_id, tool_name, result_data)
 
     if result_data.get("profiles"):
@@ -406,43 +483,32 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             "completed",
             message=f"Maigret 跨平台扫描完成，候选 {n_cand} 条",
         )
+        logger.info("maigret post_tool 完成 task=%s candidates=%d", task_id, n_cand)
 
     if _is_cross_platform_task(task_id) and tool_name in TOOL_POST_PLATFORM and get_step_status(task_id, "step5_validated") != "completed":
         _advance_without_image_tools(store, task_id)
 
-    post_platform = TOOL_POST_PLATFORM.get(tool_name)
-    if not post_platform and tool_name == "mcp_apify_get_dataset_items":
-        plats = result_data.get("platforms") or []
-        post_platform = plats[0] if plats else None
-    post_count = len(result_data.get("posts") or [])
+    post_platform = _resolve_post_platform(tool_name, task_id, tool_output_id, result_data)
     if post_platform and tool_name in TOOL_POST_PLATFORM:
-        child = post_step_key(post_platform)
-        store.ensure_post_steps(task_id, [post_platform])
-        if post_count > 0:
-            store.set_step_status(
-                task_id,
-                child,
-                "completed",
-                message=f"已采集 {post_platform} 发文 {post_count} 条",
-                payload={"post_count": post_count},
-            )
+        n_post = len(result_data.get("posts") or [])
+        if n_post > 0:
+            _sync_platform_post_step(store, task_id, post_platform, result_data)
         else:
+            child = post_step_key(post_platform)
+            store.ensure_post_steps(task_id, [post_platform])
             store.set_step_status(
                 task_id,
                 child,
                 "skipped",
                 message=f"{post_platform} 未采集到发文",
             )
-    elif tool_name == "mcp_apify_get_dataset_items" and post_platform and post_count > 0:
-        child = post_step_key(post_platform)
-        store.ensure_post_steps(task_id, [post_platform])
-        store.update_tool_output_phase(tool_output_id, child)
-        store.set_step_status(
+    elif post_platform and tool_name == "mcp_apify_get_dataset_items":
+        _sync_platform_post_step(
+            store,
             task_id,
-            child,
-            "completed",
-            message=f"已采集 {post_platform} 发文 {post_count} 条",
-            payload={"post_count": post_count},
+            post_platform,
+            result_data,
+            tool_output_id=tool_output_id,
         )
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
@@ -470,14 +536,27 @@ def _update_steps_after_tool(
             store.set_step_status(task_id, "step3_profiles", "running", message=msg)
 
 
-def _persist_normalized(store: TaskStore, task_id: str, data: Dict[str, Any]) -> None:
+def _persist_normalized(
+    store: TaskStore,
+    task_id: str,
+    data: Dict[str, Any],
+    *,
+    display_step_key: str,
+) -> None:
+    from collect_01.phases import post_step_key
+
+    profile_step = display_step_key if display_step_key in {"step1_seed", "step3_profiles"} else "step3_profiles"
+    post_step = display_step_key if display_step_key.startswith("step6") else None
+
     for row in data.get("profiles") or []:
-        store.save_profile_row(row)
+        store.save_profile_row(row, step_key=profile_step)
     for row in data.get("candidates") or []:
-        store.save_candidate_rows([row])
+        store.save_candidate_rows([row], step_key="step2_cross_platform")
     posts = data.get("posts") or []
     if posts:
-        store.save_post_rows(posts)
+        for row in posts:
+            sk = post_step or post_step_key(str(row.get("platform") or ""))
+            store.save_post_rows([row], step_key=sk)
 
 
 def _on_post_llm_call(payload: Dict[str, Any]) -> None:

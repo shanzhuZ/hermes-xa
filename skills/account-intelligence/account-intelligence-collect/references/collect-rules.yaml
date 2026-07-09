@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.13.0"
+version: "1.14.0"
 
 language: 用户中文输入时全程简体中文；步骤1-6进度与步骤7报告均不得用英文。
 
@@ -13,7 +13,7 @@ mode_switch: |
 
 forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
-  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 无对应 MCP, 无 MCP 采集工具, 没有对应 MCP]
 
 # 步骤 4～7 必须自动完成，禁止停下来问用户
 mandatory_auto_steps: [4_streams, 5_validated, 6_posts, 7_output]
@@ -43,11 +43,15 @@ steps:
 
   "3_profiles":
     do: |
-      遍历 summary.accounts 每条候选（种子平台除外）：
+      遍历两类候选（种子 Twitter 平台本身除外）：
+      A) Maigret summary.accounts 每条
+      B) 种子 profile 互链（bio/website/entities 中的 t.me/、instagram.com/、tiktok.com/ 等）——即使 Maigret 未返回该平台也必须纳入步骤3
+      采集方式：
       - 有 MCP：Twitter/微博/B站/YouTube→仅 profile（YouTube 用 get_channel_stats + channelId，禁止 analyze_channel_videos）
-      - 无 MCP：Instagram/TikTok/Telegram/Facebook/GitHub→Apify 三轮（resultsLimit≤5，只取 profile 字段）
-      - discovery_only（Discord/ImgInn 等）：只记 URL
-      失败/空数据→跳过该候选，禁止 web_search，禁止重试超过 1 次
+      - 无原生 MCP：Instagram/TikTok/Telegram/Facebook/GitHub→**必须** Apify 三轮（见 apify 节；Telegram channels 填 @名 或 t.me/xxx 完整 URL）
+      - discovery_only（Discord/ImgInn/Pixwox/GitHubGist 等聚合站）：只记 URL，不调 Apify
+      失败/空数据→跳过该候选；2.4 原因须写「Apify 空/失败」等事实，**禁止**写「无 MCP / 无采集工具」（无 MCP 不等于不能采，应已走 Apify）
+      禁止 web_search，禁止重试超过 1 次
     forbid: [get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, 任何报告文字]
 
   "4_streams":
@@ -94,7 +98,7 @@ apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
   instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
   tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
-  telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
+  telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 }, note: "ch=频道名或 t.me/xxx；种子 bio 互链也须走此 Actor" }
   facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper, input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] } }
   github: { tool: mcp_apify_knotless_cadence__github_profile_scraper, input: { usernames: ["{u}"], maxRepos: 5 } }
 

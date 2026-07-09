@@ -81,6 +81,7 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_twitter_get_user_tweets": "step6_posts",
     "mcp_youtube_analyze_channel_videos": "step6_posts",
     "mcp_weibo_get_user_feeds": "step6_posts",
+    "mcp_weibo_get_feeds": "step6_posts",
 }
 
 # 发文类工具 → 平台（用于挂到 step6_post_{platform} 子步骤）
@@ -88,6 +89,7 @@ TOOL_POST_PLATFORM: Dict[str, str] = {
     "mcp_twitter_get_user_tweets": "twitter",
     "mcp_youtube_analyze_channel_videos": "youtube",
     "mcp_weibo_get_user_feeds": "weibo",
+    "mcp_weibo_get_feeds": "weibo",
 }
 
 APIFY_POST_TOOLS = {
@@ -96,6 +98,14 @@ APIFY_POST_TOOLS = {
     "mcp_apify_vujeen__telegram_channel_scraper",
     "mcp_apify_headlessagent__facebook_profile_post_scraper",
     "mcp_apify_knotless_cadence__github_profile_scraper",
+}
+
+APIFY_TOOL_PLATFORM: Dict[str, str] = {
+    "mcp_apify_apify__instagram_scraper": "instagram",
+    "mcp_apify_clockworks__tiktok_scraper": "tiktok",
+    "mcp_apify_vujeen__telegram_channel_scraper": "telegram",
+    "mcp_apify_headlessagent__facebook_profile_post_scraper": "facebook",
+    "mcp_apify_knotless_cadence__github_profile_scraper": "github",
 }
 
 

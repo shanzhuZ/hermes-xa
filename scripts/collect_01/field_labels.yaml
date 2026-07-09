@@ -1,0 +1,210 @@
+# 前端展示字段中文 label（按 data_type，不按工具）
+# _order: 字段展示顺序；_exclude: 不入展示的字段
+
+collect_profiles:
+  _order:
+    - platform
+    - account_handle
+    - display_name
+    - bio
+    - follower_count
+    - following_count
+    - content_count
+    - avatar_url
+    - profile_url
+    - verified
+    - visibility
+    - collect_status
+    - collected_at
+  _exclude:
+    - id
+    - task_id
+    - account_id
+    - tool_output_id
+    - raw_json
+    - collect_options_json
+    - metrics_json
+    - extra_json
+  platform: 平台
+  account_handle: 账号
+  display_name: 昵称
+  bio: 简介
+  follower_count: 粉丝数
+  following_count: 关注数
+  content_count: 内容数
+  avatar_url: 头像
+  profile_url: 主页链接
+  verified: 已认证
+  visibility: 可见性
+  collect_status: 采集状态
+  collected_at: 采集时间
+
+collect_posts:
+  _order:
+    - platform
+    - account_id
+    - content_type
+    - title
+    - content_text
+    - published_at
+    - view_count
+    - like_count
+    - comment_count
+    - repost_count
+    - content_url
+    - created_at
+  _exclude:
+    - id
+    - task_id
+    - content_id
+    - parent_content_id
+    - tool_output_id
+    - raw_json
+    - media_json
+    - metrics_json
+    - matched_keywords
+    - text_truncated
+  platform: 平台
+  account_id: 作者账号ID
+  content_type: 内容类型
+  title: 标题
+  content_text: 正文
+  published_at: 发布时间
+  view_count: 浏览量
+  like_count: 点赞数
+  comment_count: 评论数
+  repost_count: 转发数
+  content_url: 链接
+  created_at: 入库时间
+
+cross_platform_candidates:
+  _order:
+    - platform
+    - account_handle
+    - account_id
+    - confidence
+    - match_strategy
+    - status
+    - created_at
+  _exclude:
+    - id
+    - task_id
+    - tool_output_id
+    - evidence_json
+    - raw_json
+  platform: 平台
+  account_handle: 账号
+  account_id: 账号ID
+  confidence: 置信度
+  match_strategy: 匹配策略
+  status: 状态
+  created_at: 发现时间
+
+collect_identity_streams:
+  _order:
+    - stream_type
+    - source_platform
+    - source_account_id
+    - source_field
+    - payload_text
+    - payload_url
+    - validation_status
+    - validation_detail
+    - updated_at
+  _exclude:
+    - stream_id
+    - task_id
+  stream_type: 流类型
+  source_platform: 来源平台
+  source_account_id: 来源账号ID
+  source_field: 来源字段
+  payload_text: 文本内容
+  payload_url: 图片链接
+  validation_status: 校验状态
+  validation_detail: 校验说明
+  updated_at: 更新时间
+
+collect_validated_accounts:
+  _order:
+    - platform
+    - account_handle
+    - account_id
+    - verdict
+    - is_seed
+    - confidence
+    - created_at
+  _exclude:
+    - id
+    - task_id
+    - stream_ids_json
+  platform: 平台
+  account_handle: 账号
+  account_id: 账号ID
+  verdict: 判定结果
+  is_seed: 是否种子
+  confidence: 置信度
+  created_at: 收敛时间
+
+# 平台语义差异覆盖
+platform_overrides:
+  youtube:
+    collect_profiles:
+      follower_count: 订阅数
+      content_count: 视频数
+  bilibili:
+    collect_profiles:
+      follower_count: 粉丝数
+      content_count: 投稿数
+
+# 枚举值中文化
+value_maps:
+  verified:
+    "1": 是
+    "0": 否
+    "true": 是
+    "false": 否
+  visibility:
+    public: 公开
+    partial: 部分可见
+    unknown: 未知
+  collect_status:
+    success: 成功
+    empty: 无数据
+    partial: 部分
+    error: 失败
+  content_type:
+    post: 原创帖
+    repost: 转发
+    video: 视频
+    article: 长文
+    comment: 评论
+  stream_type:
+    text: 文本流
+    image: 图片流
+  validation_status:
+    pending: 待校验
+    pass: 通过
+    fail: 失败
+    processed: 已处理
+    low_quality: 质量过低
+  verdict:
+    validated: 可信
+    insufficient: 证据不足
+  status:
+    candidate: 候选
+    excluded: 已排除
+    weak: 弱线索
+  is_seed:
+    "1": 是
+    "0": 否
+
+platform_labels:
+  twitter: Twitter
+  youtube: YouTube
+  weibo: 微博
+  instagram: Instagram
+  facebook: Facebook
+  telegram: Telegram
+  tiktok: TikTok
+  github: GitHub
+  bilibili: 哔哩哔哩

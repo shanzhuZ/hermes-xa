@@ -1,7 +1,6 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
-import com.alibaba.fastjson.JSONObject;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -38,37 +37,9 @@ public class TaskTreeQueryService {
         List<Map<String, Object>> steps = collectTaskMapper.selectPhaseSteps(taskId);
         List<Map<String, Object>> tools = collectTaskMapper.selectToolOutputs(taskId);
 
-        Map<String, List<Map<String, Object>>> toolBuckets = bucketToolsByStep(taskId, tools);
-        List<Map<String, Object>> nodes = new ArrayList<Map<String, Object>>();
-        if (steps != null) {
-            for (Map<String, Object> step : steps) {
-                String stepKey = stringVal(step.get("step_key"));
-                String status = stringVal(step.get("status"));
-                if (status.isEmpty()) {
-                    status = "pending";
-                }
-                Map<String, Object> node = new LinkedHashMap<String, Object>();
-                node.put("id", stepKey);
-                node.put("type", "step");
-                node.put("stepKey", stepKey);
-                node.put("stepNode", step.get("step_node"));
-                node.put("parentStepKey", step.get("parent_step_key"));
-                node.put("title", step.get("title"));
-                node.put("status", status);
-                node.put("statusLabel", statusLabel(status));
-                node.put("message", step.get("message"));
-                node.put("progressPct", step.get("progress_pct"));
-                node.put("startedAt", stringVal(step.get("started_at")));
-                node.put("finishedAt", stringVal(step.get("finished_at")));
-                node.put("detailRef", "/api/tasks/" + taskId + "/nodes/" + stepKey);
-                List<Map<String, Object>> children = toolBuckets.get(stepKey);
-                if (children == null) {
-                    children = new ArrayList<Map<String, Object>>();
-                }
-                node.put("children", children);
-                nodes.add(node);
-            }
-        }
+        Map<String, List<String>> toolNamesByStep = collectToolNamesByStep(tools);
+        String taskType = stringVal(task.get("task_type"));
+        List<Map<String, Object>> nodes = buildStepHierarchy(taskId, taskType, steps, toolNamesByStep);
 
         String rootTitle = userRow != null ? stringVal(userRow.get("content")) : "";
         if (rootTitle.length() > 200) {
@@ -182,10 +153,101 @@ public class TaskTreeQueryService {
     }
 
     /**
-     * 把工具调用按步骤键分组，作为步骤节点的 children。
+     * 按 parent_step_key 组装层级：step6_post_* 挂在 step3_profiles.children 下；
+     * 顶层 nodes 仅保留无父步骤的根节点。
      */
-    private Map<String, List<Map<String, Object>>> bucketToolsByStep(String taskId, List<Map<String, Object>> tools) {
-        Map<String, List<Map<String, Object>>> buckets = new HashMap<String, List<Map<String, Object>>>();
+    private List<Map<String, Object>> buildStepHierarchy(
+            String taskId,
+            String taskType,
+            List<Map<String, Object>> steps,
+            Map<String, List<String>> toolNamesByStep) {
+        List<Map<String, Object>> roots = new ArrayList<Map<String, Object>>();
+        if (steps == null || steps.isEmpty()) {
+            return roots;
+        }
+        Map<String, Map<String, Object>> nodeByKey = new LinkedHashMap<String, Map<String, Object>>();
+        for (Map<String, Object> step : steps) {
+            String stepKey = stringVal(step.get("step_key"));
+            if (isHiddenLegacyStep(taskType, stepKey)) {
+                continue;
+            }
+            nodeByKey.put(stepKey, buildStepNode(taskId, step, toolNamesByStep.get(stepKey)));
+        }
+        for (Map<String, Object> step : steps) {
+            String stepKey = stringVal(step.get("step_key"));
+            if (isHiddenLegacyStep(taskType, stepKey)) {
+                continue;
+            }
+            Map<String, Object> node = nodeByKey.get(stepKey);
+            if (node == null) {
+                continue;
+            }
+            String parentKey = stringVal(step.get("parent_step_key"));
+            if (parentKey.isEmpty()) {
+                roots.add(node);
+                continue;
+            }
+            Map<String, Object> parent = nodeByKey.get(parentKey);
+            if (parent != null) {
+                childrenOf(parent).add(node);
+            } else {
+                roots.add(node);
+            }
+        }
+        return roots;
+    }
+
+    private Map<String, Object> buildStepNode(
+            String taskId,
+            Map<String, Object> step,
+            List<String> toolNames) {
+        String stepKey = stringVal(step.get("step_key"));
+        String status = stringVal(step.get("status"));
+        if (status.isEmpty()) {
+            status = "pending";
+        }
+        Map<String, Object> node = new LinkedHashMap<String, Object>();
+        node.put("id", stepKey);
+        node.put("type", "step");
+        node.put("stepKey", stepKey);
+        node.put("stepNode", step.get("step_node"));
+        node.put("parentStepKey", step.get("parent_step_key"));
+        node.put("title", step.get("title"));
+        node.put("status", status);
+        node.put("statusLabel", statusLabel(status));
+        node.put("message", step.get("message"));
+        node.put("progressPct", step.get("progress_pct"));
+        node.put("startedAt", stringVal(step.get("started_at")));
+        node.put("finishedAt", stringVal(step.get("finished_at")));
+        node.put("detailRef", "/api/tasks/" + taskId + "/nodes/" + stepKey);
+        if (toolNames != null && !toolNames.isEmpty()) {
+            node.put("toolNames", toolNames);
+        }
+        node.put("children", new ArrayList<Map<String, Object>>());
+        return node;
+    }
+
+    @SuppressWarnings("unchecked")
+    private List<Map<String, Object>> childrenOf(Map<String, Object> node) {
+        Object raw = node.get("children");
+        if (raw instanceof List) {
+            return (List<Map<String, Object>>) raw;
+        }
+        List<Map<String, Object>> children = new ArrayList<Map<String, Object>>();
+        node.put("children", children);
+        return children;
+    }
+
+    /**
+     * 02 扩建遗留的 step6_posts 不再展示；01 采集 step6_posts 为第六大点父节点，须保留。
+     */
+    private boolean isHiddenLegacyStep(String taskType, String stepKey) {
+        return "account_expand".equals(taskType) && "step6_posts".equals(stepKey);
+    }
+
+    /** 按步骤键收集 MCP 工具名（挂在步骤节点 toolNames 字段，不再嵌套 tool 子节点） */
+    private Map<String, List<String>> collectToolNamesByStep(List<Map<String, Object>> tools) {
+        Map<String, List<String>> buckets = new HashMap<String, List<String>>();
         if (tools == null) {
             return buckets;
         }
@@ -194,27 +256,11 @@ public class TaskTreeQueryService {
             if (isSkipTool(name)) {
                 continue;
             }
-            String stepKey = resolveToolStepKey(row);
-            Map<String, Object> child = new LinkedHashMap<String, Object>();
-            Object idObj = row.get("id");
-            String toolNodeId = "tool_" + String.valueOf(idObj);
-            child.put("id", toolNodeId);
-            child.put("type", "tool");
-            child.put("title", name);
-            String toolStatus = stringVal(row.get("status"));
-            child.put("status", toolStatus.isEmpty() ? "success" : toolStatus);
-            if ("success".equals(toolStatus) || toolStatus.isEmpty()) {
-                child.put("statusLabel", "结论明确");
-            } else {
-                child.put("statusLabel", "信息缺失");
-            }
-            child.put("durationMs", row.get("duration_ms"));
-            child.put("executedAt", stringVal(row.get("executed_at")));
-            child.put("detailRef", "/api/tasks/" + taskId + "/nodes/" + toolNodeId);
+            String stepKey = resolveToolStepKey(row, tools);
             if (!buckets.containsKey(stepKey)) {
-                buckets.put(stepKey, new ArrayList<Map<String, Object>>());
+                buckets.put(stepKey, new ArrayList<String>());
             }
-            buckets.get(stepKey).add(child);
+            buckets.get(stepKey).add(name);
         }
         return buckets;
     }
@@ -223,12 +269,16 @@ public class TaskTreeQueryService {
      * 不参与进度展示的工具（与 Python task_tree 一致）。
      */
     private boolean isSkipTool(String toolName) {
+        if (toolName == null || toolName.isEmpty()) {
+            return true;
+        }
         return "skill_view".equals(toolName)
                 || "clarify".equals(toolName)
                 || "tool_search".equals(toolName)
                 || "describe_tool".equals(toolName)
                 || "todo".equals(toolName)
-                || "terminal".equals(toolName);
+                || "terminal".equals(toolName)
+                || toolName.startsWith("browser_");
     }
 
     /**
@@ -261,22 +311,113 @@ public class TaskTreeQueryService {
         if ("mcp_youtube_analyze_channel_videos".equals(toolName)) {
             return "step6_post_youtube";
         }
-        if ("mcp_weibo_get_user_feeds".equals(toolName)) {
+        if ("mcp_weibo_get_user_feeds".equals(toolName) || "mcp_weibo_get_feeds".equals(toolName)) {
             return "step6_post_weibo";
+        }
+        if ("mcp_apify_get_actor_run".equals(toolName)) {
+            return "step3_profiles";
         }
         return "step6_posts";
     }
 
     /**
-     * 优先使用 hermes_tool_outputs.phase（已与 collect_phase_steps.step_key 对齐），
-     * 历史数据若仍为 resolve_seed 等大阶段名则按工具名推断。
+     * 优先 phase=step6_post_*；平台采集工具按工具名映射到 step6_post_{platform}；
+     * get_dataset_items 在 phase 仍为 step3_profiles 时向前找最近一次 Apify Actor。
      */
-    private String resolveToolStepKey(Map<String, Object> row) {
+    private String resolveToolStepKey(Map<String, Object> row, List<Map<String, Object>> allTools) {
         String phase = stringVal(row.get("phase"));
+        String toolName = stringVal(row.get("tool_name"));
+        if (phase.startsWith("step6_post_")) {
+            return phase;
+        }
+        String postStep = remapCollectPostStepKey(toolName);
+        if (postStep != null) {
+            return postStep;
+        }
+        if ("mcp_apify_get_dataset_items".equals(toolName)) {
+            String inferred = inferDatasetPostStep(row, allTools);
+            if (inferred != null) {
+                return inferred;
+            }
+        }
         if (phase.startsWith("step")) {
             return phase;
         }
-        return resolveToolStepKey(stringVal(row.get("tool_name")));
+        return resolveToolStepKey(toolName);
+    }
+
+    /** 向前查找与本条 dataset 对应的 Apify Actor，映射到 step6_post_{platform} */
+    private String inferDatasetPostStep(Map<String, Object> row, List<Map<String, Object>> allTools) {
+        if (allTools == null || allTools.isEmpty()) {
+            return null;
+        }
+        long toolId = toLong(row.get("id"));
+        if (toolId <= 0) {
+            return null;
+        }
+        String lastActorStep = null;
+        for (Map<String, Object> t : allTools) {
+            long id = toLong(t.get("id"));
+            if (id >= toolId) {
+                break;
+            }
+            String name = stringVal(t.get("tool_name"));
+            if (!name.startsWith("mcp_apify_")
+                    || "mcp_apify_get_dataset_items".equals(name)
+                    || "mcp_apify_get_actor_run".equals(name)) {
+                continue;
+            }
+            String mapped = remapCollectPostStepKey(name);
+            if (mapped != null) {
+                lastActorStep = mapped;
+            }
+        }
+        return lastActorStep;
+    }
+
+    private long toLong(Object value) {
+        if (value instanceof Number) {
+            return ((Number) value).longValue();
+        }
+        try {
+            return Long.parseLong(stringVal(value));
+        } catch (NumberFormatException e) {
+            return -1L;
+        }
+    }
+
+    /** 发文/平台采集类工具 → step6_post_{platform}（兼容历史 phase 挂在 step3_profiles） */
+    private String remapCollectPostStepKey(String toolName) {
+        if ("mcp_twitter_get_user_tweets".equals(toolName)) {
+            return "step6_post_twitter";
+        }
+        if ("mcp_youtube_analyze_channel_videos".equals(toolName)) {
+            return "step6_post_youtube";
+        }
+        if ("mcp_youtube_get_channel_stats".equals(toolName)) {
+            return "step6_post_youtube";
+        }
+        if ("mcp_weibo_get_profile".equals(toolName)
+                || "mcp_weibo_get_user_feeds".equals(toolName)
+                || "mcp_weibo_get_feeds".equals(toolName)) {
+            return "step6_post_weibo";
+        }
+        if ("mcp_apify_apify__instagram_scraper".equals(toolName)) {
+            return "step6_post_instagram";
+        }
+        if ("mcp_apify_clockworks__tiktok_scraper".equals(toolName)) {
+            return "step6_post_tiktok";
+        }
+        if ("mcp_apify_vujeen__telegram_channel_scraper".equals(toolName)) {
+            return "step6_post_telegram";
+        }
+        if ("mcp_apify_headlessagent__facebook_profile_post_scraper".equals(toolName)) {
+            return "step6_post_facebook";
+        }
+        if ("mcp_apify_knotless_cadence__github_profile_scraper".equals(toolName)) {
+            return "step6_post_github";
+        }
+        return null;
     }
 
     private String statusLabel(String status) {

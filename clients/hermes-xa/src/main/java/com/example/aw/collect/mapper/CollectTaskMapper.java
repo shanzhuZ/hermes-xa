@@ -77,5 +77,8 @@ public interface CollectTaskMapper {
     List<Map<String, Object>> selectPostsByTaskAndPlatform(
             @Param("taskId") String taskId, @Param("platform") String platform);
 
+    List<Map<String, Object>> selectDisplayRecordsByStepKey(
+            @Param("taskId") String taskId, @Param("stepKey") String stepKey);
+
     Map<String, Object> selectLatestAssistantReply(@Param("taskId") String taskId);
 }

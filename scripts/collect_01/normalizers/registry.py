@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from collect_01.normalizers.base import unwrap_tool_payload
-from collect_01.normalizers import apify, maigret, twitter, youtube
+from collect_01.normalizers import apify, maigret, twitter, weibo, youtube
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +25,11 @@ REGISTRY: Dict[str, Tuple[Handler, str]] = {
     "mcp_apify_vujeen__telegram_channel_scraper": (apify.normalize_actor_run, "noop"),
     "mcp_apify_headlessagent__facebook_profile_post_scraper": (apify.normalize_actor_run, "noop"),
     "mcp_apify_knotless_cadence__github_profile_scraper": (apify.normalize_actor_run, "noop"),
+    "mcp_weibo_get_profile": (weibo.normalize_profile, "profile"),
+    "mcp_weibo_get_feeds": (weibo.normalize_posts, "posts"),
+    # Skill/phases 写作 get_user_feeds，实际 MCP 工具名为 get_feeds
+    "mcp_weibo_get_user_feeds": (weibo.normalize_posts, "posts"),
+    "mcp_weibo_search_content": (weibo.normalize_posts, "posts"),
 }
 
 

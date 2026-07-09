@@ -194,7 +194,7 @@ public class CollectApiController {
     }
 
     /**
-     * 某采集步骤对应的业务表数据（人物/候选/流/发文等）。
+     * 某步骤对应的业务展示数据（records 为统一 [{label,value}] 结构）。
      */
     @GetMapping("/tasks/{taskId}/steps/{stepKey}/data")
     public ResponseEntity<Map<String, Object>> getStepData(
