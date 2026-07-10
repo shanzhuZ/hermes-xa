@@ -17,7 +17,8 @@ public class TaskTypeRegistry {
 
     private static final Pattern SKILL_PREFIX = Pattern.compile(
             "^(account-intelligence-collect|account-expansion|account-intelligence-expand|"
-                    + "account-intelligence-verify|account-intelligence-profile)\\b",
+                    + "account-intelligence-verification|account-intelligence-verify|"
+                    + "account-intelligence-report|account-intelligence-profile)\\b",
             Pattern.CASE_INSENSITIVE);
 
     private final Map<String, TaskTypeDef> byFrontendType = new HashMap<String, TaskTypeDef>();
@@ -28,9 +29,11 @@ public class TaskTypeRegistry {
         byFrontendType.put("expand", new TaskTypeDef(
                 "expand", "account_expand", "account-expansion", "账号扩建"));
         byFrontendType.put("verify", new TaskTypeDef(
-                "verify", "account_verify", "account-intelligence-verify", "账号核查"));
+                "verify", "account_verify", "account-intelligence-verification", "账号核查"));
+        byFrontendType.put("report", new TaskTypeDef(
+                "report", "account_report", "account-intelligence-report", "画像写报"));
         byFrontendType.put("profile", new TaskTypeDef(
-                "profile", "account_profile", "account-intelligence-profile", "画像写报"));
+                "profile", "account_report", "account-intelligence-report", "画像写报"));
     }
 
     /**
@@ -73,6 +76,12 @@ public class TaskTypeRegistry {
         }
         if ("account_collect".equals(dbTaskType)) {
             return msg.matches("(?is).*(account-intelligence-collect|账号信息采集|采集).*");
+        }
+        if ("account_verify".equals(dbTaskType)) {
+            return msg.matches("(?is).*(account-intelligence-verification|account-intelligence-verify|账号核查|核查).*");
+        }
+        if ("account_report".equals(dbTaskType)) {
+            return msg.matches("(?is).*(account-intelligence-report|account-intelligence-profile|画像写报|写报).*");
         }
         return true;
     }

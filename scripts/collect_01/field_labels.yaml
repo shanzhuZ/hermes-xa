@@ -198,6 +198,15 @@ value_maps:
     "1": 是
     "0": 否
 
+input_accounts:
+  _order:
+    - platform
+    - account_handle
+    - display_label
+  platform: 平台
+  account_handle: 用户名/Handle
+  display_label: 平台说明
+
 platform_labels:
   twitter: Twitter
   youtube: YouTube

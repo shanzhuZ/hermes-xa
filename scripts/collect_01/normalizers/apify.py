@@ -14,12 +14,33 @@ APIFY_TOOL_PLATFORM: Dict[str, str] = {
     "mcp_apify_headlessagent__facebook_profile_post_scraper": "facebook",
     "mcp_apify_knotless_cadence__github_profile_scraper": "github",
 }
-def resolve_apify_platform_hint(task_id: str, before_output_id: Optional[int] = None) -> str:
-    """从库中取最近一次 Apify Actor 工具名，供 get_dataset_items 推断平台。
+def resolve_apify_platform_hint(
+    task_id: str,
+    before_output_id: Optional[int] = None,
+    dataset_id: Optional[str] = None,
+) -> str:
+    """从库中推断 get_dataset_items 对应平台。
 
-    Hook 每次独立子进程，内存中的 _LAST_APIFY_HINT 不可靠，必须查库。
+    优先按 datasetId 反查产出该 dataset 的 Actor 工具；Hook 子进程无内存 hint。
     """
     from collect_01 import db
+
+    ds = str(dataset_id or "").strip()
+    if ds:
+        rows = db.fetch_all(
+            """
+            SELECT tool_name, tool_output FROM hermes_tool_outputs
+            WHERE task_id=%s AND status='success'
+              AND tool_name LIKE 'mcp_apify_%%'
+              AND tool_name NOT IN ('mcp_apify_get_dataset_items', 'mcp_apify_get_actor_run')
+            ORDER BY id DESC
+            """,
+            (task_id,),
+        )
+        for row in rows:
+            out = str(row.get("tool_output") or "")
+            if ds in out:
+                return str(row["tool_name"]).replace("mcp_apify_", "")
 
     sql = """
         SELECT tool_name FROM hermes_tool_outputs

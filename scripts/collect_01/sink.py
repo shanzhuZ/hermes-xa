@@ -200,6 +200,7 @@ def _resolve_post_platform(
     task_id: str,
     tool_output_id: int,
     result_data: Dict[str, Any],
+    tool_args: Optional[Dict[str, Any]] = None,
 ) -> Optional[str]:
     post_platform = TOOL_POST_PLATFORM.get(tool_name)
     if post_platform:
@@ -209,7 +210,9 @@ def _resolve_post_platform(
     plats = result_data.get("platforms") or []
     if plats:
         return str(plats[0])
-    hint = resolve_apify_platform_hint(task_id, tool_output_id)
+    args = tool_args if isinstance(tool_args, dict) else {}
+    ds_id = str(args.get("datasetId") or args.get("dataset_id") or "").strip()
+    hint = resolve_apify_platform_hint(task_id, tool_output_id, dataset_id=ds_id or None)
     for actor_tool, platform in APIFY_TOOL_PLATFORM.items():
         actor_hint = actor_tool.replace("mcp_apify_", "")
         if hint == actor_hint or platform in hint:
@@ -441,7 +444,10 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     platform_hint = _LAST_APIFY_HINT.get(task_id, "")
     if tool_name == "mcp_apify_get_dataset_items":
-        platform_hint = resolve_apify_platform_hint(task_id, tool_output_id)
+        ds_id = str(tool_args.get("datasetId") or tool_args.get("dataset_id") or "").strip()
+        platform_hint = resolve_apify_platform_hint(
+            task_id, tool_output_id, dataset_id=ds_id or None
+        )
 
     ctx: Dict[str, Any] = {
         "task_id": task_id,
@@ -488,7 +494,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if _is_cross_platform_task(task_id) and tool_name in TOOL_POST_PLATFORM and get_step_status(task_id, "step5_validated") != "completed":
         _advance_without_image_tools(store, task_id)
 
-    post_platform = _resolve_post_platform(tool_name, task_id, tool_output_id, result_data)
+    post_platform = _resolve_post_platform(tool_name, task_id, tool_output_id, result_data, tool_args)
     if post_platform and tool_name in TOOL_POST_PLATFORM:
         n_post = len(result_data.get("posts") or [])
         if n_post > 0:

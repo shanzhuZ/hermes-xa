@@ -22,7 +22,7 @@ public class TaskCreateRegistry {
         for (TaskCreateService service : services) {
             byDb.put(service.dbTaskType(), service);
         }
-        for (String frontend : new String[]{"collect", "expand", "verify", "profile"}) {
+        for (String frontend : new String[]{"collect", "expand", "verify", "report", "profile"}) {
             TaskTypeRegistry.TaskTypeDef def = taskTypeRegistry.resolve(frontend);
             TaskCreateService svc = byDb.get(def.getDbTaskType());
             if (svc != null) {

@@ -39,6 +39,11 @@ public interface CollectTaskMapper {
                            @Param("stepKey") String stepKey,
                            @Param("message") String message);
 
+    void updateStepStatus(@Param("taskId") String taskId,
+                          @Param("stepKey") String stepKey,
+                          @Param("status") String status,
+                          @Param("message") String message);
+
     void markTaskFailed(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
 
     Map<String, Object> selectUserInput(@Param("taskId") String taskId);

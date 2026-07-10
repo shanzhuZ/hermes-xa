@@ -53,6 +53,15 @@
         WHERE task_id = #{taskId} AND step_key = #{stepKey}
     </update>
 
+    <update id="updateStepStatus">
+        UPDATE collect_phase_steps
+        SET status = #{status},
+            message = #{message},
+            started_at = CASE WHEN #{status} = 'running' THEN COALESCE(started_at, NOW(3)) ELSE started_at END,
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId} AND step_key = #{stepKey}
+    </update>
+
     <update id="markTaskFailed">
         UPDATE hermes_tasks
         SET status = 'failed',
@@ -189,7 +198,7 @@
     </select>
 
     <select id="selectDisplayRecordsByStepKey" resultType="java.util.HashMap">
-        SELECT id, record_title, platform, display_fields
+        SELECT id, record_title, platform, account_id, display_fields
         FROM collect_display_records
         WHERE task_id = #{taskId} AND step_key = #{stepKey}
         ORDER BY id ASC

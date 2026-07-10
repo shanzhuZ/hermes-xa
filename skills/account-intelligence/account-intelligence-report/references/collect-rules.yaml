@@ -1,0 +1,109 @@
+# 01 账号采集 — 唯一参考（Skill 只加载本文件）
+version: "1.12.0"
+
+identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
+
+# 注意：web_search/web_extract/browser_* 仅步骤3允许，其余步骤各自在 forbid 里禁用（不放全局，避免与步骤3冲突）
+forbidden_always:
+  tools: [clarify, mcp_firecrawl_*]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 五、]
+
+steps:
+  "1_seed":
+    do: 种子平台 MCP profile（Twitter→get_user_info）
+    forbid: [get_user_tweets, maigret, vision, web_search, web_extract, browser_*]
+
+  "2_maigret":
+    when: 用户说跨平台
+    do: mcp_maigret_collect_accounts(username=种子)
+    forbid: 写报告；follow collect_skill_mode / agent_must_do_next；禁 web_search/web_extract/browser_*
+
+  "3_web_search":
+    do: |
+      使用种子账号的昵称 + handle，浏览器 + 搜索引擎 [web_search, web_extract, browser_*] 检索社交账号。
+      严查：推特(X)/facebook/telegram/youtube/github/reddit/weibo/linkedin/instagram/vk 等中大型社交网站。
+    then: |
+      将本步 web_search 发现的候选与步骤2 Maigret 的 summary.accounts 合并，按 平台+handle 去重，
+      形成「统一候选列表」，供步骤4遍历（此步是全流程唯一允许 web_search/web_extract/browser_* 的步骤）
+
+  "4_profiles":
+    do: |
+      遍历步骤3产出的「统一候选列表」每条候选（种子平台除外）：
+      - 有 MCP：Twitter/微博/B站/YouTube→仅 profile（YouTube 用 get_channel_stats + channelId，禁止 analyze_channel_videos）
+      - 无 MCP：Instagram/TikTok/Telegram/Facebook/GitHub→Apify 三轮（resultsLimit≤5，只取 profile 字段）
+      - discovery_only（Discord/ImgInn 等）：只记 URL
+      失败/空数据→跳过该候选，禁止 web_search，禁止重试超过 1 次
+    forbid: [get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, 任何报告文字, web_search, web_extract, browser_*]
+
+  "5_streams":
+    do: |
+      对步骤4成功采到 profile 的候选账号 + 种子：
+      文本流：昵称/handle/简介/互链/邮箱 → 与种子比对 → 供 2.2
+      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze → 供 2.3
+      （步骤5只产出核查数据，不输出报告章节）
+    forbid: [发文工具, 写最终报告, web_search, web_extract, browser_*]
+
+  "6_validated":
+    do: validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded
+    forbid: [一切发文工具, web_search, web_extract, browser_*]
+
+  "7_posts":
+    do: |
+      发文采集分两类，条数不同：
+      【种子账号】发文取 50 条（尽可能采全，用于步骤10判断本人真实个人信息）：
+      - Twitter→get_user_tweets(50)
+      - YouTube→analyze_channel_videos(channelId)（尽可能多）
+      - 微博→get_user_feeds（尽可能多，翻页至 50 或采完）
+      - Apify 平台→resultsLimit=50→get_dataset_items 原文
+      【其余 validated 关联账号】发文取 50 条：
+      - Twitter→get_user_tweets(50)
+      - YouTube→analyze_channel_videos(channelId)
+      - 微博→get_user_feeds
+      - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
+    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
+
+  "8_img_analysis":
+    do: |
+      图片分析： 头像、背景图片、发文配图 的内容构成。分析点位：地点、人物、喜好、习惯；
+      - vision_analyze 处理 所有图片
+    forbid: [ web_search, web_extract, browser_*, clarify, mcp_firecrawl_* ]
+
+  "9_context_analysis":
+    do: |
+      发文文本分析：集合全网平台（validated_accounts）的发文信息，归纳发文观点与涉华倾向。
+      输出要求：
+      - 归纳若干（建议 3～6 个）核心观点，每个观点：
+        · 观点描述（1 句概括）
+        · 支撑发文：至少 3 条原文佐证，格式「YYYY年MM月DD日 在 XX平台 发文称："原文摘录"」
+      - 只用步骤7采到的发文原文，禁止无出处的主观归纳
+    forbid: [ web_search, web_extract, browser_*, clarify, mcp_firecrawl_* ]
+
+  "10_context_analysis":
+    do: |
+      发文文本分析：集合全网平台（validated_accounts）的发文信息，归纳发文点位，分析该账号的
+      真实姓名、年龄、籍贯、常住地、活动城市、生活习惯、教育经历、工作经历、对华态度、电话邮箱码值，
+      以及社交/亲友/同事三个圈层关系。
+      输出要求：
+      - 每个点位：结论 + 至少 1 条发文佐证，格式「YYYY年MM月DD日 在 XX平台 发文称："原文摘录"」
+      - 无佐证的点位标注「未获取/证据不足」，禁止臆测
+    forbid: [ web_search, web_extract, browser_*, clarify, mcp_firecrawl_* ]
+
+  "11_output":
+    once: true
+    sections: [一、账号基本信息, 二、账号全网关联账号, 三、账号网络活动情况, 四、核查思路]
+    section1: |
+      一、账号基本信息 含两个子节：
+      - 1.1 profile 信息：昵称、简介、粉丝数、认证状态、头衔、外链（账号层面信息）
+      - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
+    section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
+    section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式
+
+apify:
+  contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
+  instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
+  tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
+  telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
+  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
+  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
+
+midflight: 步骤1-10 每步向用户输出 1-2 句进度（如"步骤4完成：采集N个候选profile"）；禁止在步骤1-10 输出最终报告的任何章节（一/二/三/四）；步骤11 才一次性输出完整报告

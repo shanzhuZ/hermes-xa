@@ -64,6 +64,7 @@ public class TaskStepDataQueryService {
             item.put("id", row.get("id"));
             item.put("recordTitle", row.get("record_title"));
             item.put("platform", row.get("platform"));
+            item.put("accountId", row.get("account_id"));
             item.put("fields", parseDisplayFields(row.get("display_fields")));
             out.add(item);
         }
@@ -92,7 +93,11 @@ public class TaskStepDataQueryService {
      * 告诉前端当前 records 来自哪类业务数据，便于选择展示组件。
      */
     private String resolveDataType(String stepKey) {
-        if ("step1_seed".equals(stepKey) || "step3_profiles".equals(stepKey)) {
+        if ("step1_input_accounts".equals(stepKey)) {
+            return "input_accounts";
+        }
+        if ("step1_seed".equals(stepKey) || "step3_profiles".equals(stepKey)
+                || (stepKey.startsWith("step3_profile_") && !"step3_profiles".equals(stepKey))) {
             return "collect_profiles";
         }
         if ("step2_cross_platform".equals(stepKey)) {
@@ -105,7 +110,7 @@ public class TaskStepDataQueryService {
         if ("step5_validated".equals(stepKey)) {
             return "collect_validated_accounts";
         }
-        if ("step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")) {
+        if (stepKey.startsWith("step3_post_") || "step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")) {
             return "collect_posts";
         }
         return "unknown";

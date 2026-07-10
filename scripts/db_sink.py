@@ -19,6 +19,8 @@ if not os.environ.get("HERMES_HOME", "").strip():
 from collect_01 import db
 from collect_01.task_store import is_collect_intent
 from expand_02.task_store import is_expand_intent
+from report_04.task_store import is_report_intent
+from verify_03.task_store import is_verify_intent
 
 
 def _ensure_utf8_stdio() -> None:
@@ -87,6 +89,14 @@ def _resolve_sink_module(payload: Dict[str, Any]):
                 from expand_02 import sink as expand_sink
 
                 return expand_sink
+            if ttype == "account_verify":
+                from verify_03 import sink as verify_sink
+
+                return verify_sink
+            if ttype == "account_report":
+                from report_04 import sink as report_sink
+
+                return report_sink
             break
 
     ttype = _task_type_from_session(session_id)
@@ -94,8 +104,24 @@ def _resolve_sink_module(payload: Dict[str, Any]):
         from expand_02 import sink as expand_sink
 
         return expand_sink
+    if ttype == "account_verify":
+        from verify_03 import sink as verify_sink
+
+        return verify_sink
+    if ttype == "account_report":
+        from report_04 import sink as report_sink
+
+        return report_sink
 
     user_message = str(ex.get("user_message") or "").strip()
+    if is_report_intent(user_message):
+        from report_04 import sink as report_sink
+
+        return report_sink
+    if is_verify_intent(user_message):
+        from verify_03 import sink as verify_sink
+
+        return verify_sink
     if is_expand_intent(user_message):
         from expand_02 import sink as expand_sink
 

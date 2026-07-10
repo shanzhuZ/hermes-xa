@@ -17,14 +17,25 @@ logger = logging.getLogger(__name__)
 _LABELS_PATH = Path(__file__).resolve().parent / "field_labels.yaml"
 
 DATA_TYPE_BY_STEP = {
+    "step1_input_accounts": "input_accounts",
     "step1_seed": "collect_profiles",
     "step2_cross_platform": "cross_platform_candidates",
+    "step2_maigret": "cross_platform_candidates",
     "step3_profiles": "collect_profiles",
+    "step3_web_search": "cross_platform_candidates",
     "step3_streams": "collect_identity_streams",
+    "step4_profiles": "collect_profiles",
     "step4_text_compare": "collect_identity_streams",
     "step4_image_compare": "collect_identity_streams",
+    "step5_streams": "collect_identity_streams",
     "step5_validated": "collect_validated_accounts",
+    "step6_validated": "collect_validated_accounts",
     "step6_posts": "collect_posts",
+    "step7_posts": "collect_posts",
+    "step8_img_analysis": "report_analysis",
+    "step9_context_views": "report_analysis",
+    "step10_context_pii": "report_analysis",
+    "step11_report": "report_analysis",
 }
 
 
@@ -141,6 +152,9 @@ def build_record_title(data_type: str, row: Dict[str, Any]) -> str:
         handle = row.get("account_handle") or row.get("account_id") or ""
         seed = "（种子）" if str(row.get("is_seed")) in {"1", "True", "true"} else ""
         return f"{plabel} · @{handle}{seed}".rstrip(" · @")
+    if data_type == "input_accounts":
+        handle = row.get("account_handle") or ""
+        return f"{plabel} · @{handle}".rstrip(" · @") if handle else plabel
     return plabel or data_type
 
 
@@ -153,21 +167,26 @@ def upsert_display_record(
     source_ref: str,
     row: Dict[str, Any],
     platform: Optional[str] = None,
+    account_id: Optional[str] = None,
     stream_type: Optional[str] = None,
 ) -> None:
     fields = build_display_fields(data_type, row)
     if not fields:
         return
     title = build_record_title(data_type, row)
+    acct = account_id or row.get("account_id") or row.get("source_account_id") or row.get("account_handle")
+    if acct is not None:
+        acct = str(acct).strip() or None
     db.execute(
         """
         INSERT INTO collect_display_records
-          (task_id, step_key, data_type, source_table, source_ref, platform, stream_type,
+          (task_id, step_key, data_type, source_table, source_ref, platform, account_id, stream_type,
            record_title, display_fields)
-        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s)
         ON DUPLICATE KEY UPDATE
           data_type=VALUES(data_type),
           platform=VALUES(platform),
+          account_id=VALUES(account_id),
           stream_type=VALUES(stream_type),
           record_title=VALUES(record_title),
           display_fields=VALUES(display_fields),
@@ -180,6 +199,7 @@ def upsert_display_record(
             source_table,
             str(source_ref),
             platform,
+            acct,
             stream_type,
             title[:256] if title else None,
             db.json_dumps(fields),
@@ -263,7 +283,10 @@ def sync_post_display(row: Dict[str, Any], *, step_key: str) -> None:
 def sync_post_display_for_tool(row: Dict[str, Any], *, step_key: str) -> None:
     """发文工具入库：写入子步骤与汇总步骤。"""
     platform = str(row.get("platform") or "")
-    child_key = step_key if step_key.startswith("step6_post_") else post_step_key(platform)
+    if step_key.startswith("step3_post_") or step_key.startswith("step6_post_"):
+        child_key = step_key
+    else:
+        child_key = post_step_key(platform)
     sync_post_display(row, step_key=child_key)
 
 

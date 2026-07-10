@@ -91,10 +91,8 @@ prompt_caching:
   cache_ttl: 5m
 auxiliary:
   vision:
-    provider: openai
-    model: Qwen2.5-VL-32B-Instruct
-    base_url: http://172.200.200.1:2015/v1
-    api_key: sk-dummy
+    provider: pplx
+    model: sonar
     timeout: 120
     download_timeout: 60
 display:
@@ -407,6 +405,15 @@ custom_providers:
         context_length: 1048576
       gemini-2.5-flash:
         context_length: 1048576
+  - name: pplx
+    base_url: https://api.perplexity.ai
+    key_env: PERPLEXITY_API_KEY
+    api_mode: chat_completions
+    models:
+      sonar:
+        context_length: 128000
+      sonar-pro:
+        context_length: 200000
   - name: local-ds
     base_url: http://172.200.200.4:7000/v1
     api_key: sk-dummy
