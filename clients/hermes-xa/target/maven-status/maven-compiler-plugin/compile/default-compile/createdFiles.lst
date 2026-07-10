@@ -1,0 +1,10 @@
+com\example\aw\resolver\CollectGraphqlPingResolver.class
+com\example\aw\collect\service\TaskTreeQueryService.class
+com\example\aw\collect\service\CollectTaskCreateService.class
+com\example\aw\gateway\HermesGatewayClient.class
+com\example\aw\collect\service\TaskStepDataQueryService.class
+com\example\aw\collect\controller\CollectApiController.class
+com\example\aw\gateway\HermesGatewayClient$1.class
+com\example\aw\collect\service\TaskFinalAnswerQueryService.class
+com\example\aw\collect\service\CollectSubmitService.class
+com\example\aw\collect\mapper\CollectTaskMapper.class
