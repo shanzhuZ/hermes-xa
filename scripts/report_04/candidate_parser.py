@@ -81,3 +81,57 @@ def looks_like_step3_summary(text: str) -> bool:
     if re.search(r"步骤\s*3|步骤三|网页检索|web_search|候选", text, re.I):
         return True
     return len(parse_web_search_candidates(text)) >= 1
+
+
+def handle_matches_seed(handle: str, seed_handle: str) -> bool:
+    """web_search 候选 handle 是否与种子账号相关。"""
+    h = (handle or "").lower().strip().lstrip("@")
+    s = (seed_handle or "").lower().strip().lstrip("@")
+    if not h or not s or len(h) < 3:
+        return False
+    if h in {"p", "s", "login", "search", "null", "reel", "articles", "contact", "home", "watch"}:
+        return False
+    if h == s:
+        return True
+    if len(h) >= 4 and len(s) >= 4 and (h.startswith(s) or s.startswith(h)):
+        return True
+    return False
+
+
+def candidate_relevant_for_seed(row: Dict[str, Any], seed_handle: str) -> bool:
+    """候选是否应进入步骤四采集列表。"""
+    if str(row.get("match_strategy") or "") == "maigret":
+        return True
+    return handle_matches_seed(str(row.get("account_handle") or ""), seed_handle)
+
+
+def relevant_profile_platforms(
+    candidates: List[Dict[str, Any]],
+    seed_handle: str,
+) -> List[str]:
+    """按平台去重，仅保留与种子相关的可采集平台。"""
+    from report_04.phases import is_collectible_platform, profile_step_order
+
+    found: set[str] = set()
+    for row in candidates:
+        plat = str(row.get("platform") or "").strip().lower()
+        if not plat or not is_collectible_platform(plat):
+            continue
+        if candidate_relevant_for_seed(row, seed_handle):
+            found.add(plat)
+    return sorted(found, key=profile_step_order)
+
+
+def parse_web_search_candidates_from_tool(tool_name: str, raw: Any) -> List[Dict[str, Any]]:
+    """从 web_search / web_extract / browser 工具返回 JSON 中解析候选 URL。"""
+    import json as _json
+
+    if raw is None:
+        return []
+    if isinstance(raw, dict):
+        blob = _json.dumps(raw, ensure_ascii=False)
+    else:
+        blob = str(raw)
+    if len(blob) < 20:
+        return []
+    return parse_web_search_candidates(blob)

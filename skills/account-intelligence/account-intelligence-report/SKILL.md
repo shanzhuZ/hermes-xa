@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
-description: "种子输入种子账号→全网搜索关联账号→核查关联账号与种子账号的关联性→采集种子账号与关联账号的全部发文内容→结合发文与配图分析账号信息→形成账号画像"
-version: 1.12.0
+description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→分析→画像报告。禁search_username。"
+version: 1.13.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -21,6 +21,7 @@ metadata:
 - **全程使用中文简体输出呈现**
 - **执行流程中的每一步都必须要执行，未满足执行条件说明原因！**
 - **执行流程必须严格呈现出 “步骤X： xxxxx”**
+- **步骤 2 Maigret 工具（硬约束）**：**只允许** `mcp_maigret_collect_accounts(username=种子handle)`；**禁止** `mcp_maigret_search_username`、`mcp_maigret_search_usernames`、`mcp_maigret_get_prompt`、`search_username`、`search_usernames`。调错工具会导致步骤二无法收口、步骤三被门禁挡住。
 - **仅步骤 3 允许** `web_search` / `web_extract` / `browser_*`；**其余所有步骤（1、2、4～11）禁止**这三类工具；全程禁止写报告、人物传记、综合介绍（步骤11 的最终画像报告除外）
 - **步骤 1、2、4～11**：详细描述执行流程
 - **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
@@ -38,7 +39,7 @@ metadata:
 | 步骤 | 动作                                                                                 |
 |----|------------------------------------------------------------------------------------|
 | 1  | 种子 MCP profile                                                                     |
-| 2  | Maigret（跨平台时） 获取候选主页                                                               |
+| 2  | **`mcp_maigret_collect_accounts(username=种子)`** 跨平台发现候选；**禁止** search_username 等其它 Maigret 工具 |
 | 3  | web_search, web_extract, browser_* 检索种子账号昵称及账号id获取候选社交账号                         |
 | 4  | 各候选主页：MCP profile **或** Apify；失败跳过                                        |
 | 5  | 文本流+图片流 vs 种子                                                                      |
@@ -48,6 +49,22 @@ metadata:
 | 9  | 文本流： 结合 各个平台的账号发文 分析发文观点及涉华发言 并配有发文作为佐证                                            |
 | 10 | 文本流： 结合 各个平台的账号发文 分析真实姓名、年龄、籍贯、常住地、活动城市、生活习惯、教育经历、工作经历、对华态度、电话邮箱码值、社交、亲友、同事等三个圈层关系 |
 | 11 | 一次输出账号画像报告：一、账号基本信息 二、账号全网关联账号 三、账号网络活动情况 四、核查思路                                   |
+
+## 步骤 2 Maigret（必须用 collect_accounts）
+
+| 允许 | 禁止 |
+|------|------|
+| `mcp_maigret_collect_accounts(username=<种子handle>)` | `mcp_maigret_search_username` |
+| 读返回的 `summary.accounts` + `agent_must_do_next`（若有） | `mcp_maigret_search_usernames` |
+| 步骤二完成后再进入步骤三 | `mcp_maigret_get_prompt`、`search_username`、`search_usernames` |
+
+**调用示例**（种子 `@whyyoutouzhele`）：
+
+```
+mcp_maigret_collect_accounts(username="whyyoutouzhele")
+```
+
+**步骤二禁止**：`web_search` / `web_extract` / `browser_*`、写报告章节、把 Maigret 返回当画像输出。
 
 ## 步骤 4 工具对照
 | 平台 | 工具 |

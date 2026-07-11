@@ -17,6 +17,8 @@ REGISTRY: Dict[str, Tuple[Handler, str]] = {
     "mcp_twitter_get_user_info": (twitter.normalize_profile, "profile"),
     "mcp_twitter_get_user_tweets": (twitter.normalize_posts, "posts"),
     "mcp_maigret_collect_accounts": (maigret.normalize_candidates, "candidates"),
+    "mcp_maigret_search_username": (maigret.normalize_candidates, "candidates"),
+    "mcp_maigret_search_usernames": (maigret.normalize_candidates, "candidates"),
     "mcp_youtube_get_channel_stats": (youtube.normalize_profile, "profile"),
     "mcp_youtube_analyze_channel_videos": (youtube.normalize_posts, "posts"),
     "mcp_apify_get_dataset_items": (apify.normalize_dataset_items, "mixed"),

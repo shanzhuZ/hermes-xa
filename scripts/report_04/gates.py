@@ -6,7 +6,7 @@ import json
 from typing import Any, Dict, List, Optional
 
 from collect_01 import db
-from report_04.phases import ANALYSIS_STEP_KEYS, TASK_TYPE
+from report_04.phases import ANALYSIS_STEP_KEYS, PROFILE_PARENT_STEP_KEY, TASK_TYPE
 
 
 def get_step_status(task_id: str, step_key: str) -> Optional[str]:
@@ -65,8 +65,23 @@ def discovery_steps_terminal(task_id: str) -> bool:
     return s2 in {"completed", "skipped"} and s3 in {"completed", "skipped"}
 
 
+def can_run_step3_web_search(task_id: str) -> bool:
+    """步骤二结束后才允许执行步骤三网页检索。"""
+    return get_step_status(task_id, "step2_maigret") in {"completed", "skipped"}
+
+
 def can_close_step4_parent(task_id: str) -> bool:
     return discovery_steps_terminal(task_id)
+
+
+def can_update_step4_children(task_id: str) -> bool:
+    """步骤二、三结束后才允许创建或更新步骤四主页子节点。"""
+    return discovery_steps_terminal(task_id)
+
+
+def can_update_step7_children(task_id: str) -> bool:
+    """步骤六结束后才允许创建或更新步骤七发文子节点。"""
+    return can_run_step7_collect(task_id)
 
 
 def step7_collect_active(task_id: str) -> bool:
@@ -79,6 +94,30 @@ def can_run_step7_collect(task_id: str) -> bool:
     return get_step_status(task_id, "step6_validated") == "completed"
 
 
+def _step4_profile_children_pending(task_id: str) -> Optional[str]:
+    """步骤四仍有 pending/running 子节点时返回其 step_key。"""
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    for row in rows:
+        st = str(row.get("status") or "")
+        if st in {"pending", "running"}:
+            return str(row.get("step_key") or "")
+    return None
+
+
+def step4_profiles_terminal(task_id: str) -> bool:
+    """步骤四父节点与子节点均已结束。"""
+    parent = get_step_status(task_id, "step4_profiles")
+    if parent not in {"completed", "skipped"}:
+        return False
+    return _step4_profile_children_pending(task_id) is None
+
+
 def can_advance_to_step5(task_id: str) -> Dict[str, Any]:
     s1 = get_step_status(task_id, "step1_seed")
     if s1 != "completed":
@@ -86,6 +125,9 @@ def can_advance_to_step5(task_id: str) -> Dict[str, Any]:
     s4 = get_step_status(task_id, "step4_profiles")
     if s4 not in {"completed", "skipped"}:
         return {"ok": False, "message": f"step4_profiles={s4 or 'pending'}"}
+    pending_child = _step4_profile_children_pending(task_id)
+    if pending_child:
+        return {"ok": False, "message": f"步骤四子步骤未完成（{pending_child}）"}
     return {"ok": True, "message": "满足步骤五推进条件"}
 
 

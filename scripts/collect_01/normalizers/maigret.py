@@ -24,11 +24,26 @@ def _platform_slug(item: Dict[str, Any]) -> Optional[str]:
         "bilibili": "bilibili",
         "imginn": "imginn",
         "github": "github",
+        "githubgist": "github",
+        "gist": "github",
     }
     for key, val in mapping.items():
         if key in token:
             return val
     return re.sub(r"[^a-z0-9]+", "", token) or token
+
+
+def _handle_from_url(url: str) -> Optional[str]:
+    u = (url or "").strip().rstrip("/")
+    if not u:
+        return None
+    parts = [p for p in u.split("/") if p and p not in {"www", "http:", "https:"}]
+    if not parts:
+        return None
+    last = parts[-1]
+    if last in {"about", "profile"} and len(parts) >= 2:
+        last = parts[-2]
+    return last.lstrip("@") or None
 
 
 def normalize_candidates(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -44,13 +59,14 @@ def normalize_candidates(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         account_id = first_str(item.get("account_id"), item.get("uid"), item.get("url"))
         if not platform or not account_id:
             continue
+        handle = first_str(item.get("username"), item.get("handle")) or _handle_from_url(str(account_id))
         platforms.append(platform)
         rows.append(
             {
                 "task_id": ctx["task_id"],
                 "platform": platform,
                 "account_id": str(account_id)[:128],
-                "account_handle": first_str(item.get("username"), item.get("handle")),
+                "account_handle": handle,
                 "confidence": item.get("confidence"),
                 "evidence_json": item.get("evidence") or {},
                 "match_strategy": "maigret",

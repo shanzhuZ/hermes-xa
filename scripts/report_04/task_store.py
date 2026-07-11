@@ -634,30 +634,35 @@ class TaskStore:
             return []
         rows = db.fetch_all(
             """
-            SELECT platform, account_handle FROM cross_platform_candidates
+            SELECT platform, account_handle, match_strategy FROM cross_platform_candidates
             WHERE task_id=%s AND platform IS NOT NULL AND TRIM(platform) != ''
             """,
             (task_id,),
         )
-        seen: set = set()
-        platforms: List[str] = []
-        for row in rows:
-            plat = str(row.get("platform") or "").strip().lower()
-            handle = str(row.get("account_handle") or "").strip().lower()
-            key = f"{plat}:{handle}" if handle else plat
-            if not plat or key in seen:
-                continue
-            seen.add(key)
-            if is_collectible_platform(plat):
-                platforms.append(plat)
+        seed_handle = ""
+        task = self.get_task(task_id) or {}
+        try:
+            seed = json.loads(task.get("seed_json") or "{}")
+            seed_handle = str(seed.get("account_handle") or seed.get("account_hint") or "").strip()
+        except json.JSONDecodeError:
+            pass
+        from report_04.candidate_parser import relevant_profile_platforms
+
+        platforms = relevant_profile_platforms(rows, seed_handle)
         if not platforms:
             seed = self.get_seed_accounts(task_id)
             platforms = sorted(
-                {str(a.get("platform") or "") for a in seed if a.get("platform") and is_collectible_platform(str(a.get("platform")))}
+                {
+                    str(a.get("platform") or "")
+                    for a in seed
+                    if a.get("platform") and is_collectible_platform(str(a.get("platform")))
+                },
+                key=profile_step_order,
             )
         if platforms:
             self.ensure_profile_steps(task_id, platforms)
-        # 跳过无采集通道的 Maigret 平台子节点
+        relevant_set = set(platforms)
+        # 跳过无采集通道 / 与种子无关的 Maigret 或 web 噪声子节点
         for row in db.fetch_all(
             "SELECT step_key FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
             (task_id, PROFILE_PARENT_STEP_KEY),
@@ -666,8 +671,17 @@ class TaskStore:
             if not sk.startswith("step4_profile_"):
                 continue
             plat = sk.replace("step4_profile_", "", 1)
+            cur = get_step_status(task_id, sk)
             if not is_collectible_platform(plat):
-                self.set_step_status(task_id, sk, "skipped", message=f"{plat} 无可用主页采集工具")
+                if cur not in {"completed", "skipped", "failed"}:
+                    self.set_step_status(task_id, sk, "skipped", message=f"{plat} 无可用主页采集工具")
+            elif plat not in relevant_set and cur in {"pending", "running"}:
+                self.set_step_status(
+                    task_id,
+                    sk,
+                    "skipped",
+                    message=f"{plat} 候选与种子账号不匹配，跳过",
+                )
         parent = PROFILE_PARENT_STEP_KEY
         if get_step_status(task_id, parent) in {"pending", None}:
             self.set_step_status(task_id, parent, "running", message="候选主页采集中")
@@ -1053,6 +1067,12 @@ class TaskStore:
 
     def run_stream_validation(self, task_id: str) -> None:
         """步骤五：文本/图片流与种子比对。"""
+        from report_04.gates import can_advance_to_step5
+
+        gate = can_advance_to_step5(task_id)
+        if not gate.get("ok"):
+            logger.info("run_stream_validation 跳过 task=%s: %s", task_id, gate.get("message"))
+            return
         task = self.get_task(task_id)
         if not task:
             return
@@ -1139,7 +1159,10 @@ class TaskStore:
         )
 
     def run_validated_accounts(self, task_id: str) -> None:
-        """步骤五：根据文本流 pass + 有 profile 的账号写入可信清单。"""
+        """步骤六：根据文本流 pass + 有 profile 的账号写入可信清单。"""
+        if _step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
+            logger.info("run_validated_accounts 跳过 task=%s: step5_streams 未完成")
+            return
         profiles = db.fetch_all(
             "SELECT platform, account_id, account_handle FROM collect_profiles WHERE task_id=%s",
             (task_id,),
@@ -1304,12 +1327,15 @@ class TaskStore:
         post_children_ok = all(str(r.get("status") or "") in {"completed", "skipped", "failed"} for r in post_children)
         legacy_step6 = _step_status(task_id, "step7_posts")
         if legacy_step6 == "pending":
-            self.set_step_status(
-                task_id,
-                "step7_posts",
-                "skipped",
-                message="02 扩建已改为在步骤二下直接展示分平台发文子步骤",
-            )
+            if vc > 0 or post_children:
+                self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
+            else:
+                self.set_step_status(
+                    task_id,
+                    "step7_posts",
+                    "skipped",
+                    message="无可信账号，跳过发文采集",
+                )
         ready_done = step2_ok and step5_ok and (poc > 0 or post_children_ok or not post_children)
         db.execute(
             """

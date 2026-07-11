@@ -118,5 +118,10 @@ public class ReportTaskCreateService implements TaskCreateService {
                 "step1_seed",
                 "running",
                 "等待种子 profile 采集…");
+        collectTaskMapper.updateStepStatus(
+                taskId,
+                "step2_maigret",
+                "running",
+                "等待 Maigret 跨平台发现…");
     }
 }

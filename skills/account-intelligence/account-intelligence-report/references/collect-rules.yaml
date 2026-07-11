@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.12.0"
+version: "1.13.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -15,7 +15,17 @@ steps:
 
   "2_maigret":
     when: 用户说跨平台
-    do: mcp_maigret_collect_accounts(username=种子)
+    do: |
+      仅调用 mcp_maigret_collect_accounts(username=种子handle)。
+      读 summary.accounts + agent_must_do_next（若有），写入候选供步骤3合并去重。
+    tool: mcp_maigret_collect_accounts
+    tool_args: { username: "<种子handle，不含@>" }
+    forbid_tools:
+      - mcp_maigret_search_username
+      - mcp_maigret_search_usernames
+      - mcp_maigret_get_prompt
+      - search_username
+      - search_usernames
     forbid: 写报告；follow collect_skill_mode / agent_must_do_next；禁 web_search/web_extract/browser_*
 
   "3_web_search":

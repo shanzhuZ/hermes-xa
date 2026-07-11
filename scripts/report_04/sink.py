@@ -13,7 +13,11 @@ from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
 from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint
 from report_04.account_parser import looks_like_seed_done, parse_seed_from_assistant
-from report_04.candidate_parser import looks_like_step3_summary, parse_web_search_candidates
+from report_04.candidate_parser import (
+    looks_like_step3_summary,
+    parse_web_search_candidates,
+    parse_web_search_candidates_from_tool,
+)
 from report_04.gates import (
     analysis_steps_terminal,
     can_advance_to_analysis,
@@ -21,6 +25,9 @@ from report_04.gates import (
     can_advance_to_step7,
     can_complete_step11,
     can_run_step7_collect,
+    can_run_step3_web_search,
+    can_update_step4_children,
+    can_update_step7_children,
     discovery_steps_terminal,
     get_step_status,
     is_stream_compare_ready,
@@ -161,14 +168,8 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
 
 
 def _prepare_step4_collect(store: TaskStore, task_id: str) -> bool:
-    """Agent 提前调步骤四工具时：先收口步骤三，再按候选去重生成子节点。"""
-    s2 = get_step_status(task_id, "step2_maigret")
-    if s2 not in {"completed", "skipped"}:
-        return False
-    s3 = get_step_status(task_id, "step3_web_search")
-    if s3 in {"pending", "running"}:
-        store.set_step_status(task_id, "step3_web_search", "completed", message="网页检索结束，进入步骤四")
-    if not discovery_steps_terminal(task_id):
+    """步骤二、三均结束后，按候选去重生成步骤四子节点。"""
+    if not can_update_step4_children(task_id):
         return False
     store.materialize_step4_from_candidates(task_id)
     return True
@@ -188,12 +189,14 @@ def _resolve_collect_phase(
         return None, "step3_web_search"
     if tool_name == "mcp_maigret_collect_accounts":
         return None, "step2_maigret"
+    if tool_name.startswith("mcp_maigret_"):
+        return None, "step2_maigret"
     if tool_name in _STEP5_STREAM_TOOLS:
         sk = tool_step_key(tool_name)
         return None, sk
     if tool_name in STEP4_COLLECT_TOOLS or (tool_name == "mcp_apify_get_dataset_items" and platform):
         _prepare_step4_collect(store, task_id)
-        if platform:
+        if platform and can_update_step4_children(task_id):
             if tool_name == "mcp_apify_get_dataset_items":
                 cs = _resolve_dataset_collect_phase(task_id, platform)
             else:
@@ -212,8 +215,14 @@ def _resolve_collect_phase(
         if platform:
             cs = post_platform_step_key(platform)
             return cs, cs
-    cs = tool_collect_step_key(tool_name, platform) if platform else None
-    return cs, cs or tool_step_key(tool_name)
+    if platform:
+        plat_step = tool_collect_step_key(tool_name, platform)
+        if plat_step.startswith("step4_profile_") and not can_update_step4_children(task_id):
+            return None, tool_step_key(tool_name)
+        if plat_step.startswith("step7_post_") and not can_update_step7_children(task_id):
+            return None, tool_step_key(tool_name)
+        return plat_step, plat_step
+    return None, tool_step_key(tool_name)
 
 
 def _is_seed_profile_tool(tool_name: str, task_id: str) -> bool:
@@ -284,19 +293,13 @@ def _on_step5_tool_after(
     *,
     success: bool,
 ) -> None:
-    # vision 回写图片流不受 step3 门禁影响（Agent 常提前调 vision）
+    # vision 可提前回写图片流进度，但不得在未满足门禁时推进步骤五状态
     if tool_name in _STEP5_STREAM_TOOLS:
         store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success)
-        if get_step_status(task_id, "step5_streams") == "pending":
-            store.set_step_status(
-                task_id,
-                "step5_streams",
-                "running",
-                message="图片流比对中（等待步骤四完成）" if not can_advance_to_step5(task_id).get("ok") else "图片流比对中",
-            )
 
     gate = can_advance_to_step5(task_id)
     if not gate.get("ok"):
+        logger.info("step5 工具跳过状态推进 task=%s: %s", task_id, gate.get("message"))
         return
     from report_04.gates import count_image_streams, count_image_streams_processed
 
@@ -400,6 +403,84 @@ def _mark_analysis_running(store: TaskStore, task_id: str) -> None:
             store.set_step_status(task_id, step_key, "running", message="分析进行中…")
 
 
+def _maybe_complete_step3_after_web_tool(
+    store: TaskStore,
+    task_id: str,
+    tool_name: str,
+) -> None:
+    """步骤三：web 工具成功后解析候选，并在检索阶段结束时收口为 completed。"""
+    if tool_name not in WEB_SEARCH_TOOLS:
+        return
+    if not can_run_step3_web_search(task_id):
+        return
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return
+
+    from collect_01 import db as _db
+
+    row = _db.fetch_one(
+        """
+        SELECT
+          SUM(tool_name='web_search' AND status='success') AS n_search,
+          SUM(tool_name='web_extract' AND status='success') AS n_extract,
+          SUM(tool_name LIKE 'browser_%%' AND status='success') AS n_browser
+        FROM hermes_tool_outputs
+        WHERE task_id=%s AND phase='step3_web_search'
+        """,
+        (task_id,),
+    )
+    n_search = int((row or {}).get("n_search") or 0)
+    n_extract = int((row or {}).get("n_extract") or 0)
+    n_browser = int((row or {}).get("n_browser") or 0)
+
+    should_complete = False
+    if tool_name == "web_extract" and n_extract >= 1:
+        should_complete = True
+    elif tool_name.startswith("browser_") and n_browser >= 1 and n_search >= 1:
+        should_complete = True
+    elif tool_name == "web_search" and n_search >= 3:
+        should_complete = True
+
+    if not should_complete:
+        return
+
+    n_web_cands = _db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM cross_platform_candidates
+        WHERE task_id=%s AND match_strategy='web_search'
+        """,
+        (task_id,),
+    )
+    n_web = int((n_web_cands or {}).get("c") or 0)
+    store.set_step_status(
+        task_id,
+        "step3_web_search",
+        "completed",
+        message=f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web}）",
+    )
+    store.materialize_step4_from_candidates(task_id)
+
+
+def _save_step3_candidates_from_tool(
+    store: TaskStore,
+    task_id: str,
+    tool_name: str,
+    raw_output: Any,
+) -> None:
+    """从 web 工具原始输出解析并保存步骤三候选。"""
+    if tool_name not in WEB_SEARCH_TOOLS:
+        return
+    if not can_run_step3_web_search(task_id):
+        return
+    candidates = parse_web_search_candidates_from_tool(tool_name, raw_output)
+    if not candidates:
+        return
+    for row in candidates:
+        row["task_id"] = task_id
+        row.setdefault("match_strategy", "web_search")
+    store.save_candidate_rows(candidates, step_key="step3_web_search")
+
+
 def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) -> None:
     text = assistant or ""
     if not text:
@@ -407,6 +488,8 @@ def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) ->
     _apply_skip_steps(store, task_id, text)
     if is_progress_only(text) and mentions_analysis_steps(text):
         _mark_analysis_running(store, task_id)
+        return
+    if not can_run_step3_web_search(task_id):
         return
     if looks_like_step3_summary(text):
         candidates = parse_web_search_candidates(text)
@@ -503,6 +586,8 @@ def _sync_platform_collect_steps(
     tool_ok: bool,
 ) -> None:
     if not platform:
+        return
+    if not can_update_step4_children(task_id):
         return
     prof_key = profile_platform_step_key(platform)
     post_key = post_platform_step_key(platform)
@@ -627,6 +712,8 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if primary_step and tool_name not in _STEP5_STREAM_TOOLS:
         if primary_step == "step4_profiles" and not discovery_steps_terminal(task_id):
             pass
+        elif primary_step == "step3_web_search" and not can_run_step3_web_search(task_id):
+            pass
         elif primary_step == "step7_posts" and not can_run_step7_collect(task_id):
             pass
         else:
@@ -634,10 +721,15 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             if cur not in {"completed", "failed", "skipped"}:
                 store.set_step_status(task_id, primary_step, "running", message=f"执行 {tool_name}")
     if collect_step:
-        child_cur = get_step_status(task_id, collect_step)
-        if child_cur not in {"completed", "failed", "skipped"}:
-            kind = "发文" if collect_step.startswith("step7_post_") else "主页"
-            store.set_step_status(task_id, collect_step, "running", message=f"{platform} {kind}采集中…")
+        blocked = (
+            (collect_step.startswith("step4_profile_") and not can_update_step4_children(task_id))
+            or (collect_step.startswith("step7_post_") and not can_update_step7_children(task_id))
+        )
+        if not blocked:
+            child_cur = get_step_status(task_id, collect_step)
+            if child_cur not in {"completed", "failed", "skipped"}:
+                kind = "发文" if collect_step.startswith("step7_post_") else "主页"
+                store.set_step_status(task_id, collect_step, "running", message=f"{platform} {kind}采集中…")
 
     if tool_name in _STEP5_STREAM_TOOLS:
         _enter_step5(store, task_id)
@@ -676,7 +768,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if status != "success":
         if tool_name in _STEP5_STREAM_TOOLS:
             _on_step5_tool_after(store, task_id, tool_name, tool_args, success=False)
-        elif platform and discovery_steps_terminal(task_id):
+        elif platform and can_update_step4_children(task_id):
             _prepare_step4_collect(store, task_id)
             _sync_platform_collect_steps(
                 store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
@@ -733,21 +825,40 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             "completed",
             message=f"Maigret 发现 {len(cands)} 个候选",
         )
+    elif tool_name.startswith("mcp_maigret_"):
+        cur2 = get_step_status(task_id, "step2_maigret")
+        if cur2 == "pending":
+            store.set_step_status(task_id, "step2_maigret", "running", message=f"Maigret 执行中 ({tool_name})")
+        cands = result_data.get("candidates") or []
+        if cands and get_step_status(task_id, "step2_maigret") not in {"completed", "skipped"}:
+            store.set_step_status(
+                task_id,
+                "step2_maigret",
+                "completed",
+                message=f"Maigret 发现 {len(cands)} 个候选",
+            )
 
     if tool_name in WEB_SEARCH_TOOLS:
         if get_step_status(task_id, "step3_web_search") not in {"completed", "skipped"}:
-            store.set_step_status(task_id, "step3_web_search", "running", message=f"网页检索中 ({tool_name})")
+            if can_run_step3_web_search(task_id):
+                store.set_step_status(task_id, "step3_web_search", "running", message=f"网页检索中 ({tool_name})")
+            else:
+                logger.info(
+                    "step3 跳过 tool=%s task=%s: step2_maigret=%s",
+                    tool_name,
+                    task_id,
+                    get_step_status(task_id, "step2_maigret"),
+                )
+        _save_step3_candidates_from_tool(store, task_id, tool_name, result)
+        _maybe_complete_step3_after_web_tool(store, task_id, tool_name)
 
     for prof in result_data.get("profiles") or []:
         store.build_streams_from_profile(task_id, prof)
 
-    if platform:
-        if not discovery_steps_terminal(task_id) and tool_name in STEP4_COLLECT_TOOLS:
-            _prepare_step4_collect(store, task_id)
-        if discovery_steps_terminal(task_id):
-            _sync_platform_collect_steps(
-                store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
-            )
+    if platform and can_update_step4_children(task_id):
+        _sync_platform_collect_steps(
+            store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
+        )
     _try_complete_profiles(store, task_id)
 
     if tool_name in _STEP5_STREAM_TOOLS:
@@ -770,11 +881,22 @@ def _persist_normalized(
         store.save_profile_row(row, step_key=prof_step)
     for row in data.get("candidates") or []:
         row["task_id"] = task_id
-        step_key = "step2_maigret" if tool_name == "mcp_maigret_collect_accounts" else "step3_web_search"
-        row.setdefault("match_strategy", "maigret" if step_key == "step2_maigret" else "web_search")
+        if tool_name.startswith("mcp_maigret_"):
+            step_key = "step2_maigret"
+            match_strategy = "maigret"
+        elif tool_name in WEB_SEARCH_TOOLS:
+            step_key = "step3_web_search"
+            match_strategy = "web_search"
+        else:
+            step_key = "step3_web_search"
+            match_strategy = row.get("discovery_source") or "web_search"
+        row.setdefault("match_strategy", match_strategy)
+        if step_key == "step3_web_search" and not can_run_step3_web_search(task_id):
+            continue
         store.save_candidate_rows([row], step_key=step_key)
     posts = data.get("posts") or []
     if posts:
+        # 发文数据始终入库（Agent 常提前调工具）；步骤七状态由门禁单独控制
         store.save_post_rows(posts, step_key=post_step)
 
 
