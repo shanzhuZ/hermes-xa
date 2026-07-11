@@ -5,7 +5,7 @@ from __future__ import annotations
 import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
-from collect_01.normalizers.base import unwrap_tool_payload
+from collect_01.normalizers.base import unwrap_tool_payload, normalize_mcp_tool_name
 from collect_01.normalizers import apify, maigret, twitter, weibo, youtube
 
 logger = logging.getLogger(__name__)
@@ -36,10 +36,11 @@ REGISTRY: Dict[str, Tuple[Handler, str]] = {
 
 
 def resolve(tool_name: str) -> Optional[Tuple[Handler, str]]:
-    return REGISTRY.get(tool_name)
+    return REGISTRY.get(normalize_mcp_tool_name(tool_name))
 
 
 def dispatch(tool_name: str, raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
+    tool_name = normalize_mcp_tool_name(tool_name)
     entry = resolve(tool_name)
     if not entry:
         return {"profiles": [], "posts": [], "candidates": [], "platforms": []}

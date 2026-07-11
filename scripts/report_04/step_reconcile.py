@@ -450,14 +450,55 @@ def _reconcile_vision_from_tools(store: Any, task_id: str) -> int:
     return n
 
 
+def reconcile_step1_from_twitter(store: Any, task_id: str) -> int:
+    """回放 Twitter 种子 profile 工具，补入库并完成步骤一。"""
+    if get_step_status(task_id, "step1_seed") in {"completed", "skipped"}:
+        return 0
+    from collect_01.normalizers.base import normalize_mcp_tool_name
+    from collect_01.normalizers.registry import dispatch
+
+    rows = db.fetch_all(
+        """
+        SELECT id, tool_name, tool_output FROM hermes_tool_outputs
+        WHERE task_id=%s AND status='success'
+          AND (
+            tool_name IN ('mcp_twitter_get_user_info', 'mcp__twitter__get_user_info')
+            OR tool_name LIKE 'mcp_twitter_get_user_info%%'
+            OR tool_name LIKE 'mcp__twitter__get_user_info%%'
+          )
+        ORDER BY id
+        """,
+        (task_id,),
+    )
+    if not rows:
+        return 0
+    for row in rows:
+        tool_name = normalize_mcp_tool_name(str(row["tool_name"]))
+        ctx = {
+            "task_id": task_id,
+            "tool_output_id": row["id"],
+            "tool_name": tool_name,
+        }
+        data = dispatch(tool_name, row.get("tool_output"), ctx)
+        profs = data.get("profiles") or []
+        if not profs:
+            continue
+        store.mark_seed_completed(task_id, profs, source="tool")
+        return 1
+    return 0
+
+
 def reconcile_step2_from_maigret(store: Any, task_id: str) -> int:
     """回放 Maigret 工具输出，补入库候选并完成步骤二。"""
     if get_step_status(task_id, "step2_maigret") in {"completed", "skipped"}:
         return 0
+    from collect_01.normalizers.base import normalize_mcp_tool_name
+
     rows = db.fetch_all(
         """
         SELECT id, tool_name, tool_output FROM hermes_tool_outputs
-        WHERE task_id=%s AND tool_name LIKE 'mcp_maigret_%%' AND status='success'
+        WHERE task_id=%s AND status='success'
+          AND (tool_name LIKE 'mcp_maigret_%%' OR tool_name LIKE 'mcp__maigret__%%')
         ORDER BY id
         """,
         (task_id,),
@@ -468,12 +509,13 @@ def reconcile_step2_from_maigret(store: Any, task_id: str) -> int:
 
     total = 0
     for row in rows:
+        tool_name = normalize_mcp_tool_name(str(row["tool_name"]))
         ctx = {
             "task_id": task_id,
             "tool_output_id": row["id"],
-            "tool_name": str(row["tool_name"]),
+            "tool_name": tool_name,
         }
-        data = dispatch(str(row["tool_name"]), row.get("tool_output"), ctx)
+        data = dispatch(tool_name, row.get("tool_output"), ctx)
         cands = data.get("candidates") or []
         if not cands:
             continue
@@ -686,7 +728,31 @@ def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_don
     return 0
 
 
+def _normalize_stored_mcp_tool_names(task_id: str) -> int:
+    """把库里已写入的 mcp__* 工具名改成 registry 使用的 mcp_* 形式。"""
+    from collect_01.normalizers.base import normalize_mcp_tool_name
+
+    rows = db.fetch_all(
+        "SELECT id, tool_name FROM hermes_tool_outputs WHERE task_id=%s AND tool_name LIKE 'mcp__%%'",
+        (task_id,),
+    )
+    n = 0
+    for row in rows:
+        old = str(row.get("tool_name") or "")
+        new = normalize_mcp_tool_name(old)
+        if new != old:
+            db.execute(
+                "UPDATE hermes_tool_outputs SET tool_name=%s WHERE id=%s",
+                (new, row["id"]),
+            )
+            n += 1
+    return n
+
+
 def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
+    # 新版 Hermes 工具名 mcp__server__tool → 统一为 mcp_server_tool 后再回放
+    _normalize_stored_mcp_tool_names(task_id)
+    reconcile_step1_from_twitter(store, task_id)
     reconcile_step2_from_maigret(store, task_id)
     reconcile_step3_from_web_tools(store, task_id)
     ensure_step3_not_premature(store, task_id)

@@ -355,7 +355,9 @@ def _maybe_advance_pipeline(store: TaskStore, task_id: str) -> None:
 
 
 def _on_post_tool(payload: Dict[str, Any]) -> None:
-    tool_name = str(payload.get("tool_name") or "")
+    from collect_01.normalizers.base import normalize_mcp_tool_name
+
+    tool_name = normalize_mcp_tool_name(str(payload.get("tool_name") or ""))
     if not tool_name:
         return
     ex = _extra(payload)

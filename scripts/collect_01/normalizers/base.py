@@ -177,5 +177,26 @@ def post_row(
 def infer_mcp_server(tool_name: str) -> Optional[str]:
     if not tool_name:
         return None
-    m = re.match(r"mcp_([^_]+)", tool_name)
+    name = normalize_mcp_tool_name(tool_name)
+    m = re.match(r"mcp_([^_]+)", name)
     return m.group(1) if m else None
+
+
+def normalize_mcp_tool_name(tool_name: str) -> str:
+    """统一 Hermes MCP 工具名。
+
+    新版 gateway 常见：``mcp__twitter__get_user_info``
+    本仓库 registry/phases 使用：``mcp_twitter_get_user_info``
+
+    Apify Actor 保留工具段中的双下划线，例如：
+    ``mcp__apify__apify__instagram_scraper`` → ``mcp_apify_apify__instagram_scraper``
+    """
+    name = (tool_name or "").strip()
+    if not name.startswith("mcp__"):
+        return name
+    rest = name[5:]  # 去掉前缀 mcp__
+    if "__" not in rest:
+        return f"mcp_{rest}"
+    server, tool = rest.split("__", 1)
+    return f"mcp_{server}_{tool}"
+

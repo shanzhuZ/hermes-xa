@@ -14,6 +14,13 @@ import os
 import sys
 from pathlib import Path
 
+# 新版 twitter_mcp.server 在 import 时强制读 OAuth 四元组；
+# cookie/twikit 模式实际不使用它们，给占位即可。
+os.environ.setdefault("CONSUMER_KEY", "cookie-mode")
+os.environ.setdefault("CONSUMER_SECRET", "cookie-mode")
+os.environ.setdefault("ACCESS_TOKEN", "cookie-mode")
+os.environ.setdefault("ACCESS_TOKEN_SECRET", "cookie-mode")
+
 from twitter_mcp._vendor.twikit import Client
 
 
