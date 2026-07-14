@@ -311,9 +311,33 @@ class TaskStore:
             """
             UPDATE hermes_tasks
             SET status='failed', error_message=%s, finished_at=NOW(3), updated_at=NOW(3)
-            WHERE task_id=%s
+            WHERE task_id=%s AND status NOT IN ('failed', 'completed')
             """,
             (error_message[:2000], task_id),
+        )
+
+    def fail_seed_and_abort(self, task_id: str, error_message: str) -> None:
+        """种子主页采集失败：步骤一 failed、任务 failed，未完成步骤一律 skipped。"""
+        msg = (error_message or "种子账号采集失败，请检查账号名").strip()
+        cur1 = get_step_status(task_id, "step1_seed")
+        if cur1 not in {"completed", "failed", "skipped"}:
+            self.set_step_status(task_id, "step1_seed", "failed", message=msg[:500])
+        elif cur1 != "failed":
+            # 已 completed 但业务上应失败时不再改步骤终态语义；任务级失败仍写入
+            pass
+        self.mark_task_failed(task_id, msg)
+        db.execute(
+            """
+            UPDATE collect_phase_steps
+            SET status='skipped',
+                message=%s,
+                updated_at=NOW(3),
+                finished_at=COALESCE(finished_at, NOW(3))
+            WHERE task_id=%s
+              AND step_key <> 'step1_seed'
+              AND status IN ('pending', 'running')
+            """,
+            ("种子账号采集失败，已中止后续步骤", task_id),
         )
 
     def create_pending_task(
@@ -1150,13 +1174,51 @@ class TaskStore:
             sync_streams_for_task(task_id, step_key="step5_streams", stream_type="text")
         except Exception as exc:
             logger.warning("展示层双写 text streams 失败: %s", exc)
+
+        from report_04.gates import count_image_streams, is_stream_compare_ready
+
+        n_img = count_image_streams(task_id)
+        # 仍有待处理图片流时不得提前 completed，等 OCR/Vision（Skill 步骤5 硬要求）
+        if n_img > 0 and not is_stream_compare_ready(task_id):
+            self.set_step_status(
+                task_id,
+                "step5_streams",
+                "running",
+                message=f"文本流比对完成（通过 {matched}/{len(all_text)}）；等待图片流 OCR/Vision",
+                payload={"matched": matched, "total": len(all_text), "image_pending": n_img},
+            )
+            self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
+            return
+
         self.set_step_status(
             task_id,
             "step5_streams",
             "completed",
-            message=f"文本流比对完成，通过 {matched}/{len(all_text)} 条",
+            message=(
+                f"文本流比对完成，通过 {matched}/{len(all_text)} 条"
+                if n_img == 0
+                else f"文本/图片流核查完成，文本通过 {matched}/{len(all_text)} 条"
+            ),
             payload={"matched": matched, "total": len(all_text)},
         )
+
+    def kickoff_step5_if_ready(self, task_id: str) -> bool:
+        """步骤四收口后立刻启动步骤五：先做文本流规则比对；有待处理图片流则保持 running 等 OCR/Vision。"""
+        from report_04.gates import can_advance_to_step5, can_advance_to_step7
+
+        gate = can_advance_to_step5(task_id)
+        if not gate.get("ok"):
+            return False
+        cur5 = _step_status(task_id, "step5_streams")
+        if cur5 not in {"completed", "skipped"}:
+            self.run_stream_validation(task_id)
+            cur5 = _step_status(task_id, "step5_streams")
+        if cur5 in {"completed", "skipped"} and _step_status(task_id, "step6_validated") != "completed":
+            self.run_validated_accounts(task_id)
+            if can_advance_to_step7(task_id).get("ok"):
+                self.materialize_step7_from_validated(task_id)
+                self.reconcile_collect_child_steps(task_id)
+        return True
 
     def run_validated_accounts(self, task_id: str) -> None:
         """步骤六：根据文本流 pass + 有 profile 的账号写入可信清单。"""
@@ -1298,6 +1360,11 @@ class TaskStore:
     def finalize_task(self, task_id: str) -> None:
         from report_04.step_reconcile import reconcile_stuck_pipeline
 
+        task = self.get_task(task_id) or {}
+        if str(task.get("status") or "") == "failed":
+            # 种子失败等硬失败终态：不再 reconcile 改回 running
+            return
+
         reconcile_stuck_pipeline(self, task_id)
         _reconcile_report_post_child_steps(self, task_id)
 
@@ -1365,12 +1432,12 @@ class TaskStore:
         )
         if ready_done:
             db.execute(
-                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s",
+                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed')",
                 (PHASE_DONE, task_id),
             )
         else:
             current_phase = PHASE_REPORT if not step5_ok else PHASE_POSTS
             db.execute(
-                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s",
+                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s AND status NOT IN ('failed', 'completed')",
                 (current_phase, task_id),
             )

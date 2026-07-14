@@ -27,7 +27,7 @@ public class ReportTaskCreateService implements TaskCreateService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public String createPendingTask(String taskId, String sessionId, String userMessage) {
+    public String createPendingTask(String taskId, String sessionId, String userMessage, String payloadJson) {
         if (taskId == null || taskId.trim().isEmpty()) {
             throw new IllegalArgumentException("taskId 不能为空");
         }
@@ -55,7 +55,7 @@ public class ReportTaskCreateService implements TaskCreateService {
         String seedJson = JSON.toJSONString(buildSeedJson(userMessage));
         collectTaskMapper.insertTask(taskId, sessionId, dbTaskType(), 1, seedJson);
         String clipped = userMessage.length() > 65535 ? userMessage.substring(0, 65535) : userMessage;
-        collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped);
+        collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped, payloadJson);
         insertReportSteps(taskId);
         return taskId;
     }

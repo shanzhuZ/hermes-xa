@@ -1,5 +1,6 @@
 package com.example.aw.collect.controller;
 
+import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import com.example.aw.collect.service.CollectSubmitService;
 import com.example.aw.collect.service.TaskFinalAnswerQueryService;
@@ -15,6 +16,7 @@ import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.PostMapping;
 import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import java.util.ArrayList;
@@ -83,11 +85,17 @@ public class CollectApiController {
             err.put("hint", "第一轮新对话请用 POST /api/collect/start，无需传 sessionId");
             return ResponseEntity.badRequest().body(err);
         }
-        return doSubmit(sessionId, taskId, message, firstNonBlank(req, "taskType", "task_type"));
+        return doSubmit(
+                sessionId,
+                taskId,
+                message,
+                firstNonBlank(req, "taskType", "task_type"),
+                CollectSubmitService.toPayloadJson(req));
     }
 
     /**
      * 【前端主入口】用户发话下任务：无 sessionId 则自动创建会话（封装 Gateway，前端不直连 8642）。
+     * 额外字段 payload（或 payloadJson / extra）原样写入 hermes_user_dialogues.payload_json。
      */
     @PostMapping("/collect/start")
     public ResponseEntity<Map<String, Object>> collectStart(@RequestBody Map<String, Object> req) {
@@ -104,12 +112,14 @@ public class CollectApiController {
         if (taskType.isEmpty()) {
             taskType = "collect";
         }
+        String payloadJson = CollectSubmitService.toPayloadJson(req);
         try {
             Map<String, Object> body = collectSubmitService.submitCollectStart(
                     sessionId.isEmpty() ? null : sessionId,
                     taskId.isEmpty() ? null : taskId,
                     message,
-                    taskType);
+                    taskType,
+                    payloadJson);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
         } catch (IllegalStateException e) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
@@ -128,7 +138,7 @@ public class CollectApiController {
     }
 
     private ResponseEntity<Map<String, Object>> doSubmit(
-            String sessionId, String taskId, String message, String taskType) {
+            String sessionId, String taskId, String message, String taskType, String payloadJson) {
         if (message.isEmpty()) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
             err.put("error", "message_required");
@@ -139,7 +149,7 @@ public class CollectApiController {
         }
         try {
             Map<String, Object> body = collectSubmitService.submitCollect(
-                    sessionId, taskId.isEmpty() ? null : taskId, message, taskType);
+                    sessionId, taskId.isEmpty() ? null : taskId, message, taskType, payloadJson);
             return ResponseEntity.status(HttpStatus.ACCEPTED).body(body);
         } catch (IllegalStateException e) {
             Map<String, Object> err = new LinkedHashMap<String, Object>();
@@ -273,6 +283,78 @@ public class CollectApiController {
         body.put("sessionId", sessionId);
         body.put("tasks", tasks);
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 历史对话分页查询（仅分页参数）。
+     * 同一 taskId 若已有 assistant，只返回该任务最新一条 assistant；
+     * 若该条 payload 为空，则从同任务其它记录（通常为 user）回填 payload。
+     */
+    @GetMapping("/dialogues")
+    public ResponseEntity<Map<String, Object>> listDialogues(
+            @RequestParam(value = "page", defaultValue = "1") int page,
+            @RequestParam(value = "pageSize", defaultValue = "20") int pageSize) {
+        if (page < 1) {
+            page = 1;
+        }
+        if (pageSize < 1) {
+            pageSize = 20;
+        }
+        if (pageSize > 200) {
+            pageSize = 200;
+        }
+        long total = collectTaskMapper.countAllDialogues();
+        int offset = (page - 1) * pageSize;
+        List<Map<String, Object>> rows = collectTaskMapper.selectDialoguesPage(offset, pageSize);
+        List<Map<String, Object>> dialogues = toDialogueItems(rows);
+
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("page", page);
+        body.put("pageSize", pageSize);
+        body.put("total", total);
+        body.put("list", dialogues);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 将库行转为前端驼峰结构；payload_json 解析为对象原样返回。
+     */
+    private List<Map<String, Object>> toDialogueItems(List<Map<String, Object>> rows) {
+        List<Map<String, Object>> dialogues = new ArrayList<Map<String, Object>>();
+        if (rows == null) {
+            return dialogues;
+        }
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", row.get("id"));
+            item.put("taskId", row.get("task_id"));
+            item.put("sessionId", row.get("session_id"));
+            item.put("role", row.get("role"));
+            item.put("content", row.get("content"));
+            item.put("msgType", row.get("msg_type"));
+            item.put("payload", parsePayloadJson(row.get("payload_json")));
+            item.put("createdAt", row.get("created_at"));
+            dialogues.add(item);
+        }
+        return dialogues;
+    }
+
+    private Object parsePayloadJson(Object raw) {
+        if (raw == null) {
+            return null;
+        }
+        if (raw instanceof Map || raw instanceof List) {
+            return raw;
+        }
+        String text = String.valueOf(raw).trim();
+        if (text.isEmpty() || "null".equalsIgnoreCase(text)) {
+            return null;
+        }
+        try {
+            return JSON.parse(text);
+        } catch (Exception e) {
+            return text;
+        }
     }
 
     /**

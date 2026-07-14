@@ -452,7 +452,10 @@ def _reconcile_vision_from_tools(store: Any, task_id: str) -> int:
 
 def reconcile_step1_from_twitter(store: Any, task_id: str) -> int:
     """回放 Twitter 种子 profile 工具，补入库并完成步骤一。"""
-    if get_step_status(task_id, "step1_seed") in {"completed", "skipped"}:
+    if get_step_status(task_id, "step1_seed") in {"completed", "skipped", "failed"}:
+        return 0
+    task = store.get_task(task_id) or {}
+    if str(task.get("status") or "") in {"failed", "completed"}:
         return 0
     from collect_01.normalizers.base import normalize_mcp_tool_name
     from collect_01.normalizers.registry import dispatch
@@ -722,10 +725,17 @@ def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_don
             return 0
     elif get_step_status(task_id, parent) in {"pending", "running"}:
         return 0
+    closed = 0
     if get_step_status(task_id, parent) not in {"completed", "skipped"}:
         store.set_step_status(task_id, parent, "completed", message=msg_done)
-        return 1
-    return 0
+        closed = 1
+    # 步骤四一旦终态，立刻踢步骤五，避免仅等 Agent 调 vision 而长期 pending
+    if parent == PROFILE_PARENT_STEP_KEY and get_step_status(task_id, parent) in {"completed", "skipped"}:
+        try:
+            store.kickoff_step5_if_ready(task_id)
+        except Exception as exc:
+            logger.warning("kickoff_step5 失败 task=%s: %s", task_id, exc)
+    return closed
 
 
 def _normalize_stored_mcp_tool_names(task_id: str) -> int:
@@ -780,11 +790,7 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     ensure_step7_parent_not_premature(store, task_id)
 
     if can_advance_to_step5(task_id).get("ok"):
-        if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
-            if is_stream_compare_ready(task_id):
-                store.set_step_status(task_id, "step5_streams", "completed", message="流核查完成")
-            else:
-                store.run_stream_validation(task_id)
+        store.kickoff_step5_if_ready(task_id)
         if (
             get_step_status(task_id, "step5_streams") in {"completed", "skipped"}
             and get_step_status(task_id, "step6_validated") != "completed"
@@ -799,10 +805,7 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
 
     if can_advance_to_analysis(task_id).get("ok"):
         if get_step_status(task_id, "step5_streams") != "completed":
-            if is_stream_compare_ready(task_id):
-                store.set_step_status(task_id, "step5_streams", "completed", message="流核查完成")
-            else:
-                store.run_stream_validation(task_id)
+            store.kickoff_step5_if_ready(task_id)
 
     if analysis_steps_terminal(task_id) and can_complete_step11(task_id).get("ok"):
         if get_step_status(task_id, "step11_report") != "completed":

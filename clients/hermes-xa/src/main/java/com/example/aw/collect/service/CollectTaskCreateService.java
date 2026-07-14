@@ -28,7 +28,7 @@ public class CollectTaskCreateService implements TaskCreateService {
 
     @Override
     @Transactional(rollbackFor = Exception.class)
-    public String createPendingTask(String taskId, String sessionId, String userMessage) {
+    public String createPendingTask(String taskId, String sessionId, String userMessage, String payloadJson) {
         if (taskId == null || taskId.trim().isEmpty()) {
             taskId = UUID.randomUUID().toString();
         }
@@ -58,7 +58,7 @@ public class CollectTaskCreateService implements TaskCreateService {
 
         collectTaskMapper.insertTask(taskId, sessionId, dbTaskType(), crossPlatform, seedJson);
         String clipped = userMessage.length() > 65535 ? userMessage.substring(0, 65535) : userMessage;
-        collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped);
+        collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped, payloadJson);
 
         insertCrossPlatformSteps(taskId);
         if (crossPlatform == 0) {

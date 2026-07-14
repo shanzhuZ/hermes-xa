@@ -12,6 +12,8 @@ public interface TaskCreateService {
 
     /**
      * Java 预建 pending 任务，返回 taskId。
+     *
+     * @param payloadJson 前端原始请求 JSON，可为空
      */
-    String createPendingTask(String taskId, String sessionId, String userMessage);
+    String createPendingTask(String taskId, String sessionId, String userMessage, String payloadJson);
 }

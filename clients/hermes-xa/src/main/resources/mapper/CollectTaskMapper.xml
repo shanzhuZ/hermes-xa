@@ -36,9 +36,71 @@
     </insert>
 
     <insert id="insertUserDialogue">
-        INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, msg_type)
-        VALUES (#{taskId}, #{sessionId}, 'user', #{content}, 'user_input')
+        INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, payload_json, msg_type)
+        VALUES (#{taskId}, #{sessionId}, 'user', #{content},
+                <choose>
+                    <when test="payloadJson != null and payloadJson != ''">
+                        CAST(#{payloadJson} AS JSON)
+                    </when>
+                    <otherwise>
+                        NULL
+                    </otherwise>
+                </choose>,
+                'user_input')
     </insert>
+
+    <select id="countAllDialogues" resultType="long">
+        SELECT COUNT(1)
+        FROM hermes_user_dialogues d
+        WHERE NOT EXISTS (
+                  SELECT 1 FROM hermes_user_dialogues a
+                  WHERE a.task_id = d.task_id AND a.role = 'assistant'
+              )
+           OR (
+                  d.role = 'assistant'
+              AND d.id = (
+                      SELECT MAX(a2.id)
+                      FROM hermes_user_dialogues a2
+                      WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+                  )
+              )
+    </select>
+
+    <select id="selectDialoguesPage" resultType="java.util.HashMap">
+        SELECT d.id,
+               d.task_id,
+               d.session_id,
+               d.role,
+               d.content,
+               COALESCE(
+                   d.payload_json,
+                   (
+                       SELECT u.payload_json
+                       FROM hermes_user_dialogues u
+                       WHERE u.task_id = d.task_id
+                         AND u.payload_json IS NOT NULL
+                       ORDER BY u.id ASC
+                       LIMIT 1
+                   )
+               ) AS payload_json,
+               d.msg_type,
+               d.created_at
+        FROM hermes_user_dialogues d
+        WHERE NOT EXISTS (
+                  SELECT 1 FROM hermes_user_dialogues a
+                  WHERE a.task_id = d.task_id AND a.role = 'assistant'
+              )
+           OR (
+                  d.role = 'assistant'
+              AND d.id = (
+                      SELECT MAX(a2.id)
+                      FROM hermes_user_dialogues a2
+                      WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+                  )
+              )
+        ORDER BY d.created_at DESC, d.id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
 
     <insert id="insertPhaseStep">
         INSERT IGNORE INTO collect_phase_steps

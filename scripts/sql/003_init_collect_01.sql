@@ -36,6 +36,7 @@ CREATE TABLE IF NOT EXISTS hermes_user_dialogues (
     session_id  VARCHAR(64)   NULL     COMMENT 'Hermes 会话 ID',
     role        VARCHAR(16)   NOT NULL COMMENT '消息角色：user 用户 / assistant 助手 / system 系统',
     content     TEXT          NOT NULL COMMENT '消息正文，含用户一句话或系统回复',
+    payload_json JSON         NULL     COMMENT '前端传入的原始请求 JSON（原样存储）',
     msg_type    VARCHAR(32)   NOT NULL DEFAULT 'user_input' COMMENT '消息类型：user_input 用户输入 / assistant_reply 助手回复 / phase_progress 阶段进度 / summary 结果摘要',
     created_at  DATETIME(3)   NOT NULL DEFAULT CURRENT_TIMESTAMP(3) COMMENT '消息时间',
     KEY idx_task (task_id),

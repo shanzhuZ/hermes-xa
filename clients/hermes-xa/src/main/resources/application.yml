@@ -32,14 +32,14 @@ spring:
     multipart:
       max-file-size: 1024MB
       max-request-size: 1024MB
-#  datasource:
-#    url: jdbc:mysql://127.0.0.1:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-#    username: root
-#    password: 123456
   datasource:
-    url: jdbc:mysql://192.168.3.124:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://127.0.0.1:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
-    password: "Yvns!niwo^coc57Qpoi"
+    password: 123456
+#  datasource:
+#    url: jdbc:mysql://192.168.3.124:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+#    username: root
+#    password: "Yvns!niwo^coc57Qpoi"
 
 #hermes:
 #  base-url: http://127.0.0.1:8642

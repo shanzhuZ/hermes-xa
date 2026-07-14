@@ -35,6 +35,34 @@ _SKIP_STEP_TOOLS = frozenset({"skill_view", "clarify", "tool_search", "describe_
 _STEP4_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
 # 每个任务已处理的工具调用（防重）
 _SEEN_TOOL_CALLS: set = set()
+# 01 种子主页工具（仅绑定 step1_seed 的工具）
+_SEED_PROFILE_TOOLS = frozenset({"mcp_twitter_get_user_info"})
+
+
+def _is_seed_profile_tool(tool_name: str, task_id: str) -> bool:
+    return (
+        tool_name in _SEED_PROFILE_TOOLS
+        and get_step_status(task_id, "step1_seed") not in {"completed", "skipped", "failed"}
+    )
+
+
+def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False) -> str:
+    text = (tool_output or "").lower()
+    if empty:
+        return "种子主页采集无结果，请检查账号名是否正确后重试"
+    if "does not exist" in text or "user not found" in text or "not found" in text:
+        return "种子账号不存在（平台未找到），请检查账号名后重试"
+    snippet = (tool_output or "").replace("\n", " ").strip()
+    if len(snippet) > 180:
+        snippet = snippet[:180] + "…"
+    if snippet:
+        return f"种子主页采集失败：{snippet}"
+    return f"种子主页采集失败（{tool_name}），请检查账号名后重试"
+
+
+def _task_is_terminal(store: TaskStore, task_id: str) -> bool:
+    task = store.get_task(task_id) or {}
+    return str(task.get("status") or "") in {"failed", "completed"}
 
 
 def _setup_logging() -> None:
@@ -379,6 +407,35 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         return
 
     store = _store()
+    seed_collect = _is_seed_profile_tool(tool_name, task_id)
+
+    # 任务已失败/完成：仅保留工具审计，不再推进步骤
+    if _task_is_terminal(store, task_id):
+        tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        result = ex.get("result")
+        if isinstance(result, (dict, list)):
+            tool_output = json.dumps(result, ensure_ascii=False, default=str)
+        else:
+            tool_output = str(result or "")
+        status = "success" if ex.get("status") == "ok" else "error"
+        try:
+            store.save_tool_output(
+                task_id=task_id,
+                tool_name=tool_name,
+                tool_args=tool_args,
+                tool_output=tool_output,
+                tool_call_id=tool_call_id or f"anon-{tool_name}-{len(_SEEN_TOOL_CALLS)}",
+                duration_ms=ex.get("duration_ms"),
+                status=status,
+                phase=tool_step_key(tool_name),
+                mcp_server=infer_mcp_server(tool_name),
+            )
+        except DbError:
+            pass
+        if tool_call_id:
+            _SEEN_TOOL_CALLS.add(tool_call_id)
+        logger.info("任务已终态，忽略步骤推进 task=%s tool=%s", task_id, tool_name)
+        return
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
         _enter_step4(store, task_id)
@@ -461,6 +518,11 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     }
 
     if status != "success":
+        if seed_collect:
+            fail_msg = _seed_fail_message(tool_name, tool_output, empty=False)
+            store.fail_seed_and_abort(task_id, fail_msg)
+            logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            return
         if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
             _enter_step4(store, task_id)
             _on_step4_tool_after(store, task_id, tool_name, tool_args, success=False)
@@ -473,8 +535,18 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         result_data = dispatch(tool_name, tool_output, ctx)
     except Exception as exc:
         logger.exception("normalizer 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
+        if seed_collect:
+            fail_msg = _seed_fail_message(tool_name, str(exc), empty=True)
+            store.fail_seed_and_abort(task_id, fail_msg)
+            return
         if tool_name != "mcp_maigret_collect_accounts":
             return
+
+    if seed_collect and not (result_data.get("profiles") or []):
+        fail_msg = _seed_fail_message(tool_name, tool_output, empty=True)
+        store.fail_seed_and_abort(task_id, fail_msg)
+        logger.warning("种子采集失败(空结果) task=%s tool=%s", task_id, tool_name)
+        return
 
     _persist_normalized(store, task_id, result_data, display_step_key=output_step_key)
     _update_steps_after_tool(store, task_id, tool_name, result_data)
@@ -530,6 +602,13 @@ def _update_steps_after_tool(
     result_data: Dict[str, Any],
 ) -> None:
     if tool_name == "mcp_twitter_get_user_info":
+        profs = result_data.get("profiles") or []
+        if not profs:
+            return
+        if get_step_status(task_id, "step1_seed") in {"completed", "failed", "skipped"}:
+            return
+        if _task_is_terminal(store, task_id):
+            return
         store.set_step_status(task_id, "step1_seed", "completed", message="种子 Twitter 资料已入库")
         return
     if tool_name == "mcp_maigret_collect_accounts":

@@ -26,7 +26,13 @@ public interface CollectTaskMapper {
 
     void insertUserDialogue(@Param("taskId") String taskId,
                             @Param("sessionId") String sessionId,
-                            @Param("content") String content);
+                            @Param("content") String content,
+                            @Param("payloadJson") String payloadJson);
+
+    long countAllDialogues();
+
+    List<Map<String, Object>> selectDialoguesPage(@Param("offset") int offset,
+                                                  @Param("limit") int limit);
 
     void insertPhaseStep(@Param("taskId") String taskId,
                          @Param("stepKey") String stepKey,

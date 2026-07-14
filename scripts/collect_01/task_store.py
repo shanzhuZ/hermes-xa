@@ -242,9 +242,30 @@ class TaskStore:
             """
             UPDATE hermes_tasks
             SET status='failed', error_message=%s, finished_at=NOW(3), updated_at=NOW(3)
-            WHERE task_id=%s
+            WHERE task_id=%s AND status NOT IN ('failed', 'completed')
             """,
             (error_message[:2000], task_id),
+        )
+
+    def fail_seed_and_abort(self, task_id: str, error_message: str) -> None:
+        """种子主页采集失败：步骤一 failed、任务 failed，未完成步骤一律 skipped。"""
+        msg = (error_message or "种子账号采集失败，请检查账号名").strip()
+        cur1 = _step_status(task_id, "step1_seed")
+        if cur1 not in {"completed", "failed", "skipped"}:
+            self.set_step_status(task_id, "step1_seed", "failed", message=msg[:500])
+        self.mark_task_failed(task_id, msg)
+        db.execute(
+            """
+            UPDATE collect_phase_steps
+            SET status='skipped',
+                message=%s,
+                updated_at=NOW(3),
+                finished_at=COALESCE(finished_at, NOW(3))
+            WHERE task_id=%s
+              AND step_key <> 'step1_seed'
+              AND status IN ('pending', 'running')
+            """,
+            ("种子账号采集失败，已中止后续步骤", task_id),
         )
 
     def create_pending_task(
@@ -995,6 +1016,10 @@ class TaskStore:
             reconcile_stuck_pipeline,
         )
 
+        task = self.get_task(task_id) or {}
+        if str(task.get("status") or "") == "failed":
+            return
+
         reconcile_stuck_pipeline(self, task_id)
         reconcile_post_child_steps(self, task_id)
 
@@ -1051,12 +1076,12 @@ class TaskStore:
         reconcile_step6_parent(self, task_id, poc)
         if ready_done:
             db.execute(
-                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s",
+                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed')",
                 (PHASE_DONE, task_id),
             )
         else:
             current_phase = PHASE_ACCOUNT_FINALIZE if not step5_ok else PHASE_COLLECT
             db.execute(
-                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s",
+                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s AND status NOT IN ('failed', 'completed')",
                 (current_phase, task_id),
             )
