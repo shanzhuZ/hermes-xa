@@ -1,4 +1,10 @@
-"""Hermes Hook 入口 — 03 账号核查入库（stdin JSON）。"""
+"""Hermes Hook 入口 — 03 账号核查入库（stdin JSON）。
+
+冲突约定（方案 C，见 docs/思考流与步骤树同步落库实施方案.md）：
+- Java 中继可粗写 pending/running→running（及极少数粗 completed）；
+- Hook 为细状态真相源，可覆盖 message / completed / failed / skipped / 子节点；
+- 无业务理由勿把已业务 completed 打回 pending（合法 reopen 除外）。
+"""
 
 from __future__ import annotations
 
@@ -11,7 +17,12 @@ from collect_01.config import hermes_home
 from collect_01.db import DbError
 from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
-from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint
+from collect_01.normalizers.apify import (
+    apify_fail_message,
+    apify_platform_from_actor_tool,
+    resolve_apify_platform_hint,
+)
+from collect_01.normalizers.youtube import youtube_channel_id_ok
 from verify_03.account_parser import looks_like_step1_confirmation, parse_input_accounts
 from verify_03.gates import (
     all_input_profiles_attempted,
@@ -167,9 +178,9 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
 
 def _enter_style_analysis(store: TaskStore, task_id: str) -> None:
     """主页+发文采集完成后，仅启动步骤三（风格归纳），禁止点亮步骤四。"""
-    # Agent 已跳进风格/核对阶段但某些平台从未开跑时，先 skip 打断死锁
+    # 采集中途只做非强力校正，禁止 aggressive skip（误杀尚未 MCP 的种子平台）
     if get_step_status(task_id, "step3_profiles") == "running":
-        store.close_unattempted_platforms_and_reconcile(task_id)
+        store.close_unattempted_platforms_and_reconcile(task_id, aggressive=False)
     gate = can_advance_to_step4(task_id)
     if not gate.get("ok"):
         logger.info("进入风格归纳跳过 task=%s: %s", task_id, gate.get("message"))
@@ -320,7 +331,7 @@ def _try_style_analysis(store: TaskStore, task_id: str, assistant: str) -> None:
     text = assistant or ""
     if "步骤4" in text or "步骤四" in text or "发文观点" in text or "发文风格" in text:
         if get_step_status(task_id, "step3_profiles") == "running":
-            store.close_unattempted_platforms_and_reconcile(task_id)
+            store.close_unattempted_platforms_and_reconcile(task_id, aggressive=False)
         store.save_style_analysis(task_id, text)
         # 风格归纳收口后立刻推进步骤四，避免模型先调 vision 抢跑对比节点
         if get_step_status(task_id, "step3_streams") == "completed":
@@ -381,6 +392,23 @@ def _sync_platform_collect_steps(
 
     if n_prof > 0:
         store.set_step_status(task_id, prof_key, "completed", message=f"已入库主页 {n_prof} 条")
+    elif tool_name == "mcp_apify_get_dataset_items" and tool_ok:
+        # dataset 成功但无主页：按 collect_outcome 终态；已完成主页的发文轮勿回写 failed
+        cur = get_step_status(task_id, prof_key)
+        if cur == "completed":
+            pass
+        elif n_post > 0:
+            store.set_step_status(
+                task_id, prof_key, "completed", message="已从发文确认账号（无独立主页项）"
+            )
+        else:
+            outcome = str(result_data.get("collect_outcome") or "empty").strip().lower()
+            store.set_step_status(
+                task_id,
+                prof_key,
+                "failed",
+                message=apify_fail_message(platform, outcome),
+            )
     elif tool_name in PROFILE_TOOLS and not tool_ok:
         from collect_01 import db as _db
 
@@ -393,22 +421,25 @@ def _sync_platform_collect_steps(
         if has_prof:
             store.set_step_status(task_id, prof_key, "completed", message="已入库主页")
         elif tool_name == "mcp_youtube_get_channel_stats":
-            # channelId 传 @handle 会失败；无成功记录则直接 failed，避免永久「等待重试」
+            # 非合法 UC / 伪 UC：保持 running，禁止 failed（否则查到真 UC 后会翻烧饼）
             cid = str(tool_args.get("channelId") or tool_args.get("channel_id") or "").strip()
-            looks_like_uc = cid.upper().startswith("UC") and len(cid) >= 20
-            if not looks_like_uc and cur not in {"completed", "skipped", "failed"}:
+            if not youtube_channel_id_ok(cid):
                 store.set_step_status(
                     task_id,
                     prof_key,
-                    "failed",
-                    message="YouTube 需 channelId（UC…），不能用 @handle",
+                    "running",
+                    message="YouTube 需合法 channelId（UC…），等待重试…",
                 )
-            elif cur not in {"completed", "skipped", "failed"}:
+            elif cur != "completed":
+                # 合法 UC 仍失败：保持 running，终态交给 reconcile（UC 形错误且无成功）
                 store.set_step_status(
-                    task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…"
+                    task_id,
+                    prof_key,
+                    "running",
+                    message=f"{platform} 主页采集中（UC 调用失败，等待重试）…",
                 )
-        elif cur not in {"completed", "skipped", "failed"}:
-            # 首次失败保持 running，等待合法参数重试
+        elif cur not in {"completed", "skipped"}:
+            # 首次失败保持 running，等待合法参数重试（勿早早 failed）
             store.set_step_status(task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…")
     elif tool_name in PROFILE_TOOLS:
         cur = get_step_status(task_id, prof_key)
@@ -419,7 +450,7 @@ def _sync_platform_collect_steps(
                 "running",
                 message=f"{platform} Actor 已完成，等待拉取 dataset…",
             )
-        elif cur == "pending":
+        elif cur in {"pending", "failed", "skipped"}:
             store.set_step_status(task_id, prof_key, "running", message=f"{platform} 主页采集中…")
 
     if n_post > 0:
@@ -427,14 +458,14 @@ def _sync_platform_collect_steps(
     elif tool_name in POST_TOOLS and tool_ok:
         cur = get_step_status(task_id, post_key)
         if n_post == 0 and tool_name == "mcp_apify_get_dataset_items":
-            # 主页轮 dataset 常无 posts：勿提前 skipped，留给步骤三发文轮
-            if n_prof > 0:
-                if cur == "pending":
-                    store.set_step_status(
-                        task_id, post_key, "running", message=f"{platform} 等待发文采集…"
-                    )
-            elif cur not in {"completed", "skipped"}:
-                store.set_step_status(task_id, post_key, "skipped", message=f"{platform} 未采集到发文")
+            # 主页轮 dataset 常无 posts：一律勿 skip，留给后续发文轮或收口逻辑
+            if cur not in {"completed", "skipped", "failed"}:
+                store.set_step_status(
+                    task_id,
+                    post_key,
+                    "running",
+                    message=f"{platform} 等待发文采集…",
+                )
         elif cur == "pending":
             store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
     elif tool_name in POST_TOOLS and not tool_ok:
@@ -494,14 +525,14 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             store.set_step_status(task_id, step_key, "running", message=f"执行 {tool_name}")
     if collect_step:
         child_cur = get_step_status(task_id, collect_step)
-        if child_cur not in {"completed", "failed", "skipped"}:
+        # 允许从误 skip/fail 重开：Agent 后续真的调了 MCP
+        if child_cur != "completed":
             kind = "发文" if tool_name in POST_TOOLS else "主页"
             store.set_step_status(task_id, collect_step, "running", message=f"{platform} {kind}采集中…")
 
     if tool_name in _STEP4_TOOLS:
-        # 主页已齐时可亮风格归纳；文本/图片对比须等风格归纳完成（禁止抢跑）
-        # Vision/OCR 出现 = Agent 已离开「采集排队」，对从未开跑的平台子节点 fail-forward
-        store.close_unattempted_platforms_and_reconcile(task_id)
+        # 主页已齐时可亮风格归纳；Vision 不得 aggressive 误杀还在排队的种子平台
+        store.close_unattempted_platforms_and_reconcile(task_id, aggressive=False)
         _enter_style_analysis(store, task_id)
         if can_advance_to_step45(task_id).get("ok"):
             _enter_step4_compare(store, task_id)

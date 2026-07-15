@@ -1,4 +1,9 @@
-"""Hermes Hook 入口 — 04 账号画像写报入库（stdin JSON）。"""
+"""Hermes Hook 入口 — 04 账号画像写报入库（stdin JSON）。
+
+冲突约定（方案 C，见 docs/思考流与步骤树同步落库实施方案.md）：
+- Java 中继可粗写 pending/running→running；Vision/OCR/Apify 禁止粗 completed；
+- Hook 为细状态真相源。
+"""
 
 from __future__ import annotations
 
@@ -271,6 +276,9 @@ def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False)
     """生成种子失败文案，便于前端提示用户检查账号名。"""
     text = (tool_output or "").lower()
     if empty:
+        # Apify 常返回空壳 profile（cleanItemCount=0），未必是账号不存在
+        if "mcp_apify" in (tool_name or "") or "dataset" in text or '"type": "profile"' in text:
+            return "种子主页 Apify 未返回有效资料（空结果），请稍后重试或核对账号名"
         return "种子主页采集无结果，请检查账号名是否正确后重试"
     if "does not exist" in text or "user not found" in text or "not found" in text:
         return "种子账号不存在（平台未找到），请检查账号名后重试"

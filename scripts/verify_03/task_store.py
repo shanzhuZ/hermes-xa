@@ -358,7 +358,11 @@ class TaskStore:
                 message="各平台主页与发文采集已尝试完毕",
             )
             updated = 1
-        if _step_status(task_id, "step3_streams") == "pending":
+        # 仅当步骤二已完成后才点亮步骤三，禁止抢跑
+        if (
+            _step_status(task_id, "step3_profiles") == "completed"
+            and _step_status(task_id, "step3_streams") == "pending"
+        ):
             self.set_step_status(
                 task_id,
                 "step3_streams",
@@ -367,11 +371,17 @@ class TaskStore:
             )
         return updated
 
-    def close_unattempted_platforms_and_reconcile(self, task_id: str) -> int:
-        """跳过从未调用正式采集工具的 pending 平台子节点，并尝试收口父步骤。"""
+    def close_unattempted_platforms_and_reconcile(
+        self, task_id: str, *, aggressive: bool = False
+    ) -> int:
+        """
+        校正/尝试收口平台子步骤。
+        aggressive=True 仅会话结束硬收口；采集中途（含 Vision）必须 False，
+        否则会在 Agent 尚未对某种子调 MCP 时误 skip（如 YouTube 先 web_search 查 channelId）。
+        """
         from verify_03.step_reconcile import auto_skip_unattempted_collect_children
 
-        n = auto_skip_unattempted_collect_children(self, task_id, aggressive=True)
+        n = auto_skip_unattempted_collect_children(self, task_id, aggressive=aggressive)
         n += self.reconcile_profile_platform_steps(task_id)
         return n
 
@@ -731,17 +741,9 @@ class TaskStore:
         """步骤三：风格归纳原文写入 payload。须等步骤二（主页+发文）收口后再 completed。"""
         preview = content[:8000]
         if _step_status(task_id, "step3_profiles") != "completed":
-            # 禁止采集未完成就跳步完成风格归纳，否则 step2 running / step3 completed 错位
+            # 禁止步骤二未完成就点亮/完成步骤三（父晚子早 / 步骤三抢跑）
             self.reconcile_profile_platform_steps(task_id)
             if _step_status(task_id, "step3_profiles") != "completed":
-                cur = _step_status(task_id, "step3_streams")
-                if cur == "pending":
-                    self.set_step_status(
-                        task_id,
-                        "step3_streams",
-                        "running",
-                        message="等待主页与发文采集完成后再归纳…",
-                    )
                 logger.info("风格归纳暂缓：step3_profiles 未完成 task=%s", task_id)
                 return
         cur = _step_status(task_id, "step3_streams")

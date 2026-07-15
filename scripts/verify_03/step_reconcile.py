@@ -6,7 +6,14 @@ import logging
 from typing import Any, Dict, Optional
 
 from collect_01 import db
-from collect_01.normalizers.apify import APIFY_TOOL_PLATFORM
+from collect_01.normalizers.apify import (
+    APIFY_TOOL_PLATFORM,
+    apify_fail_message,
+    normalize_dataset_items,
+    resolve_apify_platform_hint,
+)
+from collect_01.normalizers.base import unwrap_tool_payload
+from collect_01.normalizers.youtube import youtube_channel_id_ok
 from verify_03.gates import (
     can_advance_to_step45,
     count_image_streams,
@@ -67,17 +74,14 @@ def _post_tool_success(task_id: str, platform: str) -> bool:
 
 
 def _mcp_profile_terminal_fail(task_id: str, platform: str) -> bool:
-    """MCP 主页工具已失败且无一成功 → 视为采集终态失败（避免 running 永久卡住父步骤）。"""
+    """MCP 主页工具已失败且无一成功 → 视为采集终态失败（避免 running 永久卡住父步骤）。
+
+    YouTube：仅当「合法 UC channelId」调用失败且无成功时才终态；
+    @handle / 伪 UC 失败不算终态（Agent 会继续查 UC）。
+    """
     tool = PROFILE_TOOL_BY_PLATFORM.get(platform)
     if not tool:
         return False
-    err = db.fetch_one(
-        """
-        SELECT COUNT(*) AS c FROM hermes_tool_outputs
-        WHERE task_id=%s AND tool_name=%s AND status='error'
-        """,
-        (task_id, tool),
-    )
     ok = db.fetch_one(
         """
         SELECT COUNT(*) AS c FROM hermes_tool_outputs
@@ -85,7 +89,89 @@ def _mcp_profile_terminal_fail(task_id: str, platform: str) -> bool:
         """,
         (task_id, tool),
     )
-    return int((err or {}).get("c") or 0) > 0 and int((ok or {}).get("c") or 0) == 0
+    if int((ok or {}).get("c") or 0) > 0:
+        return False
+
+    if platform == "youtube":
+        import json
+
+        rows = db.fetch_all(
+            """
+            SELECT tool_args FROM hermes_tool_outputs
+            WHERE task_id=%s AND tool_name=%s AND status='error'
+            ORDER BY id DESC
+            """,
+            (task_id, tool),
+        )
+        for row in rows:
+            try:
+                args = json.loads(row.get("tool_args") or "{}")
+            except json.JSONDecodeError:
+                args = {}
+            if not isinstance(args, dict):
+                continue
+            cid = str(args.get("channelId") or args.get("channel_id") or "").strip()
+            if youtube_channel_id_ok(cid):
+                return True
+        return False
+
+    err = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name=%s AND status='error'
+        """,
+        (task_id, tool),
+    )
+    return int((err or {}).get("c") or 0) > 0
+
+
+def _latest_apify_collect_outcome(task_id: str, platform: str) -> str:
+    """重解析该平台最近一次成功 dataset，得到 collect_outcome。"""
+    import json
+
+    actor_tool = _PLATFORM_BY_APIFY_ACTOR.get(platform) or ""
+    expected_hint = actor_tool.replace("mcp_apify_", "")
+    if not expected_hint:
+        return "empty"
+    rows = db.fetch_all(
+        """
+        SELECT id, tool_args, tool_output FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name='mcp_apify_get_dataset_items' AND status='success'
+        ORDER BY id DESC
+        """,
+        (task_id,),
+    )
+    for row in rows:
+        try:
+            args = json.loads(row.get("tool_args") or "{}")
+        except json.JSONDecodeError:
+            args = {}
+        if not isinstance(args, dict):
+            args = {}
+        ds = str(args.get("datasetId") or args.get("dataset_id") or "").strip()
+        hint = resolve_apify_platform_hint(task_id, row["id"], dataset_id=ds or None)
+        if hint != expected_hint:
+            continue
+        raw = row.get("tool_output")
+        try:
+            payload = unwrap_tool_payload(raw)
+        except Exception:
+            payload = raw
+        if isinstance(payload, str):
+            try:
+                payload = json.loads(payload)
+            except json.JSONDecodeError:
+                payload = {}
+        out = normalize_dataset_items(
+            payload if isinstance(payload, dict) else {},
+            {
+                "task_id": task_id,
+                "tool_output_id": row["id"],
+                "platform_hint": expected_hint,
+            },
+        )
+        return str(out.get("collect_outcome") or "empty")
+    return "empty"
 
 
 def _apify_actor_success(task_id: str, platform: str) -> bool:
@@ -220,8 +306,22 @@ def _web_bypass_for_platform(task_id: str, platform: str) -> bool:
     return False
 
 
-def _all_other_children_terminal(task_id: str, skip_step_key: str) -> bool:
-    """除 skip_step_key 外，其余 step3 子节点是否均已终态。"""
+def _collect_platform_of_step(step_key: str) -> str:
+    if step_key.startswith("step3_profile_"):
+        return step_key.replace("step3_profile_", "", 1)
+    if step_key.startswith("step3_post_"):
+        return step_key.replace("step3_post_", "", 1)
+    return ""
+
+
+def _all_other_platforms_terminal(task_id: str, platform: str) -> bool:
+    """其它平台的主页/发文子节点是否均已终态。
+
+    注意：必须按「平台」判断，不能按「单个 step_key」——
+    否则 youtube 主页+发文互为 pending 会死锁，永远无法 peer-skip。
+    """
+    if not platform:
+        return False
     rows = db.fetch_all(
         """
         SELECT step_key, status FROM collect_phase_steps
@@ -229,14 +329,17 @@ def _all_other_children_terminal(task_id: str, skip_step_key: str) -> bool:
         """,
         (task_id, PROFILE_PARENT_STEP_KEY),
     )
+    saw_other = False
     for row in rows:
         sk = str(row.get("step_key") or "")
-        if sk == skip_step_key:
+        p = _collect_platform_of_step(sk)
+        if not p or p == platform:
             continue
+        saw_other = True
         st = str(row.get("status") or "pending")
         if st in {"pending", "running"}:
             return False
-    return True
+    return saw_other
 
 
 def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressive: bool = False) -> int:
@@ -244,8 +347,10 @@ def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressi
     核心防卡死：步骤一预建的平台子节点若从未调用正式采集工具，会永远 pending，
     从而堵住父步骤 step3_profiles。
 
-    aggressive=False：仅当同批其它平台子节点均已终态，或检测到 web/浏览器绕行时 skip。
-    aggressive=True：风格/Vision/会话收口时，对所有未开跑的 pending 直接 skip。
+    aggressive=False（采集过程）：仅当「其它平台均已终态」才 skip 本平台未开跑节点。
+      Agent 若随后真调 MCP，sink 会从 skipped 重开为 running。
+      禁止用 web_search 域名单独触发 skip。
+    aggressive=True：仅会话结束硬收口。
     """
     children = db.fetch_all(
         """
@@ -256,8 +361,13 @@ def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressi
     )
     if not children:
         return 0
+    # 先主页后发文，保证发文文案能看到主页已 skip
+    ordered = sorted(
+        children,
+        key=lambda r: (0 if str(r.get("step_key") or "").startswith("step3_profile_") else 1),
+    )
     updated = 0
-    for row in children:
+    for row in ordered:
         step_key = str(row.get("step_key") or "")
         cur = str(row.get("status") or "pending")
         if cur != "pending":
@@ -266,14 +376,19 @@ def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressi
             platform = step_key.replace("step3_profile_", "", 1)
             if _has_profile_collect_attempt(task_id, platform):
                 continue
-            web_bypass = _web_bypass_for_platform(task_id, platform)
-            if not aggressive and not web_bypass and not _all_other_children_terminal(task_id, step_key):
+            if not aggressive and not _all_other_platforms_terminal(task_id, platform):
                 continue
-            msg = (
-                f"{platform} Agent 使用 web/浏览器绕行且未走 MCP，已自动跳过"
-                if web_bypass
-                else f"{platform} 未发起 MCP/Apify 主页采集，已自动跳过"
-            )
+            web_bypass = _web_bypass_for_platform(task_id, platform)
+            if aggressive:
+                msg = (
+                    f"{platform} 会话收口：未见 MCP/Apify 主页采集，已跳过"
+                    + ("（过程中仅有 web/浏览器）" if web_bypass else "")
+                )
+            else:
+                msg = (
+                    f"{platform} 未发起 MCP/Apify 主页采集，已自动跳过"
+                    + ("（过程中仅有 web/浏览器）" if web_bypass else "")
+                )
             store.set_step_status(task_id, step_key, "skipped", message=msg)
             updated += 1
             continue
@@ -283,13 +398,15 @@ def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressi
                 continue
             prof_key = profile_platform_step_key(platform)
             prof_st = get_step_status(task_id, prof_key) or "pending"
+            # 主页已失败/跳过：发文可直接 skip，不必等其它平台
+            if prof_st not in {"failed", "skipped"}:
+                if not aggressive and not _all_other_platforms_terminal(task_id, platform):
+                    continue
             web_bypass = _web_bypass_for_platform(task_id, platform)
-            if not aggressive and not web_bypass and not _all_other_children_terminal(task_id, step_key):
-                continue
             if prof_st in {"failed", "skipped"}:
                 msg = f"{platform} 主页未成功，跳过发文"
             elif web_bypass:
-                msg = f"{platform} Agent 使用 web/浏览器绕行且未走 MCP 发文，已自动跳过"
+                msg = f"{platform} 未发起 MCP/Apify 发文采集，已自动跳过（过程中仅有 web/浏览器）"
             else:
                 msg = f"{platform} 未发起 MCP/Apify 发文采集，已自动跳过"
             store.set_step_status(task_id, step_key, "skipped", message=msg)
@@ -357,6 +474,14 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
             cnt = prof_counts.get(platform, 0)
             if cnt > 0:
                 if cur != "completed":
+                    # 若曾被误 skip，先重开再完成，刷新 finished_at
+                    if cur in {"skipped", "failed"}:
+                        store.set_step_status(
+                            task_id,
+                            step_key,
+                            "running",
+                            message=f"{platform} 主页采集结果回写中…",
+                        )
                     store.set_step_status(
                         task_id,
                         step_key,
@@ -370,22 +495,26 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
                 continue
             if cur in {"failed", "skipped", "running", "pending"}:
                 if _mcp_profile_terminal_fail(task_id, platform):
+                    # YouTube：仅合法 UC 失败才进此分支；文案勿再误导「需 channelId」
                     if cur not in {"failed", "skipped"}:
                         store.set_step_status(
                             task_id,
                             step_key,
                             "failed",
-                            message=f"{platform} 主页工具失败且未入库（如 YouTube 需 channelId）",
+                            message=f"{platform} 主页工具失败且未入库",
                         )
                         updated += 1
                 elif _apify_actor_success(task_id, platform):
                     if _dataset_success_for_platform(task_id, platform):
-                        if cur != "failed":
+                        outcome = _latest_apify_collect_outcome(task_id, platform)
+                        msg = apify_fail_message(platform, outcome)
+                        # 校正误导性「未入库」文案（含已 failed 的历史脏状态）
+                        if cur != "skipped":
                             store.set_step_status(
                                 task_id,
                                 step_key,
                                 "failed",
-                                message=f"{platform} Apify 已拉取 dataset 但未入库主页",
+                                message=msg,
                             )
                             updated += 1
                     elif profiles_done or streams_done:
@@ -416,6 +545,20 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
                             message=f"{platform} 主页采集未完成",
                         )
                         updated += 1
+                elif (
+                    cur == "running"
+                    and platform == "youtube"
+                    and _all_other_platforms_terminal(task_id, platform)
+                    and not _mcp_profile_terminal_fail(task_id, platform)
+                ):
+                    # 其它平台已完，仍卡在「等待合法 UC」→ 跳过（MCP 真调用可 reopen）
+                    store.set_step_status(
+                        task_id,
+                        step_key,
+                        "skipped",
+                        message="youtube 未完成合法 channelId 采集，已跳过",
+                    )
+                    updated += 1
             continue
         if not step_key.startswith("step3_post_"):
             continue
@@ -425,6 +568,13 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
         cnt = post_counts.get(platform, 0)
         if cnt > 0:
             if cur != "completed":
+                if cur in {"skipped", "failed"}:
+                    store.set_step_status(
+                        task_id,
+                        step_key,
+                        "running",
+                        message=f"{platform} 发文采集结果回写中…",
+                    )
                 store.set_step_status(
                     task_id,
                     step_key,
@@ -446,7 +596,13 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
             )
             updated += 1
             continue
-        if cnt == 0 and cur in {"running", "pending"} and _dataset_success_for_platform(task_id, platform):
+        # dataset 成功但 0 条发文：须等父步骤/风格阶段再 skip，避免主页轮 dataset 误杀后续发文轮
+        if (
+            cnt == 0
+            and cur in {"running", "pending"}
+            and _dataset_success_for_platform(task_id, platform)
+            and (profiles_done or streams_done)
+        ):
             if cur != "skipped":
                 store.set_step_status(
                     task_id,
@@ -478,6 +634,57 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
     return updated
 
 
+def force_close_open_collect_children(store: Any, task_id: str) -> int:
+    """会话结束：仍卡在 pending/running 的主页/发文子步骤强制终态。
+
+    覆盖场景：YouTube 仅错误传 @handle/伪 UC，中途保持 running，会话结束仍无合法 UC 成功。
+    """
+    post_counts = _post_counts_by_platform(task_id)
+    prof_counts = _profile_counts_by_platform(task_id)
+    children = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    updated = 0
+    # 先收口主页，再收口发文（发文依赖主页终态文案）
+    ordered = sorted(
+        children,
+        key=lambda r: (0 if str(r.get("step_key") or "").startswith("step3_profile_") else 1),
+    )
+    for row in ordered:
+        step_key = str(row.get("step_key") or "")
+        cur = str(row.get("status") or "pending")
+        if cur not in {"pending", "running"}:
+            continue
+        if step_key.startswith("step3_profile_"):
+            platform = step_key.replace("step3_profile_", "", 1)
+            if prof_counts.get(platform, 0) > 0:
+                continue
+            store.set_step_status(
+                task_id,
+                step_key,
+                "failed",
+                message=f"{platform} 会话结束：主页采集未完成",
+            )
+            updated += 1
+            continue
+        if step_key.startswith("step3_post_"):
+            platform = step_key.replace("step3_post_", "", 1)
+            if post_counts.get(platform, 0) > 0:
+                continue
+            prof_st = get_step_status(task_id, profile_platform_step_key(platform)) or "pending"
+            if prof_st in {"failed", "skipped"}:
+                msg = f"{platform} 主页未成功，跳过发文"
+            else:
+                msg = f"{platform} 会话结束：未采集到发文"
+            store.set_step_status(task_id, step_key, "skipped", message=msg)
+            updated += 1
+    return updated
+
+
 def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     """会话结束时兜底推进未完成步骤。"""
     s1 = get_step_status(task_id, "step1_input_accounts")
@@ -488,9 +695,8 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     s3p = get_step_status(task_id, "step3_profiles")
     if s3p in {"pending", "running"}:
         # 会话结束：未发起正式采集的平台子节点不再空等
-        from verify_03.step_reconcile import auto_skip_unattempted_collect_children
-
         auto_skip_unattempted_collect_children(store, task_id, aggressive=True)
+        force_close_open_collect_children(store, task_id)
         store.reconcile_profile_platform_steps(task_id)
 
     # vision 回写不依赖 step3 完成

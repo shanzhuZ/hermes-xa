@@ -5,10 +5,18 @@ from __future__ import annotations
 import re
 from typing import Dict, FrozenSet, Optional
 
-# 用户消息中的平台提示（与 Java buildSeedJson 对齐）
+# 剥离 Hermes skill 前缀后再解析平台（避免 intelligence 内嵌 ig 等假阳性）
+_SKILL_PREFIX = re.compile(
+    r"^(account-intelligence-collect|account-expansion|account-intelligence-expand|"
+    r"account-intelligence-verification|account-intelligence-verify|"
+    r"account-intelligence-report|account-intelligence-profile)\b\s*",
+    re.I,
+)
+
+# 用户消息中的平台提示（与 Java buildSeedJson 对齐；短别名必须词界）
 PLATFORM_HINT = re.compile(
     r"(推特|twitter|\bx\b|微博|weibo|youtube|油管|bilibili|b站|哔哩哔哩|"
-    r"instagram|ins|ig|tiktok|telegram|tg|facebook|fb|脸书|github)",
+    r"instagram|\bins\b|\big\b|tiktok|telegram|\btg\b|facebook|\bfb\b|脸书|github)",
     re.I,
 )
 
@@ -75,7 +83,8 @@ VERIFY_SEED_PLATFORMS: FrozenSet[str] = frozenset(
 
 def parse_platform_from_message(user_message: str) -> str:
     """从用户一句话解析种子平台，默认 twitter。"""
-    m = PLATFORM_HINT.search(user_message or "")
+    text = _SKILL_PREFIX.sub("", (user_message or "").strip(), count=1)
+    m = PLATFORM_HINT.search(text)
     if not m:
         return "twitter"
     token = m.group(1).lower()
@@ -96,6 +105,52 @@ def parse_platform_from_message(user_message: str) -> str:
     if token in {"github"}:
         return "github"
     return "twitter"
+
+
+# 种子工具瞬态失败软重试（同进程 Hook 内计数；硬错误仍立即 abort）
+_SEED_SOFT_FAILS: Dict[str, int] = {}
+_MAX_SEED_SOFT_FAILS = 1
+
+
+def is_transient_seed_tool_error(tool_output: str) -> bool:
+    """空错误详情 / 超时 / 连接类 → 可软重试；账号不存在等 → 否。"""
+    text = (tool_output or "").strip()
+    low = text.lower()
+    if "does not exist" in low or "user not found" in low or "not found" in low:
+        return False
+    if "rate limit" in low or "validation error" in low or "requires either" in low:
+        return False
+    if not text or text in {"{}", "null", "none"}:
+        return True
+    # FastMCP: "Error executing tool get_user_info: "（冒号后无详情）
+    if re.search(r"error executing tool \w+:\s*$", low):
+        return True
+    if any(k in low for k in ("timeout", "timed out", "connection", "temporarily", "502", "503", "reset by peer")):
+        return True
+    return False
+
+
+def note_seed_soft_fail(task_id: str) -> int:
+    """记录一次软失败，返回累计次数。"""
+    n = _SEED_SOFT_FAILS.get(task_id, 0) + 1
+    _SEED_SOFT_FAILS[task_id] = n
+    return n
+
+
+def clear_seed_soft_fails(task_id: str) -> None:
+    _SEED_SOFT_FAILS.pop(task_id, None)
+
+
+def should_abort_after_seed_soft_fail(task_id: str, tool_output: str) -> bool:
+    """
+    True=应 fail_seed_and_abort；False=已记软失败，调用方保持 step1 running。
+    非瞬态错误直接 True；瞬态错误超过上限也 True。
+    """
+    if not is_transient_seed_tool_error(tool_output):
+        clear_seed_soft_fails(task_id)
+        return True
+    n = note_seed_soft_fail(task_id)
+    return n > _MAX_SEED_SOFT_FAILS
 
 
 def is_apify_seed_platform(platform: str) -> bool:

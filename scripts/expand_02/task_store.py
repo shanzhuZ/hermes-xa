@@ -117,6 +117,19 @@ def _expand_post_step_rows(task_id: str) -> List[Dict[str, Any]]:
 
 def _reconcile_expand_post_child_steps(store: "TaskStore", task_id: str) -> int:
     """02 扩建：发文子步骤挂在 step3_profiles 下，不再单独维护 step6_posts 根节点。"""
+    # 先收口「工具已失败但仍 running」以及「有主页/工具但仍 pending」的平台
+    try:
+        from expand_02.sink import (
+            _finalize_failed_platform_attempts,
+            _finalize_stale_post_children,
+            _mark_step3_closed,
+        )
+
+        _finalize_failed_platform_attempts(store, task_id)
+        _finalize_stale_post_children(store, task_id)
+    except Exception:
+        pass
+
     post_counts = {
         str(r["platform"]): int(r["c"])
         for r in db.fetch_all(
@@ -165,6 +178,12 @@ def _reconcile_expand_post_child_steps(store: "TaskStore", task_id: str) -> int:
                 message=f"{platform} 已纳入可信账号，但未采集到发文",
             )
             updated += 1
+    try:
+        from expand_02.sink import _mark_step3_closed
+
+        _mark_step3_closed(store, task_id)
+    except Exception:
+        pass
     return updated
 
 
@@ -1012,6 +1031,8 @@ class TaskStore:
         if str(task.get("status") or "") == "failed":
             return
 
+        # 先收口发文子步骤（含 Apify 失败），再走门禁推进文本流，避免被 running 子步骤堵死
+        _reconcile_expand_post_child_steps(self, task_id)
         reconcile_stuck_pipeline(self, task_id)
         _reconcile_expand_post_child_steps(self, task_id)
 
@@ -1039,13 +1060,11 @@ class TaskStore:
         step5_ok = step5 in {"completed", "skipped"}
         post_children = _expand_post_step_rows(task_id)
         post_children_ok = all(str(r.get("status") or "") in {"completed", "skipped", "failed"} for r in post_children)
-        legacy_step6 = _step_status(task_id, "step6_posts")
-        if legacy_step6 == "pending":
-            self.set_step_status(
-                task_id,
-                "step6_posts",
-                "skipped",
-                message="02 扩建已改为在步骤二下直接展示分平台发文子步骤",
+        # 历史遗留 step6_posts(2.9) 直接删除，不再 skip 占位
+        if _step_status(task_id, "step6_posts"):
+            db.execute(
+                "DELETE FROM collect_phase_steps WHERE task_id=%s AND step_key='step6_posts'",
+                (task_id,),
             )
         ready_done = step2_ok and step5_ok and (poc > 0 or post_children_ok or not post_children)
         db.execute(

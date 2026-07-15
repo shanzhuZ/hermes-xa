@@ -89,15 +89,18 @@ public class CollectSubmitService {
         body.put("status", "pending");
         body.put("pollTreeUrl", "/api/tasks/" + taskId + "/tree");
         body.put("pollTaskUrl", "/api/tasks/" + taskId);
-        String thoughtsUrl = "/api/tasks/" + taskId + "/thoughts/stream";
-        body.put("thoughtsStreamUrl", thoughtsUrl);
+        String thoughtsReplayUrl = "/api/tasks/" + taskId + "/thoughts";
+        String thoughtsStreamUrl = "/api/tasks/" + taskId + "/thoughts/stream";
+        body.put("thoughtsUrl", thoughtsReplayUrl);
+        body.put("thoughtsStreamUrl", thoughtsStreamUrl);
         // 思考流中继凭证（前端连 Java，不直连 Gateway）
         Map<String, Object> stream = new LinkedHashMap<String, Object>();
         stream.put("mode", "java_relay");
-        stream.put("url", thoughtsUrl);
-        stream.put("thoughtsUrl", thoughtsUrl);
-        boolean reportTask = "account_report".equals(typeDef.getDbTaskType());
-        stream.put("enabled", Boolean.valueOf(reportTask));
+        stream.put("url", thoughtsStreamUrl);
+        stream.put("thoughtsUrl", thoughtsReplayUrl);
+        stream.put("thoughtsStreamUrl", thoughtsStreamUrl);
+        // 四业务共用思考中继
+        stream.put("enabled", Boolean.TRUE);
         Map<String, Object> headers = new LinkedHashMap<String, Object>();
         headers.put("Accept", "text/event-stream");
         stream.put("headers", headers);

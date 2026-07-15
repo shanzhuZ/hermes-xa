@@ -1,4 +1,9 @@
-"""Hermes Hook 入口 — 02 账号扩建入库（stdin JSON）。"""
+"""Hermes Hook 入口 — 02 账号扩建入库（stdin JSON）。
+
+冲突约定（方案 C，见 docs/思考流与步骤树同步落库实施方案.md）：
+- Java 中继可粗写 pending/running→running；Vision/OCR/Apify 禁止粗 completed；
+- Hook 为细状态真相源。
+"""
 
 from __future__ import annotations
 
@@ -44,8 +49,10 @@ from collect_01.seed_platforms import (
     EXPAND_SEED_PROFILE_TOOLS as _SEED_PROFILE_TOOLS,
     TOOL_TO_SEED_PLATFORM,
     apify_seed_empty_ok,
+    clear_seed_soft_fails,
     is_apify_seed_platform,
     seed_step_completed_message,
+    should_abort_after_seed_soft_fail,
 )
 # 每个任务已处理的工具调用（防重）
 _SEEN_TOOL_CALLS: set = set()
@@ -210,13 +217,14 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
     msg = (user_message or str(ex.get("user_message") or "")).strip()
     if msg and is_expand_intent(msg):
         return store.ensure_task(session_id=session_id, user_message=msg)
+    # 禁止仅凭 mcp_* 凭空建扩建任务（与 01 对称，避免跨类型污染）
     tool_name = str(payload.get("tool_name") or "")
-    if session_id and tool_name.startswith("mcp_"):
-        tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-        handle = _extract_account_id(tool_args) or ""
-        if handle:
-            seed_msg = f"account-expansion 账号扩建 @{handle}"
-            return store.ensure_task(session_id=session_id, user_message=seed_msg)
+    if tool_name.startswith("mcp_"):
+        logger.warning(
+            "expand 未解析到 task_id，忽略工具事件 tool=%s session=%s",
+            tool_name,
+            session_id or "-",
+        )
     return None
 
 
@@ -265,14 +273,19 @@ def _mark_step3_closed(store: TaskStore, task_id: str) -> None:
         return
     if get_step_status(task_id, "step3_profiles") != "completed":
         store.set_step_status(task_id, "step3_profiles", "completed", message="步骤二完成，候选主页与发文采集结束")
-    legacy = get_step_status(task_id, "step6_posts")
-    if legacy == "pending":
-        store.set_step_status(
-            task_id,
-            "step6_posts",
-            "skipped",
-            message="02 扩建已改为在步骤二下直接展示分平台发文子步骤",
+    # 历史任务若仍有遗留 step6_posts(2.9)，直接删除，避免拖住步骤二收口
+    _drop_legacy_step6_posts(task_id)
+
+
+def _drop_legacy_step6_posts(task_id: str) -> None:
+    """02 不再使用 step6_posts 根节点；旧任务清掉以免 UI 显示 2.9。"""
+    try:
+        db.execute(
+            "DELETE FROM collect_phase_steps WHERE task_id=%s AND step_key='step6_posts'",
+            (task_id,),
         )
+    except DbError as exc:
+        logger.warning("删除遗留 step6_posts 失败 task=%s: %s", task_id, exc)
 
 
 def _step3_post_children(task_id: str):
@@ -297,6 +310,13 @@ _POST_PLATFORM_TOOL_NAMES: Dict[str, frozenset] = {
     "telegram": frozenset({"mcp_apify_vujeen__telegram_channel_scraper"}),
     "facebook": frozenset({"mcp_apify_headlessagent__facebook_profile_post_scraper"}),
     "github": frozenset({"mcp_apify_knotless_cadence__github_profile_scraper"}),
+}
+
+# 仅主页 MCP（无发文）：成功后也要收口 step6_post_*，否则一直 pending
+_PROFILE_ONLY_TO_PLATFORM: Dict[str, str] = {
+    "mcp_youtube_get_channel_stats": "youtube",
+    "mcp_weibo_get_profile": "weibo",
+    "mcp_bilibili_get_user_info": "bilibili",
 }
 
 
@@ -341,6 +361,131 @@ def _auto_skip_unattempted_post_steps(store: TaskStore, task_id: str) -> None:
     if updated:
         logger.info("自动跳过未采集平台子步骤 task=%s count=%d", task_id, updated)
         _mark_step3_closed(store, task_id)
+
+
+def _classify_collect_tool_failure(
+    tool_name: str,
+    tool_output: str,
+    ex: Optional[Dict[str, Any]] = None,
+) -> tuple:
+    """平台采集失败 → (status, message)。用量不足等记 skipped，其它 failed。"""
+    ex = ex or {}
+    blob = f"{tool_output or ''} {ex.get('error_message') or ''} {ex.get('result') or ''}"
+    low = blob.lower()
+    if any(
+        x in low
+        for x in (
+            "remaining usage",
+            "exceed your remaining",
+            "billing/subscription",
+            "usage of $",
+            "monthly usage",
+        )
+    ) or ("用量" in blob and ("不足" in blob or "超限" in blob or "限制" in blob)):
+        return "skipped", "Apify 账户用量不足/额度超限，已跳过该平台"
+    if "rate limit" in low or "too many requests" in low or "429" in low:
+        return "skipped", f"Apify 限流，已跳过该平台（{tool_name}）"
+    msg = str(ex.get("error_message") or "").strip()
+    if not msg:
+        # 截取错误正文前若干字
+        compact = " ".join(str(tool_output or "").split())
+        msg = compact[:220] if compact else f"{tool_name} 调用失败"
+    return "failed", msg[:500]
+
+
+def _finalize_failed_platform_attempts(store: TaskStore, task_id: str) -> int:
+    """对仍为 running/pending、但工具已 error 的平台子步骤做收口（含历史卡住任务）。"""
+    updated = 0
+    for row in _step3_post_children(task_id):
+        step_key = str(row.get("step_key") or "")
+        cur = str(row.get("status") or "")
+        if cur not in {"pending", "running"} or not step_key.startswith("step6_post_"):
+            continue
+        platform = step_key.replace("step6_post_", "", 1)
+        names = _POST_PLATFORM_TOOL_NAMES.get(platform)
+        if not names:
+            continue
+        placeholders = ",".join(["%s"] * len(names))
+        err = db.fetch_one(
+            f"""
+            SELECT tool_name, tool_output, status FROM hermes_tool_outputs
+            WHERE task_id=%s AND tool_name IN ({placeholders}) AND status='error'
+            ORDER BY id DESC LIMIT 1
+            """,
+            (task_id, *names),
+        )
+        if not err:
+            continue
+        st, msg = _classify_collect_tool_failure(
+            str(err.get("tool_name") or ""),
+            str(err.get("tool_output") or ""),
+            {},
+        )
+        store.set_step_status(task_id, step_key, st, message=msg)
+        updated += 1
+    if updated:
+        logger.info("收口失败平台子步骤 task=%s count=%d", task_id, updated)
+        _mark_step3_closed(store, task_id)
+    return updated
+
+
+def _finalize_stale_post_children(store: TaskStore, task_id: str) -> int:
+    """收口「有工具/有主页但仍 pending|running」的平台子步骤（如微博只调了 get_profile）。"""
+    updated = 0
+    post_counts = {
+        str(r["platform"]): int(r["c"])
+        for r in db.fetch_all(
+            "SELECT platform, COUNT(*) AS c FROM collect_posts WHERE task_id=%s GROUP BY platform",
+            (task_id,),
+        )
+    }
+    prof_counts = {
+        str(r["platform"]): int(r["c"])
+        for r in db.fetch_all(
+            "SELECT platform, COUNT(*) AS c FROM collect_profiles WHERE task_id=%s GROUP BY platform",
+            (task_id,),
+        )
+    }
+    for row in _step3_post_children(task_id):
+        step_key = str(row.get("step_key") or "")
+        cur = str(row.get("status") or "")
+        if cur not in {"pending", "running"} or not step_key.startswith("step6_post_"):
+            continue
+        platform = step_key.replace("step6_post_", "", 1)
+        n_post = post_counts.get(platform, 0)
+        n_prof = prof_counts.get(platform, 0)
+        if n_post > 0:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "completed",
+                message=f"已采集 {platform} 发文 {n_post} 条",
+                payload={"post_count": n_post, "profile_count": n_prof},
+            )
+            updated += 1
+            continue
+        if n_prof > 0:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "completed",
+                message=f"已采集 {platform} profile {n_prof}",
+                payload={"post_count": 0, "profile_count": n_prof},
+            )
+            updated += 1
+            continue
+        if _has_platform_collect_attempt(task_id, platform):
+            store.set_step_status(
+                task_id,
+                step_key,
+                "skipped",
+                message=f"{platform} 已调用采集工具但未入库主页/发文",
+            )
+            updated += 1
+    if updated:
+        logger.info("收口滞留平台子步骤 task=%s count=%d", task_id, updated)
+        _mark_step3_closed(store, task_id)
+    return updated
 
 
 def _seed_platform(task_id: str) -> str:
@@ -427,10 +572,14 @@ def _enter_step4(store: TaskStore, task_id: str) -> bool:
     """首次 OCR/Vision：仅在步骤二全部完成后，才启动步骤三（核查）子步骤。"""
     from collect_01.gates import can_advance_to_step45
 
+    # 进入核查前先收口滞留/未开跑子步骤，避免微博 pending 堵死门禁却已开始 vision
+    _finalize_failed_platform_attempts(store, task_id)
+    _finalize_stale_post_children(store, task_id)
+    _auto_skip_unattempted_post_steps(store, task_id)
+
     gate = can_advance_to_step45(task_id)
     if not gate.get("ok"):
         logger.info("跳过进入步骤三核查 task=%s: %s", task_id, gate.get("message"))
-        _auto_skip_unattempted_post_steps(store, task_id)
         return False
     if get_step_status(task_id, "step3_streams") == "pending":
         store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流拆分中")
@@ -587,7 +736,13 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         return
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
-        _enter_step4(store, task_id)
+        entered = _enter_step4(store, task_id)
+        if not entered:
+            # 门禁未过但 Agent 已调 OCR/Vision：父 step3_streams 不得仍 pending
+            if get_step_status(task_id, "step3_streams") == "pending":
+                store.set_step_status(
+                    task_id, "step3_streams", "running", message="文本/图片流拆分中"
+                )
 
     if tool_name == "mcp_maigret_collect_accounts":
         logger.info("maigret post_tool task=%s call_id=%s", task_id, tool_call_id or "(none)")
@@ -605,6 +760,11 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     post_platform_early = TOOL_POST_PLATFORM.get(tool_name)
     if post_platform_early and not seed_collect:
+        # 子节点 running 前先保证父 step3_profiles
+        if get_step_status(task_id, "step3_profiles") == "pending":
+            store.set_step_status(
+                task_id, "step3_profiles", "running", message="候选主页与发文采集中"
+            )
         child = post_step_key(post_platform_early)
         store.ensure_post_steps(task_id, [post_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -614,6 +774,10 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     apify_platform_early = apify_platform_from_actor_tool(tool_name)
     # 种子 Apify 归 step1；步骤三候选 Apify 才预建发文子节点
     if apify_platform_early and not seed_collect:
+        if get_step_status(task_id, "step3_profiles") == "pending":
+            store.set_step_status(
+                task_id, "step3_profiles", "running", message="候选主页与发文采集中"
+            )
         child = post_step_key(apify_platform_early)
         store.ensure_post_steps(task_id, [apify_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -693,14 +857,48 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if status != "success":
         if seed_collect:
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=False)
-            store.fail_seed_and_abort(task_id, fail_msg)
-            logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            if should_abort_after_seed_soft_fail(task_id, tool_output or fail_msg):
+                clear_seed_soft_fails(task_id)
+                store.fail_seed_and_abort(task_id, fail_msg)
+                logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            else:
+                store.set_step_status(
+                    task_id,
+                    "step1_seed",
+                    "running",
+                    message="种子采集瞬态失败，等待自动重试…",
+                )
+                logger.warning(
+                    "种子瞬态失败软重试 task=%s tool=%s: %s",
+                    task_id,
+                    tool_name,
+                    fail_msg,
+                )
             return
         if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
             _enter_step4(store, task_id)
             _on_step4_tool_after(store, task_id, tool_name, tool_args, success=False)
+            return
+        # 收口平台子步骤（勿只失败父 step3_profiles，否则如 TikTok 用量不足会一直 running）
+        fail_platform = apify_platform_early or post_platform_early
+        if fail_platform:
+            child = post_step_key(fail_platform)
+            st, msg = _classify_collect_tool_failure(tool_name, tool_output, ex)
+            child_cur = get_step_status(task_id, child)
+            if child_cur not in {"completed", "skipped", "failed"}:
+                store.set_step_status(task_id, child, st, message=msg)
+                logger.warning(
+                    "平台采集失败收口 task=%s platform=%s status=%s msg=%s",
+                    task_id,
+                    fail_platform,
+                    st,
+                    msg,
+                )
+            _mark_step3_closed(store, task_id)
         elif step_key and get_step_status(task_id, step_key) == "running":
-            store.set_step_status(task_id, step_key, "failed", message=ex.get("error_message") or "工具失败")
+            store.set_step_status(
+                task_id, step_key, "failed", message=ex.get("error_message") or "工具失败"
+            )
         return
 
     result_data: Dict[str, Any] = {"profiles": [], "posts": [], "candidates": [], "platforms": []}
@@ -780,6 +978,16 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 "skipped",
                 message=f"{post_platform} 未采集到发文",
             )
+    elif tool_name in _PROFILE_ONLY_TO_PLATFORM and not seed_collect:
+        # 微博/油管主页 MCP：入库 profile 后必须收口子步骤，否则一直 pending 堵死步骤二
+        plat = _PROFILE_ONLY_TO_PLATFORM[tool_name]
+        _sync_platform_post_step(
+            store,
+            task_id,
+            plat,
+            result_data,
+            tool_output_id=tool_output_id,
+        )
     elif post_platform and tool_name == "mcp_apify_get_dataset_items":
         _sync_platform_post_step(
             store,
@@ -825,6 +1033,7 @@ def _update_steps_after_tool(
             "completed",
             message=seed_step_completed_message(plat),
         )
+        clear_seed_soft_fails(task_id)
         return
     if tool_name == "mcp_maigret_collect_accounts":
         return

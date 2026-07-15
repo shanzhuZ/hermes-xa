@@ -147,6 +147,9 @@ public class HermesGatewayClient {
 
     /**
      * 后台读完 SSE 事件流；转发到思考中继；遇到 event:done 结束。
+     * <p>
+     * Hook 将任务标为 failed 后：断开 Gateway SSE（触发 agent.interrupt），
+     * 并向中继发 run.failed，避免流程图已 skip 但 stream 仍输出 web_search。
      */
     private void drainStream(HttpURLConnection conn, String taskId) throws Exception {
         InputStream in = conn.getInputStream();
@@ -157,8 +160,11 @@ public class HermesGatewayClient {
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         String eventName = "";
         String line;
+        int linesSinceStatusCheck = 0;
+        boolean abortedForBusinessFail = false;
         try {
             while ((line = reader.readLine()) != null) {
+                linesSinceStatusCheck++;
                 if (line.startsWith("event:")) {
                     eventName = line.substring(6).trim();
                 } else if (line.startsWith("data:") && eventName.length() > 0) {
@@ -166,6 +172,24 @@ public class HermesGatewayClient {
                     String logData = data.length() > 200 ? data.substring(0, 200) : data;
                     log.debug("[gateway] task={} event={} data={}", taskId, eventName, logData);
                     thoughtStreamHub.publishGatewayEvent(taskId, eventName, data);
+                    // tool.completed 后 Hook 可能稍后才 mark failed：稍等再查；
+                    // tool.started 再查一次，拦住失败后的 web_search 等后续工具
+                    if ("tool.completed".equals(eventName) || "tool.failed".equals(eventName)) {
+                        try {
+                            Thread.sleep(400);
+                        } catch (InterruptedException ie) {
+                            Thread.currentThread().interrupt();
+                        }
+                    }
+                    if ("tool.completed".equals(eventName) || "tool.failed".equals(eventName)
+                            || "tool.started".equals(eventName)
+                            || linesSinceStatusCheck >= 40) {
+                        linesSinceStatusCheck = 0;
+                        if (abortStreamIfTaskFailed(conn, taskId)) {
+                            abortedForBusinessFail = true;
+                            break;
+                        }
+                    }
                     if ("done".equals(eventName)) {
                         break;
                     }
@@ -180,8 +204,53 @@ public class HermesGatewayClient {
             } catch (Exception ignore) {
                 // ignore
             }
-            // publishGatewayEvent 在终端事件时已 complete；此处兜底
+            try {
+                conn.disconnect();
+            } catch (Exception ignore) {
+                // ignore
+            }
+            if (!abortedForBusinessFail) {
+                // publishGatewayEvent 在终端事件时已 complete；此处兜底
+                thoughtStreamHub.complete(taskId);
+            }
+        }
+    }
+
+    /**
+     * 若 hermes_tasks.status=failed，断开 SSE 并发布 run.failed。
+     *
+     * @return true 表示已中止读流
+     */
+    private boolean abortStreamIfTaskFailed(HttpURLConnection conn, String taskId) {
+        try {
+            Map<String, Object> task = collectTaskMapper.selectTaskById(taskId);
+            if (task == null || task.isEmpty()) {
+                return false;
+            }
+            Object st = task.get("status");
+            if (st == null || !"failed".equals(String.valueOf(st))) {
+                return false;
+            }
+            Object err = task.get("error_message");
+            String msg = err == null || String.valueOf(err).trim().isEmpty()
+                    ? "任务已失败，已中止 Agent"
+                    : String.valueOf(err).trim();
+            Map<String, Object> failed = new LinkedHashMap<String, Object>();
+            failed.put("content", truncateErr(msg));
+            failed.put("success", Boolean.FALSE);
+            failed.put("reason", "business_task_failed");
+            thoughtStreamHub.publish(taskId, "run.failed", failed);
             thoughtStreamHub.complete(taskId);
+            try {
+                conn.disconnect();
+            } catch (Exception ignore) {
+                // ignore
+            }
+            log.info("业务任务已 failed，断开 Gateway SSE taskId={}", taskId);
+            return true;
+        } catch (Exception e) {
+            log.warn("检查任务失败状态异常 taskId={}: {}", taskId, e.getMessage());
+            return false;
         }
     }
 

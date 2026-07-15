@@ -50,7 +50,33 @@ public interface CollectTaskMapper {
                           @Param("status") String status,
                           @Param("message") String message);
 
+    /** 单步状态；无行返回 null */
+    String selectStepStatus(@Param("taskId") String taskId, @Param("stepKey") String stepKey);
+
+    /**
+     * 粗同步：仅 pending/running → running，不覆盖 skipped/failed/completed。
+     */
+    int updateStepStatusCoarseRunning(@Param("taskId") String taskId,
+                                      @Param("stepKey") String stepKey,
+                                      @Param("message") String message);
+
+    /**
+     * 粗同步：仅 pending/running → completed（白名单工具）；不覆盖 skipped/failed。
+     */
+    int updateStepStatusCoarseCompleted(@Param("taskId") String taskId,
+                                        @Param("stepKey") String stepKey,
+                                        @Param("message") String message);
+
     void markTaskFailed(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
+
+    /** 思考终稿（msg_type=thoughts_final） */
+    Map<String, Object> selectThoughtsFinal(@Param("taskId") String taskId);
+
+    void insertThoughtsFinal(@Param("taskId") String taskId,
+                             @Param("sessionId") String sessionId,
+                             @Param("content") String content);
+
+    int updateThoughtsFinal(@Param("taskId") String taskId, @Param("content") String content);
 
     Map<String, Object> selectUserInput(@Param("taskId") String taskId);
 

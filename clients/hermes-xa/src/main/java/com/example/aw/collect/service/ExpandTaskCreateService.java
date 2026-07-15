@@ -73,10 +73,12 @@ public class ExpandTaskCreateService implements TaskCreateService {
     private Map<String, Object> buildSeedJson(String message) {
         Map<String, Object> seed = new HashMap<String, Object>();
         seed.put("platform", "twitter");
+        // 先剥 skill 前缀；短别名必须词界，避免 intelligence 内嵌 ig 等假阳性
+        String text = stripSkillPrefix(message);
         Pattern platformHint = Pattern.compile(
-                "(推特|twitter|微博|weibo|youtube|bilibili|instagram|ins|tiktok|telegram|tg|facebook|fb|脸书|github)",
+                "(推特|twitter|微博|weibo|youtube|bilibili|instagram|\\bins\\b|\\big\\b|tiktok|telegram|\\btg\\b|facebook|\\bfb\\b|脸书|github)",
                 Pattern.CASE_INSENSITIVE);
-        Matcher pm = platformHint.matcher(message);
+        Matcher pm = platformHint.matcher(text);
         if (pm.find()) {
             String token = pm.group(1).toLowerCase();
             if ("微博".equals(token) || "weibo".equals(token)) {
@@ -85,7 +87,7 @@ public class ExpandTaskCreateService implements TaskCreateService {
                 seed.put("platform", "youtube");
             } else if ("bilibili".equals(token)) {
                 seed.put("platform", "bilibili");
-            } else if ("instagram".equals(token) || "ins".equals(token)) {
+            } else if ("instagram".equals(token) || "ins".equals(token) || "ig".equals(token)) {
                 seed.put("platform", "instagram");
             } else if ("tiktok".equals(token)) {
                 seed.put("platform", "tiktok");
@@ -97,18 +99,30 @@ public class ExpandTaskCreateService implements TaskCreateService {
                 seed.put("platform", "github");
             }
         }
-        Matcher hm = Pattern.compile("@([A-Za-z0-9_\\.]+)").matcher(message);
+        Matcher hm = Pattern.compile("@([A-Za-z0-9_\\.]+)").matcher(text);
         if (hm.find()) {
             seed.put("account_handle", hm.group(1));
             seed.put("account_hint", hm.group(1));
         } else {
-            String hint = message.trim();
+            String hint = text.trim();
             if (hint.length() > 128) {
                 hint = hint.substring(0, 128);
             }
             seed.put("account_hint", hint);
         }
         return seed;
+    }
+
+    /** 去掉 Hermes skill 名前缀，再解析平台/账号。 */
+    private static String stripSkillPrefix(String message) {
+        if (message == null) {
+            return "";
+        }
+        return message.trim().replaceFirst(
+                "(?i)^(account-intelligence-collect|account-expansion|account-intelligence-expand|"
+                        + "account-intelligence-verification|account-intelligence-verify|"
+                        + "account-intelligence-report|account-intelligence-profile)\\b\\s*",
+                "");
     }
 
     /**
@@ -122,8 +136,7 @@ public class ExpandTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", null, 41, "3.1", "文本流 Agent 对比");
         collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", null, 42, "3.2", "图片流 Agent 分析");
         collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "4", "可信账号核验 Agent");
-        // 遗留节点：前端对 account_expand 隐藏；标题与 01 对齐
-        collectTaskMapper.insertPhaseStep(taskId, "step6_posts", null, 60, "2.9", "跨平台发文采集 Agent");
+        // 02 不再插入 step6_posts(2.9)：发文子步骤直接挂在 step3_profiles 下
     }
 
     private String seedAgentTitle(String platform) {

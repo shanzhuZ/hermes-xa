@@ -7,6 +7,7 @@ import com.example.aw.collect.service.TaskFinalAnswerQueryService;
 import com.example.aw.collect.service.TaskStepDataQueryService;
 import com.example.aw.collect.service.TaskStepToolsQueryService;
 import com.example.aw.collect.service.TaskTreeQueryService;
+import com.example.aw.collect.service.ThoughtQueryService;
 import com.example.aw.collect.stream.ThoughtStreamHub;
 import com.example.aw.gateway.HermesGatewayClient;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -52,6 +53,9 @@ public class CollectApiController {
 
     @Autowired
     private TaskFinalAnswerQueryService taskFinalAnswerQueryService;
+
+    @Autowired
+    private ThoughtQueryService thoughtQueryService;
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
@@ -195,14 +199,27 @@ public class CollectApiController {
         body.put("startedAt", task.get("started_at"));
         body.put("finishedAt", task.get("finished_at"));
         body.put("treeUrl", "/api/tasks/" + taskId + "/tree");
+        body.put("thoughtsUrl", "/api/tasks/" + taskId + "/thoughts");
         body.put("thoughtsStreamUrl", "/api/tasks/" + taskId + "/thoughts/stream");
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 思考过程查询：完成态返回 assistant.completed 终稿；进行中 mode=live（I1 无 partial）。
+     */
+    @GetMapping("/tasks/{taskId}/thoughts")
+    public ResponseEntity<Map<String, Object>> getThoughts(@PathVariable String taskId) {
+        Map<String, Object> body = thoughtQueryService.getThoughts(taskId);
+        if (body.containsKey("error") && "task_not_found".equals(body.get("error"))) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+        }
         return ResponseEntity.ok(body);
     }
 
     /**
      * 模型思考过程 SSE 中继（Java 转发 Gateway 的 assistant.delta / tool.* 等）。
      * <p>
-     * 前端：EventSource 或 fetch 流式读；发起任务后尽快连接，可回放近期缓冲。
+     * 前端实时：只拼 assistant.delta.content；完成态回放请用 GET /thoughts。
      */
     @GetMapping(value = "/tasks/{taskId}/thoughts/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
     public SseEmitter thoughtStream(@PathVariable String taskId) {

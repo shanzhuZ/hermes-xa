@@ -76,14 +76,61 @@ def normalize_actor_run(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     return {"profiles": [], "posts": [], "candidates": [], "platforms": []}
 
 
+def _item_is_unavailable(item: Dict[str, Any]) -> bool:
+    """Apify 返回的 not_found / error，禁止当成功主页入库。"""
+    err = str(item.get("error") or item.get("errorDescription") or "").strip().lower()
+    if err and err not in {"", "null", "none"}:
+        return True
+    status = str(item.get("status") or "").strip().lower()
+    return status in {"not_found", "error", "private", "unavailable", "denied"}
+
+
+def _apify_collect_outcome(items: List[Any], profiles: List[Any], posts: List[Any]) -> str:
+    """ok | not_found | empty — 供 03 步骤状态机区分「账号不存在」与「解析/空数据」。"""
+    if profiles or posts:
+        return "ok"
+    if not items:
+        return "empty"
+    saw_unavailable = False
+    for item in items:
+        if not isinstance(item, dict):
+            continue
+        if _item_is_unavailable(item):
+            saw_unavailable = True
+            continue
+        if str(item.get("type") or "").lower() == "profile":
+            if not first_str(item.get("id"), item.get("url"), item.get("name")):
+                return "empty"
+    # 全是 not_found/error 壳 → 账号不可用；否则空解析
+    return "not_found" if saw_unavailable else "empty"
+
+
+def apify_fail_message(platform: str, collect_outcome: str) -> str:
+    """dataset 成功但无主页时的步骤文案（避免「未入库」误导）。"""
+    plat = platform or "apify"
+    outcome = (collect_outcome or "empty").strip().lower()
+    if outcome == "not_found":
+        return f"{plat} 账号不存在或不可用"
+    if outcome == "empty":
+        return f"{plat} dataset 无可解析主页"
+    return f"{plat} Apify 已拉取 dataset 但未得到主页"
+
+
 def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     data = raw if isinstance(raw, dict) else {}
     items = data.get("items") or data.get("data") or []
     if not isinstance(items, list):
         items = []
     platform = _guess_platform(ctx, items)
+    empty = {
+        "profiles": [],
+        "posts": [],
+        "candidates": [],
+        "platforms": [],
+        "collect_outcome": "empty",
+    }
     if not platform:
-        return {"profiles": [], "posts": [], "candidates": [], "platforms": []}
+        return empty
 
     profiles: List[Dict[str, Any]] = []
     posts: List[Dict[str, Any]] = []
@@ -100,7 +147,13 @@ def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         profiles, posts = _github_items(ctx, items)
 
     plats = [platform] if profiles or posts else []
-    return {"profiles": profiles, "posts": posts, "candidates": [], "platforms": plats}
+    return {
+        "profiles": profiles,
+        "posts": posts,
+        "candidates": [],
+        "platforms": plats,
+        "collect_outcome": _apify_collect_outcome(items, profiles, posts),
+    }
 
 
 def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
@@ -114,11 +167,18 @@ def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
             return "instagram"
         if "authorMeta" in sample or "tiktok" in str(sample.get("webVideoUrl", "")).lower():
             return "tiktok"
-        if "channelUsername" in sample or sample.get("message"):
-            return "telegram"
         item_type = str(sample.get("type") or "").lower()
+        if (
+            item_type == "channel"
+            or "channelUsername" in sample
+            or "t.me/" in str(sample.get("url", "")).lower()
+            or sample.get("message")
+        ):
+            return "telegram"
         if item_type == "profile" and (
-            "profile_intro_text" in sample or "facebook.com" in str(sample.get("url", "")).lower()
+            "profile_intro_text" in sample
+            or "facebook.com" in str(sample.get("url", "")).lower()
+            or "profile_type" in sample
         ):
             return "facebook"
         if item_type == "post" and ("post_id" in sample or "facebook.com" in str(sample.get("url", "")).lower()):
@@ -134,8 +194,15 @@ def _instagram_items(ctx: Dict[str, Any], items: List[Any]):
     for item in items:
         if not isinstance(item, dict):
             continue
+        if _item_is_unavailable(item):
+            continue
         username = first_str(item.get("ownerUsername"), item.get("username"))
-        if username and not profiles:
+        # 有效主页须有实质字段，禁止仅 username 的 not_found 壳入库
+        has_signal = any(
+            item.get(k) not in (None, "", [], {})
+            for k in ("biography", "followersCount", "fullName", "ownerFullName", "postsCount", "id")
+        )
+        if username and not profiles and has_signal:
             profiles.append(
                 profile_row(
                     ctx,
@@ -173,6 +240,8 @@ def _tiktok_items(ctx: Dict[str, Any], items: List[Any]):
     posts: List[Dict[str, Any]] = []
     for item in items:
         if not isinstance(item, dict):
+            continue
+        if _item_is_unavailable(item):
             continue
         author = item.get("authorMeta") or {}
         username = first_str(author.get("name"), item.get("author"))
@@ -217,7 +286,14 @@ def _telegram_items(ctx: Dict[str, Any], items: List[Any]):
     for item in items:
         if not isinstance(item, dict):
             continue
-        channel = first_str(item.get("channelUsername"), item.get("channelName"), channel)
+        if _item_is_unavailable(item):
+            continue
+        channel = first_str(
+            item.get("channelUsername"),
+            item.get("username"),
+            item.get("channelName"),
+            channel,
+        )
         if channel and not profiles:
             profiles.append(
                 profile_row(
@@ -225,9 +301,9 @@ def _telegram_items(ctx: Dict[str, Any], items: List[Any]):
                     platform="telegram",
                     account_id=channel,
                     account_handle=channel,
-                    display_name=first_str(item.get("channelName")),
+                    display_name=first_str(item.get("channelName"), item.get("username")),
                     bio=first_str(item.get("channelDescription")),
-                    profile_url=f"https://t.me/{channel}",
+                    profile_url=first_str(item.get("url"), f"https://t.me/{channel}"),
                     raw=item,
                 )
             )
@@ -269,7 +345,10 @@ def _facebook_items(ctx: Dict[str, Any], items: List[Any]):
             continue
         item_type = str(item.get("type") or "").lower()
         if item_type == "profile":
+            if _item_is_unavailable(item):
+                continue
             account_id = first_str(item.get("id"), _facebook_handle_from_url(str(item.get("url") or "")))
+            # 空壳 profile（id/url/name 全空）不入库，交给 collect_outcome=empty
             if not account_id or account_id in profile_ids:
                 continue
             profile_ids.add(account_id)

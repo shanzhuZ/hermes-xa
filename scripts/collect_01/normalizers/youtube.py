@@ -7,6 +7,14 @@ from typing import Any, Dict, List
 from collect_01.normalizers.base import first_str, post_row, profile_row, safe_int
 
 
+def youtube_channel_id_ok(channel_id: str) -> bool:
+    """正式 channelId：UC 开头且长度足够（通常 24；拒伪 UC+短 handle）。"""
+    cid = (channel_id or "").strip()
+    if not cid.upper().startswith("UC"):
+        return False
+    return len(cid) >= 22
+
+
 def normalize_profile(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     data = raw if isinstance(raw, dict) else {}
     ch = data.get("channel") or data.get("data") or data

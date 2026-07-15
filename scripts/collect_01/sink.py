@@ -1,4 +1,10 @@
-"""Hermes Hook 入口 — 01 账号采集入库（stdin JSON）。"""
+"""Hermes Hook 入口 — 01 账号采集入库（stdin JSON）。
+
+冲突约定（方案 C，见 docs/思考流与步骤树同步落库实施方案.md）：
+- Java 中继可粗写 pending/running→running（及极少数粗 completed）；
+- Hook 为细状态真相源，可覆盖 message / completed / failed / skipped / 子节点；
+- 无业务理由勿把已业务 completed 打回 pending（合法 reopen 除外）。
+"""
 
 from __future__ import annotations
 
@@ -41,8 +47,10 @@ from collect_01.seed_platforms import (
     COLLECT_SEED_PROFILE_TOOLS as _SEED_PROFILE_TOOLS,
     TOOL_TO_SEED_PLATFORM,
     apify_seed_empty_ok,
+    clear_seed_soft_fails,
     is_apify_seed_platform,
     seed_step_completed_message,
+    should_abort_after_seed_soft_fail,
 )
 
 
@@ -199,13 +207,14 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
     msg = (user_message or str(ex.get("user_message") or "")).strip()
     if msg and is_collect_intent(msg):
         return store.ensure_task(session_id=session_id, user_message=msg)
+    # 禁止仅凭 mcp_* 凭空建采集任务（扩建失败后 Agent 续跑会污染出幽灵 01 任务）
     tool_name = str(payload.get("tool_name") or "")
-    if session_id and tool_name.startswith("mcp_"):
-        tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
-        handle = _extract_account_id(tool_args) or ""
-        if handle:
-            seed_msg = f"account-intelligence-collect 采集 @{handle}"
-            return store.ensure_task(session_id=session_id, user_message=seed_msg)
+    if tool_name.startswith("mcp_"):
+        logger.warning(
+            "collect 未解析到 task_id，忽略工具事件 tool=%s session=%s",
+            tool_name,
+            session_id or "-",
+        )
     return None
 
 
@@ -510,6 +519,11 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     post_platform_early = TOOL_POST_PLATFORM.get(tool_name)
     if post_platform_early and not seed_collect:
+        # 发文子节点 running 前先保证父 step6_posts
+        if get_step_status(task_id, "step6_posts") == "pending":
+            store.set_step_status(
+                task_id, "step6_posts", "running", message="跨平台发文采集中"
+            )
         child = post_step_key(post_platform_early)
         store.ensure_post_steps(task_id, [post_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -519,6 +533,10 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     apify_platform_early = apify_platform_from_actor_tool(tool_name)
     # 仅发文阶段为 Apify Actor 预建 step6 子节点；主页轮（step1/3）禁止
     if apify_platform_early and not seed_collect and _apify_step6_allowed(task_id):
+        if get_step_status(task_id, "step6_posts") == "pending":
+            store.set_step_status(
+                task_id, "step6_posts", "running", message="跨平台发文采集中"
+            )
         child = post_step_key(apify_platform_early)
         store.ensure_post_steps(task_id, [apify_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -604,8 +622,23 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if status != "success":
         if seed_collect:
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=False)
-            store.fail_seed_and_abort(task_id, fail_msg)
-            logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            if should_abort_after_seed_soft_fail(task_id, tool_output or fail_msg):
+                clear_seed_soft_fails(task_id)
+                store.fail_seed_and_abort(task_id, fail_msg)
+                logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            else:
+                store.set_step_status(
+                    task_id,
+                    "step1_seed",
+                    "running",
+                    message="种子采集瞬态失败，等待自动重试…",
+                )
+                logger.warning(
+                    "种子瞬态失败软重试 task=%s tool=%s: %s",
+                    task_id,
+                    tool_name,
+                    fail_msg,
+                )
             return
         if step_key and get_step_status(task_id, step_key) == "running":
             store.set_step_status(task_id, step_key, "failed", message=ex.get("error_message") or "工具失败")
@@ -729,6 +762,7 @@ def _update_steps_after_tool(
             "completed",
             message=seed_step_completed_message(plat),
         )
+        clear_seed_soft_fails(task_id)
         return
     if tool_name == "mcp_maigret_collect_accounts":
         return

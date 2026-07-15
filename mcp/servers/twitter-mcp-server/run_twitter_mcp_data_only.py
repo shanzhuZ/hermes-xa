@@ -4,11 +4,13 @@ hermes-xa 专用 Twitter MCP 启动器：仅注入 HTTP 代理，启动上游 tw
 
 - 不导入、不注册任何画像/persona 工具或 mandatory_output_contract
 - 与 run_twitter_mcp.py（画像扩展版，供旧 Hermes 项目）分离
+- 对 get_user_by_screen_name / get_user_by_id 做一次瞬态重试（空错误/超时常见）
 
 旧 Hermes 画像流程请使用 run_twitter_mcp.py 并设置 TWITTER_PERSONA_TOOLS=1
 """
 from __future__ import annotations
 
+import asyncio
 import json
 import os
 import sys
@@ -22,6 +24,7 @@ os.environ.setdefault("ACCESS_TOKEN", "cookie-mode")
 os.environ.setdefault("ACCESS_TOKEN_SECRET", "cookie-mode")
 
 from twitter_mcp._vendor.twikit import Client
+from twitter_mcp._vendor.twikit.errors import NotFound, TooManyRequests
 
 
 def _configure_windows_stdio_utf8() -> None:
@@ -47,6 +50,31 @@ def _resolve_proxy() -> str | None:
     return None
 
 
+def _is_transient_twikit_error(exc: BaseException) -> bool:
+    if isinstance(exc, (NotFound, TooManyRequests)):
+        return False
+    msg = (str(exc) or "").strip().lower()
+    if not msg:
+        return True
+    return any(
+        k in msg
+        for k in ("timeout", "timed out", "connection", "temporarily", "502", "503", "reset")
+    )
+
+
+def _wrap_with_one_retry(coro_fn):
+    async def _wrapped(*args, **kwargs):
+        try:
+            return await coro_fn(*args, **kwargs)
+        except Exception as first:
+            if not _is_transient_twikit_error(first):
+                raise
+            await asyncio.sleep(1.5)
+            return await coro_fn(*args, **kwargs)
+
+    return _wrapped
+
+
 def _patch_get_client() -> None:
     import twitter_mcp.server as srv
 
@@ -59,6 +87,9 @@ def _patch_get_client() -> None:
         client.set_cookies(
             {"auth_token": cookies["auth_token"], "ct0": cookies["ct0"]}
         )
+        # 单次瞬态重试：缓解 get_user_info 空错误/超时（日志见 10～56s 空详情失败）
+        client.get_user_by_screen_name = _wrap_with_one_retry(client.get_user_by_screen_name)  # type: ignore[method-assign]
+        client.get_user_by_id = _wrap_with_one_retry(client.get_user_by_id)  # type: ignore[method-assign]
         return client
 
     srv._get_client = _get_client  # type: ignore[method-assign]

@@ -1,8 +1,10 @@
 package com.example.aw.collect.stream;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
+import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.MediaType;
 import org.springframework.stereotype.Component;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
@@ -20,7 +22,7 @@ import java.util.function.Consumer;
 /**
  * 思考流中继：Gateway SSE → 内存总线 → 前端 SseEmitter。
  * <p>
- * P0 仅内存；落库回放留给 P1。
+ * 旁路：assistant.completed 落库；tool.* 粗同步步骤状态（方案 C）。
  */
 @Component
 public class ThoughtStreamHub {
@@ -34,6 +36,15 @@ public class ThoughtStreamHub {
     public static final long DEFAULT_TIMEOUT_MS = 2L * 60L * 60L * 1000L;
 
     private final ConcurrentHashMap<String, TaskChannel> channels = new ConcurrentHashMap<String, TaskChannel>();
+
+    @Autowired
+    private ThoughtFinalStore thoughtFinalStore;
+
+    @Autowired
+    private CoarseStepSync coarseStepSync;
+
+    @Autowired
+    private CollectTaskMapper collectTaskMapper;
 
     /**
      * 任务开流前调用，避免极早事件无处存放。
@@ -104,14 +115,59 @@ public class ThoughtStreamHub {
     }
 
     /**
-     * 规范化 Gateway 原始事件后发布。
+     * 规范化 Gateway 原始事件后发布；旁路落库终稿与粗同步步骤。
+     * <p>
+     * 任务已 failed：丢弃后续 tool/assistant 事件（流程图已 skip，stream 不得继续展示自主工具）。
      */
     public void publishGatewayEvent(String taskId, String gatewayEvent, String dataJson) {
+        if (isBusinessTaskFailed(taskId) && !ThoughtEventNormalizer.isTerminal(gatewayEvent)
+                && !"run.failed".equals(gatewayEvent)) {
+            log.debug("任务已 failed，丢弃 Gateway 事件 taskId={} event={}", taskId, gatewayEvent);
+            return;
+        }
         Map<String, Object> normalized = ThoughtEventNormalizer.normalize(taskId, gatewayEvent, dataJson);
         String eventType = String.valueOf(normalized.get("eventType"));
         publish(taskId, eventType, normalized);
+        try {
+            if ("assistant.completed".equals(eventType)) {
+                Object content = normalized.get("content");
+                if (content != null) {
+                    thoughtFinalStore.saveAssistantCompleted(taskId, String.valueOf(content));
+                }
+            } else if (eventType != null && eventType.startsWith("tool.")) {
+                Object toolName = normalized.get("toolName");
+                Object successObj = normalized.get("success");
+                Boolean success = null;
+                if (successObj instanceof Boolean) {
+                    success = (Boolean) successObj;
+                }
+                coarseStepSync.onToolEvent(
+                        taskId,
+                        eventType,
+                        toolName == null ? null : String.valueOf(toolName),
+                        success);
+            }
+        } catch (Exception e) {
+            log.warn("思考流旁路处理失败 taskId={} event={}: {}", taskId, eventType, e.getMessage());
+        }
         if (ThoughtEventNormalizer.isTerminal(gatewayEvent)) {
             complete(taskId);
+        }
+    }
+
+    private boolean isBusinessTaskFailed(String taskId) {
+        if (taskId == null || taskId.trim().isEmpty() || collectTaskMapper == null) {
+            return false;
+        }
+        try {
+            Map<String, Object> task = collectTaskMapper.selectTaskById(taskId);
+            if (task == null || task.isEmpty()) {
+                return false;
+            }
+            Object st = task.get("status");
+            return st != null && "failed".equals(String.valueOf(st));
+        } catch (Exception e) {
+            return false;
         }
     }
 

@@ -5,7 +5,7 @@
 
     <select id="selectTaskById" resultType="java.util.HashMap">
         SELECT task_id, session_id, status, current_phase, cross_platform, task_type,
-               started_at, finished_at, created_at, updated_at
+               error_message, started_at, finished_at, created_at, updated_at
         FROM hermes_tasks
         WHERE task_id = #{taskId}
         LIMIT 1
@@ -122,6 +122,55 @@
             started_at = CASE WHEN #{status} = 'running' THEN COALESCE(started_at, NOW(3)) ELSE started_at END,
             updated_at = NOW(3)
         WHERE task_id = #{taskId} AND step_key = #{stepKey}
+    </update>
+
+    <select id="selectStepStatus" resultType="java.lang.String">
+        SELECT status
+        FROM collect_phase_steps
+        WHERE task_id = #{taskId}
+          AND step_key = #{stepKey}
+        LIMIT 1
+    </select>
+
+    <update id="updateStepStatusCoarseRunning">
+        UPDATE collect_phase_steps
+        SET status = 'running',
+            message = #{message},
+            started_at = COALESCE(started_at, NOW(3)),
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId}
+          AND step_key = #{stepKey}
+          AND status IN ('pending', 'running')
+    </update>
+
+    <update id="updateStepStatusCoarseCompleted">
+        UPDATE collect_phase_steps
+        SET status = 'completed',
+            message = #{message},
+            finished_at = COALESCE(finished_at, NOW(3)),
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId}
+          AND step_key = #{stepKey}
+          AND status IN ('pending', 'running')
+    </update>
+
+    <select id="selectThoughtsFinal" resultType="java.util.HashMap">
+        SELECT id, content, created_at
+        FROM hermes_user_dialogues
+        WHERE task_id = #{taskId} AND msg_type = 'thoughts_final'
+        ORDER BY id DESC
+        LIMIT 1
+    </select>
+
+    <insert id="insertThoughtsFinal">
+        INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, msg_type)
+        VALUES (#{taskId}, #{sessionId}, 'assistant', #{content}, 'thoughts_final')
+    </insert>
+
+    <update id="updateThoughtsFinal">
+        UPDATE hermes_user_dialogues
+        SET content = #{content}
+        WHERE task_id = #{taskId} AND msg_type = 'thoughts_final'
     </update>
 
     <update id="markTaskFailed">
