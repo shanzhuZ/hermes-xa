@@ -52,11 +52,12 @@ public class ReportTaskCreateService implements TaskCreateService {
                     "会话 " + sessionId + " 已有进行中的任务 " + active.get("task_id") + "，请等待结束后再发起");
         }
 
-        String seedJson = JSON.toJSONString(buildSeedJson(userMessage));
+        Map<String, Object> seed = buildSeedJson(userMessage);
+        String seedJson = JSON.toJSONString(seed);
         collectTaskMapper.insertTask(taskId, sessionId, dbTaskType(), 1, seedJson);
         String clipped = userMessage.length() > 65535 ? userMessage.substring(0, 65535) : userMessage;
         collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped, payloadJson);
-        insertReportSteps(taskId);
+        insertReportSteps(taskId, stringVal(seed.get("platform")));
         return taskId;
     }
 
@@ -112,20 +113,20 @@ public class ReportTaskCreateService implements TaskCreateService {
     }
 
     /**
-     * 写报 11 步根节点；step1 初始 running，其余 pending。
+     * 写报 11 步根节点（Agent 风格标题，与 report_04/phases.py 一致）；step1/step2 初始 running。
      */
-    private void insertReportSteps(String taskId) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", "步骤一：种子 profile");
-        collectTaskMapper.insertPhaseStep(taskId, "step2_maigret", null, 20, "2", "步骤二：Maigret 跨平台发现");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_web_search", null, 30, "3", "步骤三：网页检索候选");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_profiles", null, 40, "4", "步骤四：候选主页采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_streams", null, 50, "5", "步骤五：文本/图片流核查");
-        collectTaskMapper.insertPhaseStep(taskId, "step6_validated", null, 60, "6", "步骤六：相似账号认定");
-        collectTaskMapper.insertPhaseStep(taskId, "step7_posts", null, 70, "7", "步骤七：发文采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step8_img_analysis", null, 80, "8", "步骤八：图片流分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step9_context_views", null, 90, "9", "步骤九：观点与涉华分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step10_context_pii", null, 100, "10", "步骤十：PII 与圈层分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step11_report", null, 110, "11", "步骤十一：画像报告");
+    private void insertReportSteps(String taskId, String seedPlatform) {
+        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", seedAgentTitle(seedPlatform));
+        collectTaskMapper.insertPhaseStep(taskId, "step2_maigret", null, 20, "2", "Maigret Agent 跨平台收集");
+        collectTaskMapper.insertPhaseStep(taskId, "step3_web_search", null, 30, "3", "网页检索 Agent 候选发现");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_profiles", null, 40, "4", "MCP/Apify Agent 候选主页采集");
+        collectTaskMapper.insertPhaseStep(taskId, "step5_streams", null, 50, "5", "信息核验流 Agent 核查");
+        collectTaskMapper.insertPhaseStep(taskId, "step6_validated", null, 60, "6", "相似账号认定 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step7_posts", null, 70, "7", "跨平台发文采集 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step8_img_analysis", null, 80, "8", "图片流 Agent 分析");
+        collectTaskMapper.insertPhaseStep(taskId, "step9_context_views", null, 90, "9", "观点与涉华分析 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step10_context_pii", null, 100, "10", "PII 与圈层分析 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step11_report", null, 110, "11", "画像报告 Agent");
         collectTaskMapper.updateStepStatus(
                 taskId,
                 "step1_seed",
@@ -136,5 +137,51 @@ public class ReportTaskCreateService implements TaskCreateService {
                 "step2_maigret",
                 "running",
                 "等待 Maigret 跨平台发现…");
+    }
+
+    private String seedAgentTitle(String platform) {
+        String plat = platform == null || platform.trim().isEmpty()
+                ? "twitter" : platform.trim().toLowerCase();
+        String label = platformLabel(plat);
+        if ("twitter".equals(plat) || "weibo".equals(plat)
+                || "youtube".equals(plat) || "bilibili".equals(plat)) {
+            return label + " MCP Agent 采集";
+        }
+        return "Apify Agent · " + label + " 采集";
+    }
+
+    private String platformLabel(String platform) {
+        if ("twitter".equals(platform)) {
+            return "Twitter";
+        }
+        if ("weibo".equals(platform)) {
+            return "微博";
+        }
+        if ("youtube".equals(platform)) {
+            return "YouTube";
+        }
+        if ("bilibili".equals(platform)) {
+            return "B站";
+        }
+        if ("instagram".equals(platform)) {
+            return "Instagram";
+        }
+        if ("tiktok".equals(platform)) {
+            return "TikTok";
+        }
+        if ("telegram".equals(platform)) {
+            return "Telegram";
+        }
+        if ("facebook".equals(platform)) {
+            return "Facebook";
+        }
+        if ("github".equals(platform)) {
+            return "GitHub";
+        }
+        return platform;
+    }
+
+    private static String stringVal(Object v) {
+        return v == null ? "" : String.valueOf(v).trim();
     }
 }

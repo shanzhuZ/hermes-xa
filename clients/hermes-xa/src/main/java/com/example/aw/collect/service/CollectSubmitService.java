@@ -89,6 +89,19 @@ public class CollectSubmitService {
         body.put("status", "pending");
         body.put("pollTreeUrl", "/api/tasks/" + taskId + "/tree");
         body.put("pollTaskUrl", "/api/tasks/" + taskId);
+        String thoughtsUrl = "/api/tasks/" + taskId + "/thoughts/stream";
+        body.put("thoughtsStreamUrl", thoughtsUrl);
+        // 思考流中继凭证（前端连 Java，不直连 Gateway）
+        Map<String, Object> stream = new LinkedHashMap<String, Object>();
+        stream.put("mode", "java_relay");
+        stream.put("url", thoughtsUrl);
+        stream.put("thoughtsUrl", thoughtsUrl);
+        boolean reportTask = "account_report".equals(typeDef.getDbTaskType());
+        stream.put("enabled", Boolean.valueOf(reportTask));
+        Map<String, Object> headers = new LinkedHashMap<String, Object>();
+        headers.put("Accept", "text/event-stream");
+        stream.put("headers", headers);
+        body.put("stream", stream);
         return body;
     }
 

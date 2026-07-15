@@ -54,13 +54,14 @@ public class CollectTaskCreateService implements TaskCreateService {
         }
 
         int crossPlatform = parseCrossPlatform(userMessage);
-        String seedJson = JSON.toJSONString(buildSeedJson(userMessage));
+        Map<String, Object> seed = buildSeedJson(userMessage);
+        String seedJson = JSON.toJSONString(seed);
 
         collectTaskMapper.insertTask(taskId, sessionId, dbTaskType(), crossPlatform, seedJson);
         String clipped = userMessage.length() > 65535 ? userMessage.substring(0, 65535) : userMessage;
         collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped, payloadJson);
 
-        insertCrossPlatformSteps(taskId);
+        insertCrossPlatformSteps(taskId, stringVal(seed.get("platform")));
         if (crossPlatform == 0) {
             markSinglePlatformSkipped(taskId);
         }
@@ -134,17 +135,66 @@ public class CollectTaskCreateService implements TaskCreateService {
     }
 
     /**
-     * 跨平台任务：插入完整步骤树（与 collect_01/phases.py ROOT_STEPS 一致）。
+     * 跨平台任务：插入完整步骤树（与 collect_01/phases.py root_steps_for_platform 一致，Agent 风格标题）。
      */
-    private void insertCrossPlatformSteps(String taskId) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", "步骤一：种子账号资料采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "2", "步骤二：跨平台账号收集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "3", "步骤三：候选主页采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "4", "步骤四：文本流与图片流拆分");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", null, 41, "4.1", "步骤四：文本流对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", null, 42, "4.2", "步骤四：图片流对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "步骤五：可信账号收敛");
-        collectTaskMapper.insertPhaseStep(taskId, "step6_posts", null, 60, "6", "步骤六：分平台发文采集");
+    private void insertCrossPlatformSteps(String taskId, String seedPlatform) {
+        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", seedAgentTitle(seedPlatform));
+        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "2", "Maigret Agent 跨平台收集");
+        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "3", "MCP/Apify Agent 候选主页采集");
+        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "4", "信息核验流 Agent 拆分");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", null, 41, "4.1", "文本流 Agent 对比");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", null, 42, "4.2", "图片流 Agent 分析");
+        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "可信账号核验 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step6_posts", null, 60, "6", "跨平台发文采集 Agent");
+    }
+
+    /**
+     * 步骤一展示名：MCP 种子平台用「{平台} MCP Agent 采集」，其余用 Apify Agent。
+     */
+    private String seedAgentTitle(String platform) {
+        String plat = platform == null || platform.trim().isEmpty()
+                ? "twitter" : platform.trim().toLowerCase();
+        String label = platformLabel(plat);
+        if ("twitter".equals(plat) || "weibo".equals(plat)
+                || "youtube".equals(plat) || "bilibili".equals(plat)) {
+            return label + " MCP Agent 采集";
+        }
+        return "Apify Agent · " + label + " 采集";
+    }
+
+    private String platformLabel(String platform) {
+        if ("twitter".equals(platform)) {
+            return "Twitter";
+        }
+        if ("weibo".equals(platform)) {
+            return "微博";
+        }
+        if ("youtube".equals(platform)) {
+            return "YouTube";
+        }
+        if ("bilibili".equals(platform)) {
+            return "B站";
+        }
+        if ("instagram".equals(platform)) {
+            return "Instagram";
+        }
+        if ("tiktok".equals(platform)) {
+            return "TikTok";
+        }
+        if ("telegram".equals(platform)) {
+            return "Telegram";
+        }
+        if ("facebook".equals(platform)) {
+            return "Facebook";
+        }
+        if ("github".equals(platform)) {
+            return "GitHub";
+        }
+        return platform;
+    }
+
+    private static String stringVal(Object v) {
+        return v == null ? "" : String.valueOf(v).trim();
     }
 
     /**

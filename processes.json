@@ -1,0 +1,22 @@
+[
+  {
+    "session_id": "proc_b4d2b1c9eb70",
+    "command": "python -m http.server 8765",
+    "pid": 6756,
+    "pid_scope": "host",
+    "host_start_time": 178410244338,
+    "cwd": "C:\\Users\\zhr",
+    "started_at": 1784102443.3697937,
+    "task_id": "default",
+    "session_key": "task:fcdd3051-25a8-428d-ae82-db970368f093",
+    "watcher_platform": "",
+    "watcher_chat_id": "",
+    "watcher_user_id": "",
+    "watcher_user_name": "",
+    "watcher_thread_id": "",
+    "watcher_message_id": "",
+    "watcher_interval": 0,
+    "notify_on_complete": false,
+    "watch_patterns": []
+  }
+]

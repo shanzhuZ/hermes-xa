@@ -19,7 +19,6 @@ from collect_01.phases import (
     PHASE_CROSS_PLATFORM,
     PHASE_DONE,
     PHASE_RESOLVE_SEED,
-    ROOT_STEPS,
     TASK_TYPE,
     PLATFORM_LABELS,
     initial_steps,
@@ -27,6 +26,7 @@ from collect_01.phases import (
     post_step_node,
     post_step_order,
     post_step_title,
+    root_steps_for_platform,
     step_phase,
 )
 
@@ -238,7 +238,7 @@ class TaskStore:
         seed = _parse_seed(user_message)
         if cross_platform is None:
             cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
-        initial_phase_steps = initial_steps(bool(cross_platform))
+        initial_phase_steps = initial_steps(bool(cross_platform), seed.get("platform"))
         with db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -306,7 +306,7 @@ class TaskStore:
         cross_platform = 0 if _CROSS_NO.search(user_message or "") else 1
         if cross_platform == 1 and _CROSS_YES.search(user_message or ""):
             cross_platform = 1
-        initial_phase_steps = initial_steps(bool(cross_platform))
+        initial_phase_steps = initial_steps(bool(cross_platform), seed.get("platform"))
         with db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -417,8 +417,16 @@ class TaskStore:
         logger.info("已保存助手输出 task=%s type=%s len=%d", task_id, msg_type, len(text))
         return True
 
+    def _seed_platform(self, task_id: str) -> str:
+        task = self.get_task(task_id) or {}
+        try:
+            seed = json.loads(task.get("seed_json") or "{}")
+        except json.JSONDecodeError:
+            seed = {}
+        return str((seed or {}).get("platform") or "twitter")
+
     def init_phase_steps(self, task_id: str) -> None:
-        for step in ROOT_STEPS:
+        for step in root_steps_for_platform(self._seed_platform(task_id)):
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
@@ -495,7 +503,7 @@ class TaskStore:
 
     def ensure_step_row(self, task_id: str, step_key: str) -> None:
         """旧任务可能缺少 step3_profiles 等新步骤行。"""
-        for step in ROOT_STEPS:
+        for step in root_steps_for_platform(self._seed_platform(task_id)):
             if step.step_key == step_key:
                 db.execute(
                     """

@@ -7,9 +7,11 @@ import com.example.aw.collect.service.TaskFinalAnswerQueryService;
 import com.example.aw.collect.service.TaskStepDataQueryService;
 import com.example.aw.collect.service.TaskStepToolsQueryService;
 import com.example.aw.collect.service.TaskTreeQueryService;
+import com.example.aw.collect.stream.ThoughtStreamHub;
 import com.example.aw.gateway.HermesGatewayClient;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
+import org.springframework.http.MediaType;
 import org.springframework.http.ResponseEntity;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
@@ -18,6 +20,8 @@ import org.springframework.web.bind.annotation.RequestBody;
 import org.springframework.web.bind.annotation.RequestMapping;
 import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
+import org.springframework.web.server.ResponseStatusException;
+import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
@@ -51,6 +55,9 @@ public class CollectApiController {
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
+
+    @Autowired
+    private ThoughtStreamHub thoughtStreamHub;
 
     /**
      * 新对话：向 Hermes 申请 session_id。
@@ -188,7 +195,22 @@ public class CollectApiController {
         body.put("startedAt", task.get("started_at"));
         body.put("finishedAt", task.get("finished_at"));
         body.put("treeUrl", "/api/tasks/" + taskId + "/tree");
+        body.put("thoughtsStreamUrl", "/api/tasks/" + taskId + "/thoughts/stream");
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 模型思考过程 SSE 中继（Java 转发 Gateway 的 assistant.delta / tool.* 等）。
+     * <p>
+     * 前端：EventSource 或 fetch 流式读；发起任务后尽快连接，可回放近期缓冲。
+     */
+    @GetMapping(value = "/tasks/{taskId}/thoughts/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
+    public SseEmitter thoughtStream(@PathVariable String taskId) {
+        Map<String, Object> task = collectTaskMapper.selectTaskById(taskId);
+        if (task == null || task.isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task_not_found");
+        }
+        return thoughtStreamHub.subscribe(taskId);
     }
 
     /**

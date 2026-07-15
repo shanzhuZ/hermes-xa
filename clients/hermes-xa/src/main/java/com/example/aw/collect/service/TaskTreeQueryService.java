@@ -220,6 +220,8 @@ public class TaskTreeQueryService {
         node.put("startedAt", stringVal(step.get("started_at")));
         node.put("finishedAt", stringVal(step.get("finished_at")));
         node.put("detailRef", "/api/tasks/" + taskId + "/nodes/" + stepKey);
+        // 路线 C 预留：节点下 live 摘要，P0 由前端本地算，后端先返 null
+        node.put("thoughtPreview", null);
         if (toolNames != null && !toolNames.isEmpty()) {
             node.put("toolNames", toolNames);
         }

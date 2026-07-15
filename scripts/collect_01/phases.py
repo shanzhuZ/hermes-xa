@@ -16,6 +16,9 @@ PHASE_DONE = "done"
 
 TASK_TYPE = "account_collect"
 
+# 走独立 MCP 的种子平台（其余走 Apify Agent）
+_MCP_SEED_PLATFORMS = frozenset({"twitter", "weibo", "youtube", "bilibili"})
+
 
 @dataclass(frozen=True)
 class StepDef:
@@ -26,18 +29,6 @@ class StepDef:
     parent_step_key: Optional[str] = None
     current_phase: Optional[str] = None
 
-
-# 固定步骤树（步骤六的子步骤按平台动态追加）
-ROOT_STEPS: Tuple[StepDef, ...] = (
-    StepDef("step1_seed", "步骤一：种子账号资料采集", 10, "1", None, PHASE_RESOLVE_SEED),
-    StepDef("step2_cross_platform", "步骤二：跨平台账号收集", 20, "2", None, PHASE_CROSS_PLATFORM),
-    StepDef("step3_profiles", "步骤三：候选主页采集", 30, "3", None, PHASE_CROSS_PLATFORM),
-    StepDef("step3_streams", "步骤四：文本流与图片流拆分", 40, "4", None, PHASE_STREAM_GEN),
-    StepDef("step4_text_compare", "步骤四：文本流对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
-    StepDef("step4_image_compare", "步骤四：图片流对比", 42, "4.2", None, PHASE_STREAM_VALIDATE),
-    StepDef("step5_validated", "步骤五：可信账号收敛", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
-    StepDef("step6_posts", "步骤六：分平台发文采集", 60, "6", None, PHASE_COLLECT),
-)
 
 PLATFORM_LABELS: Dict[str, str] = {
     "twitter": "Twitter",
@@ -62,6 +53,33 @@ PLATFORM_STEP_INDEX: Dict[str, int] = {
     "github": 8,
     "bilibili": 9,
 }
+
+
+def seed_agent_title(platform: Optional[str]) -> str:
+    """步骤一展示名：按种子平台显示 MCP / Apify Agent。"""
+    plat = (platform or "twitter").lower().strip()
+    label = PLATFORM_LABELS.get(plat, plat)
+    if plat in _MCP_SEED_PLATFORMS:
+        return f"{label} MCP Agent 采集"
+    return f"Apify Agent · {label} 采集"
+
+
+def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
+    """完整步骤树（步骤六子节点另按平台动态追加）。"""
+    return (
+        StepDef("step1_seed", seed_agent_title(platform), 10, "1", None, PHASE_RESOLVE_SEED),
+        StepDef("step2_cross_platform", "Maigret Agent 跨平台收集", 20, "2", None, PHASE_CROSS_PLATFORM),
+        StepDef("step3_profiles", "MCP/Apify Agent 候选主页采集", 30, "3", None, PHASE_CROSS_PLATFORM),
+        StepDef("step3_streams", "信息核验流 Agent 拆分", 40, "4", None, PHASE_STREAM_GEN),
+        StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
+        StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", None, PHASE_STREAM_VALIDATE),
+        StepDef("step5_validated", "可信账号核验 Agent", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
+        StepDef("step6_posts", "跨平台发文采集 Agent", 60, "6", None, PHASE_COLLECT),
+    )
+
+
+# 兼容旧引用：默认按 twitter 种子生成标题
+ROOT_STEPS: Tuple[StepDef, ...] = root_steps_for_platform("twitter")
 
 # 工具 → 触发的步骤（用于自动更新 running/completed）
 TOOL_PRIMARY_STEP: Dict[str, str] = {
@@ -116,7 +134,7 @@ def post_step_key(platform: str) -> str:
 
 def post_step_title(platform: str) -> str:
     label = PLATFORM_LABELS.get(platform, platform)
-    return f"{label} 发文采集"
+    return f"{label} Agent 发文采集"
 
 
 def post_step_index(platform: str) -> int:
@@ -135,10 +153,11 @@ def root_step_keys() -> List[str]:
     return [s.step_key for s in ROOT_STEPS]
 
 
-def initial_steps(cross_platform: bool) -> List[StepDef]:
+def initial_steps(cross_platform: bool, platform: Optional[str] = None) -> List[StepDef]:
+    steps = root_steps_for_platform(platform)
     if cross_platform:
-        return list(ROOT_STEPS)
-    return [s for s in ROOT_STEPS if s.step_key in {"step1_seed", "step6_posts"}]
+        return list(steps)
+    return [s for s in steps if s.step_key in {"step1_seed", "step6_posts"}]
 
 
 def tool_step_key(tool_name: str) -> str:

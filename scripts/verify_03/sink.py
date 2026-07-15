@@ -165,13 +165,25 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
         logger.warning("%s", exc)
 
 
-def _enter_step4(store: TaskStore, task_id: str) -> None:
+def _enter_style_analysis(store: TaskStore, task_id: str) -> None:
+    """主页+发文采集完成后，仅启动步骤三（风格归纳），禁止点亮步骤四。"""
+    # Agent 已跳进风格/核对阶段但某些平台从未开跑时，先 skip 打断死锁
+    if get_step_status(task_id, "step3_profiles") == "running":
+        store.close_unattempted_platforms_and_reconcile(task_id)
     gate = can_advance_to_step4(task_id)
     if not gate.get("ok"):
-        logger.info("进入 step4 跳过 task=%s: %s", task_id, gate.get("message"))
+        logger.info("进入风格归纳跳过 task=%s: %s", task_id, gate.get("message"))
         return
     if get_step_status(task_id, "step3_streams") == "pending":
-        store.set_step_status(task_id, "step3_streams", "running", message="文本/图片流分析中")
+        store.set_step_status(task_id, "step3_streams", "running", message="发文风格与领域归纳中…")
+
+
+def _enter_step4_compare(store: TaskStore, task_id: str) -> None:
+    """风格归纳（step3_streams）完成后，才启动文本/图片流对比。"""
+    gate = can_advance_to_step45(task_id)
+    if not gate.get("ok"):
+        logger.info("进入 step4 对比跳过 task=%s: %s", task_id, gate.get("message"))
+        return
     if get_step_status(task_id, "step4_text_compare") == "pending":
         store.set_step_status(task_id, "step4_text_compare", "running", message="文本流比对中")
     if get_step_status(task_id, "step4_image_compare") == "pending":
@@ -182,6 +194,7 @@ def _maybe_advance_step45(store: TaskStore, task_id: str) -> None:
     gate = can_advance_to_step45(task_id)
     if not gate.get("ok"):
         return
+    _enter_step4_compare(store, task_id)
     if get_step_status(task_id, "step4_text_compare") != "completed":
         store.run_text_compare(task_id)
     n_img = 0
@@ -207,11 +220,11 @@ def _on_step4_tool_after(
     *,
     success: bool,
 ) -> None:
-    # vision 回写图片流不受 step3 门禁影响（Agent 常提前调 vision）
+    # vision 可提前回写图片流；步骤四节点状态必须等风格归纳完成
     if tool_name in _STEP4_TOOLS:
         store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success)
 
-    gate = can_advance_to_step4(task_id)
+    gate = can_advance_to_step45(task_id)
     if not gate.get("ok"):
         return
     from verify_03.gates import count_image_streams, count_image_streams_processed
@@ -232,8 +245,7 @@ def _on_step4_tool_after(
     if get_step_status(task_id, "step4_image_compare") != "completed":
         msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
         store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
-    if can_advance_to_step45(task_id).get("ok"):
-        _maybe_advance_step45(store, task_id)
+    _maybe_advance_step45(store, task_id)
 
 
 def _try_parse_step1(store: TaskStore, task_id: str, assistant: str, user_message: str) -> None:
@@ -307,7 +319,13 @@ def _try_style_analysis(store: TaskStore, task_id: str, assistant: str) -> None:
         return
     text = assistant or ""
     if "步骤4" in text or "步骤四" in text or "发文观点" in text or "发文风格" in text:
+        if get_step_status(task_id, "step3_profiles") == "running":
+            store.close_unattempted_platforms_and_reconcile(task_id)
         store.save_style_analysis(task_id, text)
+        # 风格归纳收口后立刻推进步骤四，避免模型先调 vision 抢跑对比节点
+        if get_step_status(task_id, "step3_streams") == "completed":
+            _enter_step4_compare(store, task_id)
+            _maybe_advance_step45(store, task_id)
 
 
 def _infer_platform(
@@ -481,7 +499,12 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             store.set_step_status(task_id, collect_step, "running", message=f"{platform} {kind}采集中…")
 
     if tool_name in _STEP4_TOOLS:
-        _enter_step4(store, task_id)
+        # 主页已齐时可亮风格归纳；文本/图片对比须等风格归纳完成（禁止抢跑）
+        # Vision/OCR 出现 = Agent 已离开「采集排队」，对从未开跑的平台子节点 fail-forward
+        store.close_unattempted_platforms_and_reconcile(task_id)
+        _enter_style_analysis(store, task_id)
+        if can_advance_to_step45(task_id).get("ok"):
+            _enter_step4_compare(store, task_id)
 
     result = ex.get("result")
     if isinstance(result, (dict, list)):

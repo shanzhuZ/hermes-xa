@@ -1,4 +1,4 @@
-"""04 账号画像写报 — 深度模式 11 步定义。"""
+"""04 账号画像写报 — 深度模式 11 步定义（Agent 风格标题）。"""
 
 from __future__ import annotations
 
@@ -20,6 +20,8 @@ PHASE_DONE = "done"
 TASK_TYPE = "account_report"
 SKILL_NAME = "account-intelligence-report"
 
+_MCP_SEED_PLATFORMS = frozenset({"twitter", "weibo", "youtube", "bilibili"})
+
 ANALYSIS_STEP_KEYS = (
     "step8_img_analysis",
     "step9_context_views",
@@ -39,20 +41,6 @@ class StepDef:
     parent_step_key: Optional[str] = None
     current_phase: Optional[str] = None
 
-
-ROOT_STEPS: Tuple[StepDef, ...] = (
-    StepDef("step1_seed", "步骤一：种子 profile", 10, "1", None, PHASE_SEED),
-    StepDef("step2_maigret", "步骤二：Maigret 跨平台发现", 20, "2", None, PHASE_DISCOVERY),
-    StepDef("step3_web_search", "步骤三：网页检索候选", 30, "3", None, PHASE_DISCOVERY),
-    StepDef("step4_profiles", "步骤四：候选主页采集", 40, "4", None, PHASE_PROFILES),
-    StepDef("step5_streams", "步骤五：文本/图片流核查", 50, "5", None, PHASE_STREAM_VALIDATE),
-    StepDef("step6_validated", "步骤六：相似账号认定", 60, "6", None, PHASE_VALIDATED),
-    StepDef("step7_posts", "步骤七：发文采集", 70, "7", None, PHASE_POSTS),
-    StepDef("step8_img_analysis", "步骤八：图片流分析", 80, "8", None, PHASE_ANALYSIS),
-    StepDef("step9_context_views", "步骤九：观点与涉华分析", 90, "9", None, PHASE_ANALYSIS),
-    StepDef("step10_context_pii", "步骤十：PII 与圈层分析", 100, "10", None, PHASE_ANALYSIS),
-    StepDef("step11_report", "步骤十一：画像报告", 110, "11", None, PHASE_REPORT),
-)
 
 PLATFORM_LABELS: Dict[str, str] = {
     "twitter": "Twitter",
@@ -83,6 +71,36 @@ PLATFORM_STEP_INDEX: Dict[str, int] = {
     "vk": 11,
     "bilibili": 12,
 }
+
+
+def seed_agent_title(platform: Optional[str]) -> str:
+    """步骤一种子采集展示名（与 01/02 一致）。"""
+    plat = (platform or "twitter").lower().strip()
+    label = PLATFORM_LABELS.get(plat, plat)
+    if plat in _MCP_SEED_PLATFORMS:
+        return f"{label} MCP Agent 采集"
+    return f"Apify Agent · {label} 采集"
+
+
+def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
+    """完整 11 步根节点（平台子节点另按候选动态追加）。"""
+    return (
+        StepDef("step1_seed", seed_agent_title(platform), 10, "1", None, PHASE_SEED),
+        StepDef("step2_maigret", "Maigret Agent 跨平台收集", 20, "2", None, PHASE_DISCOVERY),
+        StepDef("step3_web_search", "网页检索 Agent 候选发现", 30, "3", None, PHASE_DISCOVERY),
+        StepDef("step4_profiles", "MCP/Apify Agent 候选主页采集", 40, "4", None, PHASE_PROFILES),
+        StepDef("step5_streams", "信息核验流 Agent 核查", 50, "5", None, PHASE_STREAM_VALIDATE),
+        StepDef("step6_validated", "相似账号认定 Agent", 60, "6", None, PHASE_VALIDATED),
+        StepDef("step7_posts", "跨平台发文采集 Agent", 70, "7", None, PHASE_POSTS),
+        StepDef("step8_img_analysis", "图片流 Agent 分析", 80, "8", None, PHASE_ANALYSIS),
+        StepDef("step9_context_views", "观点与涉华分析 Agent", 90, "9", None, PHASE_ANALYSIS),
+        StepDef("step10_context_pii", "PII 与圈层分析 Agent", 100, "10", None, PHASE_ANALYSIS),
+        StepDef("step11_report", "画像报告 Agent", 110, "11", None, PHASE_REPORT),
+    )
+
+
+# 兼容旧引用：默认按 twitter 种子生成标题
+ROOT_STEPS: Tuple[StepDef, ...] = root_steps_for_platform("twitter")
 
 TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_twitter_get_user_info": "step1_seed",
@@ -236,15 +254,15 @@ def post_platform_step_key(platform: str) -> str:
 def profile_step_title(platform: str, handle: str = "") -> str:
     label = PLATFORM_LABELS.get(platform, platform)
     if handle:
-        return f"{label} 主页采集 · @{handle.lstrip('@')}"
-    return f"{label} 主页采集"
+        return f"{label} Agent 主页采集 · @{handle.lstrip('@')}"
+    return f"{label} Agent 主页采集"
 
 
 def post_step_title(platform: str, handle: str = "") -> str:
     label = PLATFORM_LABELS.get(platform, platform)
     if handle:
-        return f"{label} 发文采集 · @{handle.lstrip('@')}"
-    return f"{label} 发文采集"
+        return f"{label} Agent 发文采集 · @{handle.lstrip('@')}"
+    return f"{label} Agent 发文采集"
 
 
 def profile_step_order(platform: str) -> int:
@@ -287,8 +305,8 @@ def root_step_keys() -> List[str]:
     return [s.step_key for s in ROOT_STEPS]
 
 
-def initial_steps() -> List[StepDef]:
-    return list(ROOT_STEPS)
+def initial_steps(platform: Optional[str] = None) -> List[StepDef]:
+    return list(root_steps_for_platform(platform))
 
 
 def tool_step_key(tool_name: str) -> str:

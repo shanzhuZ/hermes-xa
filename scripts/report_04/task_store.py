@@ -25,7 +25,6 @@ from report_04.phases import (
     PHASE_VALIDATED,
     POST_PARENT_STEP_KEY,
     PROFILE_PARENT_STEP_KEY,
-    ROOT_STEPS,
     TASK_TYPE,
     PLATFORM_LABELS,
     initial_steps,
@@ -37,6 +36,7 @@ from report_04.phases import (
     profile_step_node,
     profile_step_order,
     profile_step_title,
+    root_steps_for_platform,
     step_phase,
     is_collectible_platform,
 )
@@ -302,7 +302,7 @@ class TaskStore:
         seed = _parse_seed(user_message)
         if cross_platform is None:
             cross_platform = 1
-        initial_phase_steps = initial_steps()
+        initial_phase_steps = initial_steps(seed.get("platform"))
         with db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -361,7 +361,7 @@ class TaskStore:
         new_id = task_id or str(uuid.uuid4())
         seed = _parse_seed(user_message)
         cross_platform = 1
-        initial_phase_steps = initial_steps()
+        initial_phase_steps = initial_steps(seed.get("platform"))
         with db.transaction() as conn:
             with conn.cursor() as cur:
                 cur.execute(
@@ -559,8 +559,16 @@ class TaskStore:
             updated += close_collect_parent_if_ready(self, task_id, parent, msg_done)
         return updated
 
+    def _seed_platform(self, task_id: str) -> str:
+        task = self.get_task(task_id) or {}
+        try:
+            seed = json.loads(task.get("seed_json") or "{}")
+        except json.JSONDecodeError:
+            seed = {}
+        return str((seed or {}).get("platform") or "twitter")
+
     def init_phase_steps(self, task_id: str) -> None:
-        for step in ROOT_STEPS:
+        for step in root_steps_for_platform(self._seed_platform(task_id)):
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
@@ -751,7 +759,7 @@ class TaskStore:
 
     def ensure_step_row(self, task_id: str, step_key: str) -> None:
         """旧任务可能缺少 step4_profiles 等新步骤行。"""
-        for step in ROOT_STEPS:
+        for step in root_steps_for_platform(self._seed_platform(task_id)):
             if step.step_key == step_key:
                 db.execute(
                     """

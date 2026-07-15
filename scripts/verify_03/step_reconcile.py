@@ -142,6 +142,168 @@ def _dataset_success_for_platform(task_id: str, platform: str) -> bool:
     return False
 
 
+def _has_profile_collect_attempt(task_id: str, platform: str) -> bool:
+    """该平台是否发起过正式主页采集（MCP / Apify Actor），不含 web_extract/browser。"""
+    tools: list = []
+    mcp = PROFILE_TOOL_BY_PLATFORM.get(platform)
+    if mcp:
+        tools.append(mcp)
+    apify = _PLATFORM_BY_APIFY_ACTOR.get(platform)
+    if apify:
+        tools.append(apify)
+    if not tools:
+        return False
+    placeholders = ",".join(["%s"] * len(tools))
+    row = db.fetch_one(
+        f"""
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name IN ({placeholders})
+        """,
+        (task_id, *tools),
+    )
+    return int((row or {}).get("c") or 0) > 0
+
+
+def _has_post_collect_attempt(task_id: str, platform: str) -> bool:
+    """该平台是否发起过正式发文采集（MCP 发文 / Apify Actor / dataset）。"""
+    tools: list = []
+    mcp = POST_TOOL_BY_PLATFORM.get(platform)
+    if mcp:
+        tools.append(mcp)
+    # weibo 还有 get_user_feeds
+    if platform == "weibo":
+        tools.append("mcp_weibo_get_user_feeds")
+    apify = _PLATFORM_BY_APIFY_ACTOR.get(platform)
+    if apify:
+        tools.append(apify)
+    if tools:
+        placeholders = ",".join(["%s"] * len(tools))
+        row = db.fetch_one(
+            f"""
+            SELECT COUNT(*) AS c FROM hermes_tool_outputs
+            WHERE task_id=%s AND tool_name IN ({placeholders})
+            """,
+            (task_id, *tools),
+        )
+        if int((row or {}).get("c") or 0) > 0:
+            return True
+    return _dataset_success_for_platform(task_id, platform)
+
+
+def _web_bypass_for_platform(task_id: str, platform: str) -> bool:
+    """Agent 是否用 web_search/web_extract/browser 等绕行该平台（非 MCP/Apify）。"""
+    hints = {
+        "youtube": ("youtube.com", "youtu.be"),
+        "twitter": ("twitter.com", "x.com"),
+        "facebook": ("facebook.com", "fb.com"),
+        "instagram": ("instagram.com",),
+        "telegram": ("t.me/", "telegram.me", "telegram.org"),
+    }.get(platform, ())
+    if not hints:
+        return False
+    rows = db.fetch_all(
+        """
+        SELECT tool_args FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name IN (
+          'web_search', 'web_extract',
+          'browser_navigate', 'browser_snapshot', 'browser_console',
+          'browser_get_images', 'browser_click', 'browser_type', 'browser_back',
+          'mcp_firecrawl_firecrawl_search', 'mcp_firecrawl_firecrawl_scrape'
+        )
+        """,
+        (task_id,),
+    )
+    for row in rows:
+        blob = str(row.get("tool_args") or "").lower()
+        if any(h in blob for h in hints):
+            return True
+    return False
+
+
+def _all_other_children_terminal(task_id: str, skip_step_key: str) -> bool:
+    """除 skip_step_key 外，其余 step3 子节点是否均已终态。"""
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    for row in rows:
+        sk = str(row.get("step_key") or "")
+        if sk == skip_step_key:
+            continue
+        st = str(row.get("status") or "pending")
+        if st in {"pending", "running"}:
+            return False
+    return True
+
+
+def auto_skip_unattempted_collect_children(store: Any, task_id: str, *, aggressive: bool = False) -> int:
+    """
+    核心防卡死：步骤一预建的平台子节点若从未调用正式采集工具，会永远 pending，
+    从而堵住父步骤 step3_profiles。
+
+    aggressive=False：仅当同批其它平台子节点均已终态，或检测到 web/浏览器绕行时 skip。
+    aggressive=True：风格/Vision/会话收口时，对所有未开跑的 pending 直接 skip。
+    """
+    children = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    if not children:
+        return 0
+    updated = 0
+    for row in children:
+        step_key = str(row.get("step_key") or "")
+        cur = str(row.get("status") or "pending")
+        if cur != "pending":
+            continue
+        if step_key.startswith("step3_profile_"):
+            platform = step_key.replace("step3_profile_", "", 1)
+            if _has_profile_collect_attempt(task_id, platform):
+                continue
+            web_bypass = _web_bypass_for_platform(task_id, platform)
+            if not aggressive and not web_bypass and not _all_other_children_terminal(task_id, step_key):
+                continue
+            msg = (
+                f"{platform} Agent 使用 web/浏览器绕行且未走 MCP，已自动跳过"
+                if web_bypass
+                else f"{platform} 未发起 MCP/Apify 主页采集，已自动跳过"
+            )
+            store.set_step_status(task_id, step_key, "skipped", message=msg)
+            updated += 1
+            continue
+        if step_key.startswith("step3_post_"):
+            platform = step_key.replace("step3_post_", "", 1)
+            if _has_post_collect_attempt(task_id, platform):
+                continue
+            prof_key = profile_platform_step_key(platform)
+            prof_st = get_step_status(task_id, prof_key) or "pending"
+            web_bypass = _web_bypass_for_platform(task_id, platform)
+            if not aggressive and not web_bypass and not _all_other_children_terminal(task_id, step_key):
+                continue
+            if prof_st in {"failed", "skipped"}:
+                msg = f"{platform} 主页未成功，跳过发文"
+            elif web_bypass:
+                msg = f"{platform} Agent 使用 web/浏览器绕行且未走 MCP 发文，已自动跳过"
+            else:
+                msg = f"{platform} 未发起 MCP/Apify 发文采集，已自动跳过"
+            store.set_step_status(task_id, step_key, "skipped", message=msg)
+            updated += 1
+    if updated:
+        logger.info(
+            "自动跳过未发起采集的平台子步骤 task=%s count=%d aggressive=%s",
+            task_id,
+            updated,
+            aggressive,
+        )
+    return updated
+
+
 def _reconcile_vision_streams_from_tools(store: Any, task_id: str) -> int:
     """将已成功 vision 工具回写到仍 pending 的图片流（修复提前调 vision 未落库）。"""
     import json
@@ -325,6 +487,10 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     reconcile_step3_collect_child_steps(store, task_id)
     s3p = get_step_status(task_id, "step3_profiles")
     if s3p in {"pending", "running"}:
+        # 会话结束：未发起正式采集的平台子节点不再空等
+        from verify_03.step_reconcile import auto_skip_unattempted_collect_children
+
+        auto_skip_unattempted_collect_children(store, task_id, aggressive=True)
         store.reconcile_profile_platform_steps(task_id)
 
     # vision 回写不依赖 step3 完成

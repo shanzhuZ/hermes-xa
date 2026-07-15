@@ -1,4 +1,4 @@
-"""03 账号核查 — 深度模式步骤定义。"""
+"""03 账号核查 — 深度模式步骤定义（Agent 风格标题）。"""
 
 from __future__ import annotations
 
@@ -27,12 +27,12 @@ class StepDef:
 
 
 ROOT_STEPS: Tuple[StepDef, ...] = (
-    StepDef("step1_input_accounts", "步骤一：确认种子账号", 10, "1", None, PHASE_INPUT_ACCOUNTS),
-    StepDef("step3_profiles", "步骤二：各平台主页与发文采集", 30, "2", None, PHASE_CROSS_PLATFORM),
-    StepDef("step3_streams", "步骤三：发文风格与领域归纳", 40, "3", None, PHASE_STREAM_GEN),
-    StepDef("step4_text_compare", "步骤四：文本流对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
-    StepDef("step4_image_compare", "步骤四：图片流对比", 42, "4.2", None, PHASE_STREAM_VALIDATE),
-    StepDef("step5_validated", "步骤五：账号核验结果", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
+    StepDef("step1_input_accounts", "种子账号确认 Agent", 10, "1", None, PHASE_INPUT_ACCOUNTS),
+    StepDef("step3_profiles", "MCP/Apify Agent 主页与发文采集", 30, "2", None, PHASE_CROSS_PLATFORM),
+    StepDef("step3_streams", "发文风格与领域归纳 Agent", 40, "3", None, PHASE_STREAM_GEN),
+    StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
+    StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", None, PHASE_STREAM_VALIDATE),
+    StepDef("step5_validated", "账号核验 Agent", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
 )
 
 PLATFORM_LABELS: Dict[str, str] = {
@@ -139,12 +139,12 @@ def post_platform_step_key(platform: str) -> str:
 
 def profile_step_title(platform: str) -> str:
     label = PLATFORM_LABELS.get(platform, platform)
-    return f"{label} 主页采集"
+    return f"{label} Agent 主页采集"
 
 
 def post_step_title(platform: str) -> str:
     label = PLATFORM_LABELS.get(platform, platform)
-    return f"{label} 发文采集"
+    return f"{label} Agent 发文采集"
 
 
 def profile_step_order(platform: str) -> int:

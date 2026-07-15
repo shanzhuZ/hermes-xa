@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-verification
 description: "账号核查，支持多平台多个种子账号，直接对多个种子账号采集主页与发文数据，通过文字流与图片流多维度比对验证账号关联性"
-version: 1.15.0
+version: 1.16.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -20,9 +20,9 @@ metadata:
 ## 任务执行步骤（必须按顺序，不可跳跃或提前输出报告）
 **步骤1**：接收并确认用户输入的多个种子账号（支持多平台多个，格式：平台+用户名），清晰列出所有种子账号。
 
-**步骤2**：对所有账号采集主页信息（优先使用MCP，没有MCP则使用Apify）。失败直接跳过该账号，不尝试其他工具。每个账号必须返回输出呈现结果。禁止调用其他工具
+**步骤2**：对所有账号采集主页信息（**仅**使用 MCP 或 Apify；见下方「步骤2/3 允许工具」）。失败直接跳过该账号，**禁止**换用 web/浏览器等其它工具。每个账号必须返回输出呈现结果。
 
-**步骤3**：对所有账号采集对应平台的发文信息（优先使用MCP，没有MCP则使用Apify）。必须采集执行北京时间当前向前31天内的全部发文内容,每个账号必须返回输出呈现结果。禁止调用其他工具
+**步骤3**：对所有账号采集对应平台的发文信息（**仅**使用 MCP 或 Apify）。必须采集执行北京时间当前向前31天内的全部发文内容。失败直接跳过，**禁止**换用 web/浏览器。每个账号必须返回输出呈现结果。
 
 **步骤4**：结合每个账号的发文内容，分析归纳出盖章好的发文风格 及 涉及领域。并配有相应发文作为作证。每个账号必须返回输出呈现结果。
 
@@ -31,6 +31,27 @@ metadata:
 - **图片流分析**：使用 OCR 对比头像；使用多模态 vision 对比头像 + 发文中图片内容相似度。
 
 **步骤6**：结合文字流与图片流分析结果，筛选高相似匹配的候选账号。对每一个候选账号与每个种子账号进行匹配验证，详细说明匹配原因（必须展示每种分析流的结果）。
+
+## 步骤2 / 步骤3 允许工具（白名单）
+按平台**只**能调用下列工具；其它一律禁止。
+
+| 平台 | 步骤2 主页 | 步骤3 发文 |
+|------|------------|------------|
+| twitter | `mcp_twitter_get_user_info` | `mcp_twitter_get_user_tweets` |
+| weibo | `mcp_weibo_get_profile` | `mcp_weibo_get_feeds` / `mcp_weibo_get_user_feeds` |
+| youtube | `mcp_youtube_get_channel_stats`（**channelId 须 UC 开头**，禁止 @handle） | `mcp_youtube_analyze_channel_videos` |
+| bilibili | `mcp_bilibili_get_user_info` | （无 MCP 发文则 Apify 或跳过） |
+| instagram / tiktok / telegram / facebook / github | Apify Actor → `mcp_apify_get_actor_run` → `mcp_apify_get_dataset_items` | 同上 Apify 三轮 |
+
+## 步骤2 / 步骤3 严禁工具（黑名单）
+以下工具在步骤2、步骤3 **一律禁止**，尤其 **禁止用它们采集 YouTube / 任何平台主页或发文**：
+- ❌ `web_search`、`web_extract`
+- ❌ 全部 `browser_*`（含 `browser_navigate`、`browser_snapshot`、`browser_console`、`browser_get_images`、`browser_click`、`browser_type`、`browser_back` 等）
+- ❌ `mcp_firecrawl_*`、任意网页抓取/搜索类工具
+- ❌ `vision_analyze` / `mcp_vision_analyze` / `mcp_ocr_*`（仅步骤5 可用）
+- ❌ 用 Twitter 工具去「顺便查 YouTube」——YouTube 必须单独调用 `mcp_youtube_*`
+
+**YouTube 特别规则**：不得用 `web_search site:youtube.com` 或 `web_extract https://youtube.com/@xxx` 代替 MCP。无 channelId 时先 `mcp_youtube_get_channel_stats` 用正确参数重试一次；仍失败则**跳过 YouTube**，进入下一平台，禁止绕行。
 
 ## 强制要求
 - 坚决按步骤顺序执行，不可跳跃!
@@ -71,6 +92,7 @@ metadata:
 
 ## 禁止事项
 - ❌ 任何综合画像、传记、主题归纳、近期推文总结。
+- ❌ 步骤2/3 使用 web_search、web_extract、browser_* 等黑名单工具。
 - ❌ 额外工具调用超出硬顺序步骤。
 - ❌ 在步骤 1-6 中输出报告格式「一、」「二、」「三、」。
 - ❌ 任何收尾引导语、扩展建议或无关内容。

@@ -6,6 +6,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Component;
 
 import com.example.aw.collect.mapper.CollectTaskMapper;
+import com.example.aw.collect.stream.ThoughtStreamHub;
 
 import java.io.BufferedReader;
 import java.io.InputStream;
@@ -14,6 +15,8 @@ import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.LinkedHashMap;
+import java.util.Map;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
 import java.util.regex.Matcher;
@@ -21,6 +24,8 @@ import java.util.regex.Pattern;
 
 /**
  * 调用 Hermes Gateway（建会话、chat/stream），不写业务库。
+ * <p>
+ * 消费 Gateway SSE 时同步转发到 {@link ThoughtStreamHub}，供前端中继订阅。
  */
 @Component
 public class HermesGatewayClient {
@@ -35,6 +40,9 @@ public class HermesGatewayClient {
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
+
+    @Autowired
+    private ThoughtStreamHub thoughtStreamHub;
 
     /**
      * 向 Gateway 申请一个新的 Hermes 会话 ID（用户点「新对话」时调用）。
@@ -74,10 +82,21 @@ public class HermesGatewayClient {
      */
     public void submitCollectAsync(final String sessionId, final String taskId, final String userMessage)
             throws Exception {
+        thoughtStreamHub.open(taskId);
+        Map<String, Object> started = new LinkedHashMap<String, Object>();
+        started.put("taskId", taskId);
+        started.put("sessionId", sessionId);
+        thoughtStreamHub.publish(taskId, "run.started", started);
+
         final HttpURLConnection conn = openStreamChat(sessionId, taskId, userMessage);
         int code = conn.getResponseCode();
         if (code < 200 || code >= 300) {
             String err = readAll(conn.getErrorStream());
+            Map<String, Object> failed = new LinkedHashMap<String, Object>();
+            failed.put("content", err);
+            failed.put("success", Boolean.FALSE);
+            thoughtStreamHub.publish(taskId, "run.failed", failed);
+            thoughtStreamHub.complete(taskId);
             throw new RuntimeException("chat/stream 失败, httpCode=" + code + " " + err);
         }
         executor.submit(new Runnable() {
@@ -87,6 +106,15 @@ public class HermesGatewayClient {
                     drainStream(conn, taskId);
                 } catch (Exception e) {
                     log.error("消费 Gateway SSE 失败 taskId={}", taskId, e);
+                    Map<String, Object> failed = new LinkedHashMap<String, Object>();
+                    failed.put("content", truncateErr(e.getMessage()));
+                    failed.put("success", Boolean.FALSE);
+                    try {
+                        thoughtStreamHub.publish(taskId, "run.failed", failed);
+                        thoughtStreamHub.complete(taskId);
+                    } catch (Exception ignore) {
+                        // ignore
+                    }
                     collectTaskMapper.markTaskFailed(taskId, truncateErr(e.getMessage()));
                 }
             }
@@ -118,31 +146,43 @@ public class HermesGatewayClient {
     }
 
     /**
-     * 后台读完 SSE 事件流；遇到 event:done 结束。
+     * 后台读完 SSE 事件流；转发到思考中继；遇到 event:done 结束。
      */
     private void drainStream(HttpURLConnection conn, String taskId) throws Exception {
         InputStream in = conn.getInputStream();
         if (in == null) {
+            thoughtStreamHub.complete(taskId);
             return;
         }
         BufferedReader reader = new BufferedReader(new InputStreamReader(in, StandardCharsets.UTF_8));
         String eventName = "";
         String line;
-        while ((line = reader.readLine()) != null) {
-            if (line.startsWith("event:")) {
-                eventName = line.substring(6).trim();
-            } else if (line.startsWith("data:") && eventName.length() > 0) {
-                String data = line.substring(5).trim();
-                if (data.length() > 200) {
-                    data = data.substring(0, 200);
-                }
-                log.debug("[gateway] task={} event={} data={}", taskId, eventName, data);
-                if ("done".equals(eventName)) {
-                    break;
+        try {
+            while ((line = reader.readLine()) != null) {
+                if (line.startsWith("event:")) {
+                    eventName = line.substring(6).trim();
+                } else if (line.startsWith("data:") && eventName.length() > 0) {
+                    String data = line.substring(5).trim();
+                    String logData = data.length() > 200 ? data.substring(0, 200) : data;
+                    log.debug("[gateway] task={} event={} data={}", taskId, eventName, logData);
+                    thoughtStreamHub.publishGatewayEvent(taskId, eventName, data);
+                    if ("done".equals(eventName)) {
+                        break;
+                    }
+                    eventName = "";
+                } else if (line.isEmpty()) {
+                    eventName = "";
                 }
             }
+        } finally {
+            try {
+                reader.close();
+            } catch (Exception ignore) {
+                // ignore
+            }
+            // publishGatewayEvent 在终端事件时已 complete；此处兜底
+            thoughtStreamHub.complete(taskId);
         }
-        reader.close();
     }
 
     private static String readAll(InputStream in) throws Exception {

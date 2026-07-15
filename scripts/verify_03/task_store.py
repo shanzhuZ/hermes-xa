@@ -328,8 +328,13 @@ class TaskStore:
 
     def reconcile_profile_platform_steps(self, task_id: str) -> int:
         """根据库表事实校正子步骤，并在全部终态后收口 step3_profiles。"""
-        from verify_03.step_reconcile import reconcile_step3_collect_child_steps
+        from verify_03.step_reconcile import (
+            auto_skip_unattempted_collect_children,
+            reconcile_step3_collect_child_steps,
+        )
 
+        # 其它平台已终态时，跳过从未开跑 MCP/Apify 的 pending（含 YouTube 被 web 绕行）
+        auto_skip_unattempted_collect_children(self, task_id, aggressive=False)
         reconcile_step3_collect_child_steps(self, task_id)
         rows = db.fetch_all(
             """
@@ -361,6 +366,14 @@ class TaskStore:
                 message="待发博文风格与领域归纳…",
             )
         return updated
+
+    def close_unattempted_platforms_and_reconcile(self, task_id: str) -> int:
+        """跳过从未调用正式采集工具的 pending 平台子节点，并尝试收口父步骤。"""
+        from verify_03.step_reconcile import auto_skip_unattempted_collect_children
+
+        n = auto_skip_unattempted_collect_children(self, task_id, aggressive=True)
+        n += self.reconcile_profile_platform_steps(task_id)
+        return n
 
     def _sync_input_accounts_display(self, task_id: str, accounts: List[Dict[str, Any]]) -> None:
         from collect_01.display_store import upsert_display_record
@@ -743,7 +756,13 @@ class TaskStore:
         )
 
     def run_text_compare(self, task_id: str) -> None:
-        """全种子互比：文本流规则比对。"""
+        """全种子互比：文本流规则比对。须等风格归纳（step3_streams）完成。"""
+        from verify_03.gates import can_advance_to_step45
+
+        gate = can_advance_to_step45(task_id)
+        if not gate.get("ok"):
+            logger.info("run_text_compare 跳过 task=%s: %s", task_id, gate.get("message"))
+            return
         if _step_status(task_id, "step4_text_compare") != "completed":
             self.set_step_status(task_id, "step4_text_compare", "running", message="文本流规则比对中")
 

@@ -76,15 +76,15 @@ public class VerifyTaskCreateService implements TaskCreateService {
     }
 
     /**
-     * 03 核查步骤树：step1_input_accounts 初始 running，其余 pending。
+     * 03 核查步骤树：step1_input_accounts 初始 running，其余 pending（Agent 风格标题）。
      */
     private void insertVerifySteps(String taskId) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_input_accounts", null, 10, "1", "步骤一：确认种子账号");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2", "步骤二：各平台主页与发文采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3", "步骤三：发文风格与领域归纳");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", null, 41, "4.1", "步骤四：文本流对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", null, 42, "4.2", "步骤四：图片流对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "步骤五：账号核验结果");
+        collectTaskMapper.insertPhaseStep(taskId, "step1_input_accounts", null, 10, "1", "种子账号确认 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2", "MCP/Apify Agent 主页与发文采集");
+        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3", "发文风格与领域归纳 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", null, 41, "4.1", "文本流 Agent 对比");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", null, 42, "4.2", "图片流 Agent 分析");
+        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "账号核验 Agent");
         collectTaskMapper.updateStepStatus(
                 taskId,
                 "step1_input_accounts",
