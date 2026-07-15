@@ -1,7 +1,10 @@
 model:
-  default: deepseek-v4-flash
-  provider: deepseek
-  api_mode: chat_completions
+  # 主对话/Agent：OpenAI GPT-5.4（相对 5.6 费用更低）
+  # GPT-5.x 在 /v1/chat/completions 上不支持「function tools + reasoning_effort」
+  # 必须用 Responses（Hermes: codex_responses）才能同时保留工具调用和思考强度
+  default: gpt-5.4
+  provider: openai-api
+  api_mode: codex_responses
 agent:
   max_turns: 150
   image_input_mode: auto
@@ -134,14 +137,15 @@ hooks:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
     timeout: 120
   post_tool_call:
+  # OCR/vision 已走快路径；其它 MCP 归一化仍可能较慢，给足超时避免尾部被掐
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    timeout: 180
   post_llm_call:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    timeout: 180
   on_session_end:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    timeout: 180
 hooks_auto_accept: true
 hooks_auto_accept: true
 hooks_auto_accept: true
@@ -243,8 +247,9 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+  # Pplx/Sonar 对 tools 数量有硬上限（约 ≤134）。trends_hub 占 ~21 个且账号任务不需要，先关掉。
   trends_hub:
-    enabled: true
+    enabled: false
     command: D:/environment/node/node_cache/mcp-trends-hub.cmd
     args: []
     supports_parallel_tool_calls: true
@@ -272,8 +277,9 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+  # Skill 已 forbid firecrawl；再占 ~20 个 tools，易触发 Perplexity invalid request，默认关掉。
   firecrawl:
-    enabled: true
+    enabled: false
     command: D:/environment/node/node_cache/firecrawl-mcp.cmd
     args: []
     env:
@@ -405,9 +411,20 @@ custom_providers:
         context_length: 1048576
       gemini-2.5-flash:
         context_length: 1048576
+  # Vision / OCR 用，密钥：PERPLEXITY_API_KEY
   - name: pplx
     base_url: https://api.perplexity.ai
     key_env: PERPLEXITY_API_KEY
+    api_mode: chat_completions
+    models:
+      sonar:
+        context_length: 128000
+      sonar-pro:
+        context_length: 200000
+  # 主 Agent 用，密钥：PERPLEXITY_AGENT_API_KEY（与 vision 分开）
+  - name: pplx-agent
+    base_url: https://api.perplexity.ai
+    key_env: PERPLEXITY_AGENT_API_KEY
     api_mode: chat_completions
     models:
       sonar:

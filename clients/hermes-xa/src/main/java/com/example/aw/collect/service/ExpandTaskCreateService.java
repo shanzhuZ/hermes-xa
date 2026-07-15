@@ -63,7 +63,9 @@ public class ExpandTaskCreateService implements TaskCreateService {
 
     private boolean isExpandIntent(String message) {
         Pattern p = Pattern.compile(
-                "(account-expansion|account-intelligence-expand|账号扩建|扩建.*?(推特|twitter|微博|weibo|@))",
+                "(account-expansion|account-intelligence-expand|账号扩建|"
+                        + "扩建.*?(推特|twitter|微博|weibo|youtube|bilibili|"
+                        + "instagram|tiktok|telegram|facebook|github|@))",
                 Pattern.CASE_INSENSITIVE);
         return p.matcher(message).find();
     }
@@ -71,7 +73,9 @@ public class ExpandTaskCreateService implements TaskCreateService {
     private Map<String, Object> buildSeedJson(String message) {
         Map<String, Object> seed = new HashMap<String, Object>();
         seed.put("platform", "twitter");
-        Pattern platformHint = Pattern.compile("(推特|twitter|微博|weibo|youtube|bilibili)", Pattern.CASE_INSENSITIVE);
+        Pattern platformHint = Pattern.compile(
+                "(推特|twitter|微博|weibo|youtube|bilibili|instagram|ins|tiktok|telegram|tg|facebook|fb|脸书|github)",
+                Pattern.CASE_INSENSITIVE);
         Matcher pm = platformHint.matcher(message);
         if (pm.find()) {
             String token = pm.group(1).toLowerCase();
@@ -81,6 +85,16 @@ public class ExpandTaskCreateService implements TaskCreateService {
                 seed.put("platform", "youtube");
             } else if ("bilibili".equals(token)) {
                 seed.put("platform", "bilibili");
+            } else if ("instagram".equals(token) || "ins".equals(token)) {
+                seed.put("platform", "instagram");
+            } else if ("tiktok".equals(token)) {
+                seed.put("platform", "tiktok");
+            } else if ("telegram".equals(token) || "tg".equals(token)) {
+                seed.put("platform", "telegram");
+            } else if ("facebook".equals(token) || "fb".equals(token) || "脸书".equals(token)) {
+                seed.put("platform", "facebook");
+            } else if ("github".equals(token)) {
+                seed.put("platform", "github");
             }
         }
         Matcher hm = Pattern.compile("@([A-Za-z0-9_\\.]+)").matcher(message);

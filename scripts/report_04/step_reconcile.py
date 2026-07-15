@@ -17,6 +17,7 @@ from report_04.gates import (
     can_advance_to_step7,
     can_run_step3_web_search,
     can_update_step4_children,
+    count_image_streams,
     discovery_steps_terminal,
     get_step_status,
     is_stream_compare_ready,
@@ -451,7 +452,7 @@ def _reconcile_vision_from_tools(store: Any, task_id: str) -> int:
 
 
 def reconcile_step1_from_twitter(store: Any, task_id: str) -> int:
-    """回放 Twitter 种子 profile 工具，补入库并完成步骤一。"""
+    """回放种子 profile 工具（MCP + Apify dataset），补入库并完成步骤一。"""
     if get_step_status(task_id, "step1_seed") in {"completed", "skipped", "failed"}:
         return 0
     task = store.get_task(task_id) or {}
@@ -459,28 +460,47 @@ def reconcile_step1_from_twitter(store: Any, task_id: str) -> int:
         return 0
     from collect_01.normalizers.base import normalize_mcp_tool_name
     from collect_01.normalizers.registry import dispatch
+    from collect_01.seed_platforms import (
+        APIFY_SEED_PLATFORM_TOOLS,
+        MCP_SEED_PLATFORM_TOOLS,
+        apify_seed_empty_ok,
+        is_apify_seed_platform,
+    )
 
+    try:
+        seed = json.loads(task.get("seed_json") or "{}")
+    except Exception:
+        seed = {}
+    seed_plat = str(seed.get("platform") or "twitter").lower()
+
+    mcp_tools = list(MCP_SEED_PLATFORM_TOOLS.values())
     rows = db.fetch_all(
         """
         SELECT id, tool_name, tool_output FROM hermes_tool_outputs
         WHERE task_id=%s AND status='success'
           AND (
-            tool_name IN ('mcp_twitter_get_user_info', 'mcp__twitter__get_user_info')
-            OR tool_name LIKE 'mcp_twitter_get_user_info%%'
-            OR tool_name LIKE 'mcp__twitter__get_user_info%%'
+            tool_name IN ({mcp_ph})
+            OR tool_name = 'mcp_apify_get_dataset_items'
           )
         ORDER BY id
-        """,
-        (task_id,),
+        """.format(mcp_ph=",".join(["%s"] * len(mcp_tools))),
+        (task_id, *mcp_tools),
     )
     if not rows:
         return 0
     for row in rows:
         tool_name = normalize_mcp_tool_name(str(row["tool_name"]))
+        if tool_name == "mcp_apify_get_dataset_items" and not is_apify_seed_platform(seed_plat):
+            continue
+        if apify_seed_empty_ok(tool_name):
+            continue
         ctx = {
             "task_id": task_id,
             "tool_output_id": row["id"],
             "tool_name": tool_name,
+            "platform_hint": APIFY_SEED_PLATFORM_TOOLS.get(seed_plat, "").replace("mcp_apify_", "")
+            if tool_name == "mcp_apify_get_dataset_items"
+            else "",
         }
         data = dispatch(tool_name, row.get("tool_output"), ctx)
         profs = data.get("profiles") or []
@@ -673,6 +693,10 @@ def ensure_step4_parent_not_premature(store: Any, task_id: str) -> int:
         return 0
     if cur not in {"completed", "skipped"}:
         return 0
+    # 步骤五已启动后，禁止因晚到子节点把父步骤四打回 running（前端会闪烁）
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 in {"running", "completed", "skipped"}:
+        return 0
     rows = db.fetch_all(
         "SELECT status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, parent),
@@ -759,6 +783,121 @@ def _normalize_stored_mcp_tool_names(task_id: str) -> int:
     return n
 
 
+def _fail_forward_step5_pending_images(store: Any, task_id: str, *, reason: str = "会话结束兜底：未完成 vision") -> int:
+    """步骤五卡在等待 OCR/Vision 时，兜底关闭剩余 pending 图片流并 completed。"""
+    if not can_advance_to_step5(task_id).get("ok"):
+        return 0
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 not in {"pending", "running"}:
+        return 0
+    if is_stream_compare_ready(task_id):
+        n_img = count_image_streams(task_id)
+        msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
+        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+        return 0
+    n_skip = 0
+    if hasattr(store, "mark_remaining_image_streams_failed"):
+        n_skip = int(store.mark_remaining_image_streams_failed(task_id, reason) or 0)
+    n_img = count_image_streams(task_id)
+    if n_skip or n_img == 0 or is_stream_compare_ready(task_id):
+        msg = (
+            "无头像图片流，跳过图片比对"
+            if n_img == 0
+            else f"图片流比对结束（兜底跳过 {n_skip} 条）"
+        )
+        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+        logger.info("step5 图片流兜底收口 task=%s skipped=%s reason=%s", task_id, n_skip, reason)
+        try:
+            if get_step_status(task_id, "step6_validated") != "completed":
+                store.run_validated_accounts(task_id)
+            if (
+                get_step_status(task_id, "step6_validated") == "completed"
+                and get_step_status(task_id, "step7_posts") == "pending"
+            ):
+                store.materialize_step7_from_validated(task_id)
+                reconcile_step4_and_step7_children(store, task_id)
+        except Exception as exc:
+            logger.warning("step5 兜底后 validated/step7 失败 task=%s: %s", task_id, exc)
+    return n_skip
+
+
+def maybe_fail_forward_stale_step5(
+    store: Any,
+    task_id: str,
+    *,
+    min_wait_seconds: int = 90,
+) -> int:
+    """
+    会话中途兜底：文本流已比对完、仍等图片流 Vision，但模型长时间未写回图片流。
+    仅依赖 session_end 时无法解开「Agent 还在跑、但从不调 vision」的死锁。
+    """
+    if not can_advance_to_step5(task_id).get("ok"):
+        return 0
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 != "running":
+        return 0
+    if is_stream_compare_ready(task_id):
+        n_img = count_image_streams(task_id)
+        msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
+        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+        if get_step_status(task_id, "step6_validated") != "completed":
+            store.run_validated_accounts(task_id)
+        return 0
+
+    row = db.fetch_one(
+        """
+        SELECT message, updated_at, payload_json
+        FROM collect_phase_steps
+        WHERE task_id=%s AND step_key='step5_streams'
+        """,
+        (task_id,),
+    )
+    if not row:
+        return 0
+    msg = str(row.get("message") or "")
+    # 仅在已进入「等图片流」阶段后才超时跳过，避免文本比对进行中误杀
+    waiting_images = ("等待图片流" in msg) or ("OCR/Vision" in msg) or ("图片流比对中" in msg)
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    if int(payload.get("image_pending") or 0) > 0 or payload.get("text_compare_done"):
+        waiting_images = True
+    if not waiting_images and count_image_streams(task_id) == 0:
+        return 0
+    if not waiting_images:
+        return 0
+
+    # 用首次进入「等图片」的时间计时，禁止被 message 刷新清零
+    from datetime import datetime
+
+    age = 0.0
+    wait_since = str(payload.get("wait_images_since") or "").strip()
+    if wait_since:
+        try:
+            started = datetime.fromisoformat(wait_since)
+            age = (datetime.now() - started).total_seconds()
+        except Exception:
+            age = 0.0
+    if age <= 0:
+        updated = row.get("updated_at")
+        if updated is not None and hasattr(updated, "year"):
+            try:
+                age = (datetime.now() - updated).total_seconds()
+            except Exception:
+                age = 0.0
+    if age < float(min_wait_seconds):
+        return 0
+
+    return _fail_forward_step5_pending_images(
+        store,
+        task_id,
+        reason=f"中途超时兜底：步骤五等待 Vision 超过 {min_wait_seconds}s 仍未完成",
+    )
+
+
 def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     # 新版 Hermes 工具名 mcp__server__tool → 统一为 mcp_server_tool 后再回放
     _normalize_stored_mcp_tool_names(task_id)
@@ -784,13 +923,25 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     ):
         close_collect_parent_if_ready(store, task_id, parent, msg_done)
 
-    # 步骤四收口后再次校正，避免 vision 回放误推进
+    # vision 回放后再校正；并强制尝试收口 step5（图片流已补齐时）
     ensure_step5_not_premature(store, task_id)
     ensure_step6_not_premature(store, task_id)
     ensure_step7_parent_not_premature(store, task_id)
 
+    # 会话结束兜底：步骤五仍等 vision 时，把 pending 图片流标 fail 后强制收口（对齐 01/03）
+    _fail_forward_step5_pending_images(store, task_id)
+
     if can_advance_to_step5(task_id).get("ok"):
         store.kickoff_step5_if_ready(task_id)
+        # 图片流已齐但 step5 仍 running：再推一次状态（避免仅 kickoff 文本比对早退）
+        if (
+            is_stream_compare_ready(task_id)
+            and get_step_status(task_id, "step5_streams") == "running"
+        ):
+            n_img = count_image_streams(task_id)
+            msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
+            store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+            store.kickoff_step5_if_ready(task_id)
         if (
             get_step_status(task_id, "step5_streams") in {"completed", "skipped"}
             and get_step_status(task_id, "step6_validated") != "completed"

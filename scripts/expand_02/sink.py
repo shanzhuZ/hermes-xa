@@ -38,17 +38,53 @@ _SKIP_STEP_TOOLS = frozenset({
 })
 # 步骤四入口工具（首次调用时收口步骤三）
 _STEP4_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
-# 02 种子主页工具
-_SEED_PROFILE_TOOLS = frozenset({"mcp_twitter_get_user_info"})
+# 02 种子主页：与 01 一致，含 Apify 三轮
+from collect_01.seed_platforms import (
+    APIFY_SEED_PLATFORM_TOOLS,
+    EXPAND_SEED_PROFILE_TOOLS as _SEED_PROFILE_TOOLS,
+    TOOL_TO_SEED_PLATFORM,
+    apify_seed_empty_ok,
+    is_apify_seed_platform,
+    seed_step_completed_message,
+)
 # 每个任务已处理的工具调用（防重）
 _SEEN_TOOL_CALLS: set = set()
 
 
+def _task_seed_platform(task_id: str) -> str:
+    row = _store().get_task(task_id) or {}
+    try:
+        seed = json.loads(row.get("seed_json") or "{}")
+    except Exception:
+        seed = {}
+    return str(seed.get("platform") or "twitter").lower()
+
+
 def _is_seed_profile_tool(tool_name: str, task_id: str) -> bool:
-    return (
-        tool_name in _SEED_PROFILE_TOOLS
-        and get_step_status(task_id, "step1_seed") not in {"completed", "skipped", "failed"}
-    )
+    if get_step_status(task_id, "step1_seed") in {"completed", "skipped", "failed"}:
+        return False
+    if tool_name not in _SEED_PROFILE_TOOLS:
+        return False
+    seed_plat = _task_seed_platform(task_id)
+    # MCP 种子主页
+    if tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_"):
+        return True
+    # Apify 种子：仅 seed_json.platform 为 Apify 平台时才绑定 step1
+    if not is_apify_seed_platform(seed_plat):
+        return False
+    expected = APIFY_SEED_PLATFORM_TOOLS.get(seed_plat)
+    if tool_name == expected:
+        return True
+    if tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}:
+        return True
+    return False
+
+
+def _strip_apify_posts_for_seed_phase(result_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apify dataset 常夹带 posts；种子步只入库 profile。"""
+    out = dict(result_data or {})
+    out["posts"] = []
+    return out
 
 
 def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False) -> str:
@@ -557,15 +593,18 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         logger.info("maigret post_tool task=%s call_id=%s", task_id, tool_call_id or "(none)")
 
     step_key = TOOL_PRIMARY_STEP.get(tool_name)
-    # 步骤三核查工具须等步骤二完成；状态仅由 _enter_step4 推进，禁止此处提前标 running
-    if step_key and tool_name not in _STEP4_TOOLS:
+    if seed_collect:
+        # 种子采集期间不误推进 step3 / 发文子步骤
+        if get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}:
+            store.set_step_status(task_id, "step1_seed", "running", message=f"种子采集中 ({tool_name})")
+    elif step_key and tool_name not in _STEP4_TOOLS:
         cur = get_step_status(task_id, step_key)
         if cur not in {"completed", "failed", "skipped"}:
             label = "Maigret 跨平台扫描中" if tool_name == "mcp_maigret_collect_accounts" else f"执行 {tool_name}"
             store.set_step_status(task_id, step_key, "running", message=label)
 
     post_platform_early = TOOL_POST_PLATFORM.get(tool_name)
-    if post_platform_early:
+    if post_platform_early and not seed_collect:
         child = post_step_key(post_platform_early)
         store.ensure_post_steps(task_id, [post_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -573,7 +612,8 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             store.set_step_status(task_id, child, "running", message=f"采集 {post_platform_early} 发文中…")
 
     apify_platform_early = apify_platform_from_actor_tool(tool_name)
-    if apify_platform_early:
+    # 种子 Apify 归 step1；步骤三候选 Apify 才预建发文子节点
+    if apify_platform_early and not seed_collect:
         child = post_step_key(apify_platform_early)
         store.ensure_post_steps(task_id, [apify_platform_early])
         child_cur = get_step_status(task_id, child)
@@ -588,23 +628,26 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         tool_output = str(result or "")
 
     status = "success" if ex.get("status") == "ok" else "error"
-    output_step_key = tool_step_key(tool_name)
-    if post_platform_early:
-        output_step_key = post_step_key(post_platform_early)
-    elif apify_platform_early:
-        output_step_key = post_step_key(apify_platform_early)
-    elif tool_name == "mcp_youtube_get_channel_stats":
-        output_step_key = post_step_key("youtube")
-    elif tool_name == "mcp_weibo_get_profile":
-        output_step_key = post_step_key("weibo")
-    elif tool_name == "mcp_apify_get_dataset_items":
-        ds_id = str(tool_args.get("datasetId") or tool_args.get("dataset_id") or "").strip()
-        hint = resolve_apify_platform_hint(task_id, None, dataset_id=ds_id or None)
-        for actor_tool, plat in APIFY_TOOL_PLATFORM.items():
-            actor_hint = actor_tool.replace("mcp_apify_", "")
-            if hint and (hint == actor_hint or plat in hint):
-                output_step_key = post_step_key(plat)
-                break
+    if seed_collect:
+        output_step_key = "step1_seed"
+    else:
+        output_step_key = tool_step_key(tool_name)
+        if post_platform_early:
+            output_step_key = post_step_key(post_platform_early)
+        elif apify_platform_early:
+            output_step_key = post_step_key(apify_platform_early)
+        elif tool_name == "mcp_youtube_get_channel_stats":
+            output_step_key = post_step_key("youtube")
+        elif tool_name == "mcp_weibo_get_profile":
+            output_step_key = post_step_key("weibo")
+        elif tool_name == "mcp_apify_get_dataset_items":
+            ds_id = str(tool_args.get("datasetId") or tool_args.get("dataset_id") or "").strip()
+            hint = resolve_apify_platform_hint(task_id, None, dataset_id=ds_id or None)
+            for actor_tool, plat in APIFY_TOOL_PLATFORM.items():
+                actor_hint = actor_tool.replace("mcp_apify_", "")
+                if hint and (hint == actor_hint or plat in hint):
+                    output_step_key = post_step_key(plat)
+                    break
 
     try:
         tool_output_id = store.save_tool_output(
@@ -673,10 +716,26 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             return
 
     if seed_collect and not (result_data.get("profiles") or []):
+        if apify_seed_empty_ok(tool_name):
+            store.set_step_status(
+                task_id,
+                "step1_seed",
+                "running",
+                message=f"Apify 种子采集进行中 ({tool_name})",
+            )
+            logger.info("种子 Apify 中间步 task=%s tool=%s（等待 dataset）", task_id, tool_name)
+            return
         fail_msg = _seed_fail_message(tool_name, tool_output, empty=True)
         store.fail_seed_and_abort(task_id, fail_msg)
         logger.warning("种子采集失败(空结果) task=%s tool=%s", task_id, tool_name)
         return
+
+    # Apify 种子轮：丢掉夹带的 posts，避免提前挂发文子步骤
+    if seed_collect and tool_name == "mcp_apify_get_dataset_items":
+        n_drop = len(result_data.get("posts") or [])
+        result_data = _strip_apify_posts_for_seed_phase(result_data)
+        if n_drop:
+            logger.info("Apify 种子轮丢弃 posts=%d task=%s", n_drop, task_id)
 
     _persist_normalized(store, task_id, result_data, display_step_key=output_step_key)
     _update_steps_after_tool(store, task_id, tool_name, result_data)
@@ -705,7 +764,10 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         _advance_without_image_tools(store, task_id)
 
     post_platform = _resolve_post_platform(tool_name, task_id, tool_output_id, result_data, tool_args)
-    if post_platform and tool_name in TOOL_POST_PLATFORM:
+    if seed_collect:
+        # 种子步只收口 step1，不写发文子步骤
+        pass
+    elif post_platform and tool_name in TOOL_POST_PLATFORM:
         n_post = len(result_data.get("posts") or [])
         if n_post > 0:
             _sync_platform_post_step(store, task_id, post_platform, result_data)
@@ -726,7 +788,8 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             result_data,
             tool_output_id=tool_output_id,
         )
-    _mark_step3_closed(store, task_id)
+    if not seed_collect:
+        _mark_step3_closed(store, task_id)
 
     if tool_name in _STEP4_TOOLS and _is_cross_platform_task(task_id):
         _on_step4_tool_after(store, task_id, tool_name, tool_args, success=True)
@@ -738,15 +801,30 @@ def _update_steps_after_tool(
     tool_name: str,
     result_data: Dict[str, Any],
 ) -> None:
-    if tool_name == "mcp_twitter_get_user_info":
-        profs = result_data.get("profiles") or []
-        if not profs:
-            return
-        if get_step_status(task_id, "step1_seed") in {"completed", "failed", "skipped"}:
-            return
-        if _task_is_terminal(store, task_id):
-            return
-        store.set_step_status(task_id, "step1_seed", "completed", message="种子资料已入库")
+    seed_plat = _task_seed_platform(task_id)
+    is_mcp_seed_tool = tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_")
+    is_apify_seed_dataset = (
+        tool_name == "mcp_apify_get_dataset_items"
+        and is_apify_seed_platform(seed_plat)
+        and get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}
+    )
+    profs = result_data.get("profiles") or []
+    if (
+        profs
+        and (is_mcp_seed_tool or is_apify_seed_dataset)
+        and get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}
+        and not _task_is_terminal(store, task_id)
+        and not apify_seed_empty_ok(tool_name)
+    ):
+        plat = TOOL_TO_SEED_PLATFORM.get(tool_name) or seed_plat
+        if is_apify_seed_dataset:
+            plat = seed_plat
+        store.set_step_status(
+            task_id,
+            "step1_seed",
+            "completed",
+            message=seed_step_completed_message(plat),
+        )
         return
     if tool_name == "mcp_maigret_collect_accounts":
         return

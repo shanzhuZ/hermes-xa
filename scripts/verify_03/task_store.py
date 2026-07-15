@@ -68,113 +68,15 @@ def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
 
 
 def _extract_image_source(tool_args: Dict[str, Any]) -> str:
-    for key in ("image_url", "input_data", "image_path", "file_path", "url"):
-        val = tool_args.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-    return ""
+    from collect_01.image_stream_match import extract_image_source
 
-
-def _normalize_avatar_url(url: str) -> str:
-    """Twitter 等头像 URL 去掉 _normal 等尺寸后缀便于匹配。"""
-    u = (url or "").split("?")[0]
-    return re.sub(r"_normal(?=\.(jpe?g|png|webp)$)", "", u, flags=re.I)
-
-
-def _vision_hosts_match(host_a: str, host_b: str) -> bool:
-    """vision URL 与入库头像 CDN 域名对齐（如 ggpht / googleusercontent）。"""
-    a = (host_a or "").lower().strip(".")
-    b = (host_b or "").lower().strip(".")
-    if not a or not b:
-        return False
-    if a == b or a.endswith(b) or b.endswith(a) or a in b or b in a:
-        return True
-    aliases = (
-        ("googleusercontent.com", "ggpht.com"),
-        ("twimg.com", "twitter.com"),
-    )
-    for x, y in aliases:
-        if (x in a and y in b) or (y in a and x in b):
-            return True
-    try:
-        return a.split(".")[-2:] == b.split(".")[-2:]
-    except Exception:
-        return False
+    return extract_image_source(tool_args)
 
 
 def _find_image_stream_for_tool(task_id: str, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    source = _extract_image_source(tool_args)
-    if not source:
-        return None
-    streams = db.fetch_all(
-        """
-        SELECT stream_id, source_platform, source_account_id, payload_url, validation_status, validation_detail
-        FROM collect_identity_streams
-        WHERE task_id=%s AND stream_type='image'
-        """,
-        (task_id,),
-    )
-    if not streams:
-        return None
-    if source.startswith(("http://", "https://")):
-        norm_src = _normalize_avatar_url(source)
-        for row in streams:
-            payload = (row.get("payload_url") or "").strip()
-            if payload == source or _normalize_avatar_url(payload) == norm_src:
-                return row
-        base = source.split("?")[0]
-        for row in streams:
-            url = (row.get("payload_url") or "").split("?")[0]
-            if url == base or _normalize_avatar_url(url) == norm_src:
-                return row
-        try:
-            from urllib.parse import urlparse
+    from collect_01.image_stream_match import find_image_stream_for_tool
 
-            host = (urlparse(source).hostname or "").lower()
-            if host:
-                for row in streams:
-                    if str(row.get("validation_status") or "") != "pending":
-                        continue
-                    payload = str(row.get("payload_url") or "")
-                    ph = (urlparse(payload).hostname or "").lower()
-                    if ph and _vision_hosts_match(host, ph):
-                        return row
-                    if host.split(".")[-2:] == ph.split(".")[-2:]:
-                        return row
-        except Exception:
-            pass
-        return None
-    basename = os.path.basename(source).lower()
-    hints: List[str] = []
-    if any(k in basename for k in ("twitter", "tw_", "x.com")):
-        hints.append("twitter")
-    if any(k in basename for k in ("youtube", "yt_", "yt3")):
-        hints.append("youtube")
-    if "instagram" in basename or "ig_" in basename:
-        hints.append("instagram")
-    if "tiktok" in basename:
-        hints.append("tiktok")
-    if "weibo" in basename:
-        hints.append("weibo")
-    if "bilibili" in basename or "bili" in basename:
-        hints.append("bilibili")
-    for platform in hints:
-        pending = [
-            row
-            for row in streams
-            if row.get("source_platform") == platform and row.get("validation_status") == "pending"
-        ]
-        waiting = [
-            row for row in pending if "OCR" in str(row.get("validation_detail") or "")
-        ]
-        if len(waiting) == 1:
-            return waiting[0]
-        if len(pending) == 1:
-            return pending[0]
-    pending = [row for row in streams if row.get("validation_status") == "pending"]
-    if len(pending) == 1:
-        return pending[0]
-    return None
+    return find_image_stream_for_tool(task_id, tool_args)
 
 
 def _step_status(task_id: str, step_key: str) -> str:
@@ -730,31 +632,8 @@ class TaskStore:
     def _match_pending_stream_by_url(
         self, task_id: str, tool_args: Dict[str, Any]
     ) -> Optional[Dict[str, Any]]:
-        """vision URL 变体未精确匹配时，按域名关联 pending 图片流。"""
-        source = _extract_image_source(tool_args)
-        if not source.startswith(("http://", "https://")):
-            return None
-        try:
-            from urllib.parse import urlparse
-
-            host = (urlparse(source).hostname or "").lower()
-            if not host:
-                return None
-            streams = db.fetch_all(
-                """
-                SELECT stream_id, source_platform, payload_url, validation_status, validation_detail
-                FROM collect_identity_streams
-                WHERE task_id=%s AND stream_type='image' AND validation_status='pending'
-                """,
-                (task_id,),
-            )
-            for row in streams:
-                ph = (urlparse(str(row.get("payload_url") or "")).hostname or "").lower()
-                if ph and _vision_hosts_match(host, ph):
-                    return row
-        except Exception:
-            return None
-        return None
+        """vision URL 变体未精确匹配时，走统一图片流匹配。"""
+        return _find_image_stream_for_tool(task_id, tool_args)
 
     def mark_image_stream_progress(
         self,
@@ -836,8 +715,22 @@ class TaskStore:
         return n
 
     def save_style_analysis(self, task_id: str, content: str) -> None:
-        """步骤三：风格归纳原文写入 payload。"""
+        """步骤三：风格归纳原文写入 payload。须等步骤二（主页+发文）收口后再 completed。"""
         preview = content[:8000]
+        if _step_status(task_id, "step3_profiles") != "completed":
+            # 禁止采集未完成就跳步完成风格归纳，否则 step2 running / step3 completed 错位
+            self.reconcile_profile_platform_steps(task_id)
+            if _step_status(task_id, "step3_profiles") != "completed":
+                cur = _step_status(task_id, "step3_streams")
+                if cur == "pending":
+                    self.set_step_status(
+                        task_id,
+                        "step3_streams",
+                        "running",
+                        message="等待主页与发文采集完成后再归纳…",
+                    )
+                logger.info("风格归纳暂缓：step3_profiles 未完成 task=%s", task_id)
+                return
         cur = _step_status(task_id, "step3_streams")
         if cur == "pending":
             self.set_step_status(task_id, "step3_streams", "running", message="发文风格与领域归纳中…")

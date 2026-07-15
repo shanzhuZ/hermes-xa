@@ -31,7 +31,8 @@ _PLATFORM_ALIASES = {
 
 # 用户消息：推特账号：whyyoutouzhele
 _MSG_PAIR = re.compile(
-    r"(推特|twitter|x|facebook|fb|脸书|youtube|油管|instagram|ins|ig|telegram|tg|微博|weibo|bilibili|b站|tiktok|github)"
+    r"(推特|twitter|x|facebook|fb|脸书|youtube|油管|instagram|ins|ig|telegram|tg|"
+    r"微博|weibo|bilibili|b站|哔哩哔哩|tiktok|抖音|github)"
     r"\s*(?:账号|帐户|号)?\s*[:：]\s*([A-Za-z0-9_\.\u4e00-\u9fff]+)",
     re.I,
 )

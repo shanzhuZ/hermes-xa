@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-verification
 description: "账号核查，支持多平台多个种子账号，直接对多个种子账号采集主页与发文数据，通过文字流与图片流多维度比对验证账号关联性"
-version: 1.14.0
+version: 1.15.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -62,8 +62,9 @@ metadata:
 
 ## 实现细节
 **步骤1**：接收用户输入的多平台多个种子账号（平台+用户名）。
-**步骤2**：对多个种子账号采集主页信息（优先 MCP，无则 Apify，小 limit）。
-**步骤3**：对多个种子账号采集对应平台的最近一个月的发文信息（优先 MCP，无则 Apify，小 limit）。
+支持平台：twitter/weibo/youtube/bilibili（MCP）与 instagram/tiktok/telegram/facebook/github（Apify）。
+**步骤2**：对多个种子账号采集主页信息（有 MCP 用 MCP；无 MCP 必须 Apify 三轮：Actor → get_actor_run → get_dataset_items）。
+**步骤3**：对多个种子账号采集对应平台近一个月发文（MCP 或 Apify 三轮）。
 **步骤4**：同步执行文字流分析（账户名/简介/发文风格相似度）和图片流分析（OCR头像 + 多模态vision图片内容）。
 **步骤5**：结合文字流与图片流分析的所有候选账号匹配结果。
 **步骤6**：对每一个候选账号与种子账号验证匹配结果的原因。

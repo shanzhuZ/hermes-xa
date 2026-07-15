@@ -10,7 +10,8 @@
 
 ## 中文场景
 
-调用时建议：`language=chi_sim`（中文）或 `language=eng`（英文）；**勿用** `chi_sim+eng`（会报错）。
+调用时建议：`language=chi_sim`（中文）或 `language=eng`（英文）。
+`chi_sim+eng` / `eng+chi_sim` 会在启动器里归一成 `chi_sim`（优先中文），避免 Agent 传组合串后反复失败。
 
 ## 依赖
 

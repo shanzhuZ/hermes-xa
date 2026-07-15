@@ -6,7 +6,7 @@ import logging
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from collect_01.normalizers.base import unwrap_tool_payload, normalize_mcp_tool_name
-from collect_01.normalizers import apify, maigret, twitter, weibo, youtube
+from collect_01.normalizers import apify, bilibili, maigret, twitter, weibo, youtube
 
 logger = logging.getLogger(__name__)
 
@@ -32,6 +32,7 @@ REGISTRY: Dict[str, Tuple[Handler, str]] = {
     # Skill/phases 写作 get_user_feeds，实际 MCP 工具名为 get_feeds
     "mcp_weibo_get_user_feeds": (weibo.normalize_posts, "posts"),
     "mcp_weibo_search_content": (weibo.normalize_posts, "posts"),
+    "mcp_bilibili_get_user_info": (bilibili.normalize_profile, "profile"),
 }
 
 

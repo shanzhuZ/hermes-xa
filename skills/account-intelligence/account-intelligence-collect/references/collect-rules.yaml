@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.14.0"
+version: "1.15.0"
 
 language: 用户中文输入时全程简体中文；步骤1-6进度与步骤7报告均不得用英文。
 
@@ -24,9 +24,27 @@ never_ask_user: |
 
 steps:
   "1_seed":
-    do: mcp_twitter_get_user_info(screen_name=种子) 或对应平台 profile 工具
-    forbid: [get_user_tweets, maigret, search_username, search_usernames, vision, username参数]
+    do: |
+      按用户指定的种子平台采主页（MCP 或 Apify）：
+      【MCP】
+      - twitter → mcp_twitter_get_user_info(screen_name=种子handle)
+      - weibo   → mcp_weibo_get_profile
+      - youtube → mcp_youtube_get_channel_stats(channelId=…)
+      - bilibili→ mcp_bilibili_get_user_info(uid=数字uid)
+      【Apify，必须走三轮：Actor → get_actor_run → get_dataset_items】
+      - instagram → mcp_apify_apify__instagram_scraper
+        input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 }
+      - tiktok → mcp_apify_clockworks__tiktok_scraper
+        input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 }
+      - telegram → mcp_apify_vujeen__telegram_channel_scraper
+        input: { channels: ["{ch}"], maxPostsPerChannel: 3 }（ch=@名或 t.me/xxx）
+      - facebook → mcp_apify_headlessagent__facebook_profile_post_scraper
+        input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] }
+      - github → mcp_apify_knotless_cadence__github_profile_scraper
+        input: { usernames: ["{u}"], maxRepos: 5 }
+      Apify 种子：Actor 启动成功后轮询 get_actor_run，再 get_dataset_items 取 profile；禁止因「无 MCP」跳过。
     twitter_args: 参数名必须是 screen_name 或 user_id，禁止 username
+    forbid: [get_user_tweets, maigret, search_username, search_usernames, vision, username参数]
 
   "2_maigret":
     when: 用户说跨平台
@@ -38,7 +56,8 @@ steps:
     do: |
       仅对种子账号执行文本流 + 图片流分析：
       - 文本流：昵称/handle/简介/互链/邮箱，只用于三节报告，不生成候选比对表
-      - 图片流：avatar_url → mcp_ocr_perform_ocr + vision_analyze；远程 URL 失败则下载到本地临时文件再重试 1 次
+      - 图片流：avatar_url → mcp_ocr_perform_ocr(language=chi_sim) + vision_analyze；远程 URL 失败则下载到本地临时文件再重试 1 次
+      - OCR language 只能 chi_sim 或 eng；禁止 eng+chi_sim；失败 1 次后继续 vision，禁止同参盲重试
     forbid: [mcp_maigret_collect_accounts, mcp_apify_*, mcp_youtube_get_channel_stats, get_user_feeds, 候选主页采集]
 
   "3_profiles":
@@ -85,8 +104,9 @@ steps:
       - Twitter→get_user_tweets(50)
       - 微博→get_user_feeds
       - YouTube 种子→analyze_channel_videos(channelId)
+      - Apify 种子（instagram/tiktok/telegram/facebook/github）→ 三轮 resultsLimit=50→get_dataset_items 原文
       禁止任何非种子平台发文采集
-    forbid: [mcp_maigret_collect_accounts, mcp_apify_*, 非种子平台发文采集]
+    forbid: [mcp_maigret_collect_accounts, 非种子平台发文采集]
 
   "7_output":
     once: true

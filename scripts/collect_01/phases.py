@@ -69,6 +69,7 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_maigret_collect_accounts": "step2_cross_platform",
     "mcp_youtube_get_channel_stats": "step3_profiles",
     "mcp_weibo_get_profile": "step3_profiles",
+    "mcp_bilibili_get_user_info": "step3_profiles",
     "mcp_apify_apify__instagram_scraper": "step3_profiles",
     "mcp_apify_clockworks__tiktok_scraper": "step3_profiles",
     "mcp_apify_vujeen__telegram_channel_scraper": "step3_profiles",

@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
 description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→分析→画像报告。禁search_username。"
-version: 1.13.0
+version: 1.15.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -28,7 +28,7 @@ metadata:
 - **步骤3用浏览器 + 搜索引擎** 搜索类似昵称的账号及账号ID， 严查推特（X）、facebook、telegram、youtube、github、reddit、weibo、linkedin、ins、vk等中大型社交网站
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
 - **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具
-- **步骤 5** 必须 OCR+vision（有头像）；核查结果作为步骤11输出 2.2/2.3 的数据基础（步骤5本身不输出报告章节）
+- **步骤 5** 有头像必须 vision（OCR 可选：人脸无字默认跳过）；`image_url` 必须用库内 avatar/`payload_url`；OCR 失败禁止盲重试；核查结果供 2.2/2.3（步骤5本身不输出报告章节）
 - **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天
 - **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
@@ -38,7 +38,7 @@ metadata:
 ## 执行流程（硬顺序，不可省略任意一步）
 | 步骤 | 动作                                                                                 |
 |----|------------------------------------------------------------------------------------|
-| 1  | 种子 MCP profile                                                                     |
+| 1  | 种子 MCP/Apify profile（Instagram/TikTok/Telegram/Facebook/GitHub 走 Apify 三轮） |
 | 2  | **`mcp_maigret_collect_accounts(username=种子)`** 跨平台发现候选；**禁止** search_username 等其它 Maigret 工具 |
 | 3  | web_search, web_extract, browser_* 检索种子账号昵称及账号id获取候选社交账号                         |
 | 4  | 各候选主页：MCP profile **或** Apify；失败跳过                                        |
@@ -49,6 +49,24 @@ metadata:
 | 9  | 文本流： 结合 各个平台的账号发文 分析发文观点及涉华发言 并配有发文作为佐证                                            |
 | 10 | 文本流： 结合 各个平台的账号发文 分析真实姓名、年龄、籍贯、常住地、活动城市、生活习惯、教育经历、工作经历、对华态度、电话邮箱码值、社交、亲友、同事等三个圈层关系 |
 | 11 | 一次输出账号画像报告：一、账号基本信息 二、账号全网关联账号 三、账号网络活动情况 四、核查思路                                   |
+
+## 步骤 1 种子主页（MCP 或 Apify）
+
+| 平台 | 工具 |
+|------|------|
+| Twitter/微博/YouTube/B站 | 对应 MCP profile |
+| Instagram/TikTok/Telegram/Facebook/GitHub | Apify Actor → `get_actor_run` → `get_dataset_items`（只取主页） |
+
+**步骤1禁止**：发文工具、Maigret、OCR/vision、web_search。
+
+## 步骤 5 图片流（Vision 优先）
+
+| 规则 | 说明 |
+|------|------|
+| URL | 只用步骤4已入库的 `avatar_url` / 图片流 `payload_url` |
+| OCR | 人脸无字默认跳过；失败或 No text → 立刻 vision，禁止同参重试 |
+| Vision | 每条图片流 1 次；全部结束后才进步骤6 |
+| 禁止 | 对未入库 CDN（如临时 Instagram 链）空跑 vision |
 
 ## 步骤 2 Maigret（必须用 collect_accounts）
 

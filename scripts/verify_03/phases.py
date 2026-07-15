@@ -52,6 +52,7 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_twitter_get_user_info": "step3_profiles",
     "mcp_youtube_get_channel_stats": "step3_profiles",
     "mcp_weibo_get_profile": "step3_profiles",
+    "mcp_bilibili_get_user_info": "step3_profiles",
     "mcp_apify_apify__instagram_scraper": "step3_profiles",
     "mcp_apify_clockworks__tiktok_scraper": "step3_profiles",
     "mcp_apify_vujeen__telegram_channel_scraper": "step3_profiles",
@@ -73,6 +74,7 @@ PROFILE_TOOLS = frozenset(
         "mcp_twitter_get_user_info",
         "mcp_youtube_get_channel_stats",
         "mcp_weibo_get_profile",
+        "mcp_bilibili_get_user_info",
         "mcp_apify_apify__instagram_scraper",
         "mcp_apify_clockworks__tiktok_scraper",
         "mcp_apify_vujeen__telegram_channel_scraper",
@@ -108,6 +110,7 @@ TOOL_PLATFORM: Dict[str, str] = {
     "mcp_weibo_get_profile": "weibo",
     "mcp_weibo_get_user_feeds": "weibo",
     "mcp_weibo_get_feeds": "weibo",
+    "mcp_bilibili_get_user_info": "bilibili",
     **APIFY_TOOL_PLATFORM,
 }
 

@@ -293,6 +293,7 @@ public class TaskTreeQueryService {
         }
         if ("mcp_youtube_get_channel_stats".equals(toolName)
                 || "mcp_weibo_get_profile".equals(toolName)
+                || "mcp_bilibili_get_user_info".equals(toolName)
                 || "mcp_apify_apify__instagram_scraper".equals(toolName)
                 || "mcp_apify_clockworks__tiktok_scraper".equals(toolName)
                 || "mcp_apify_vujeen__telegram_channel_scraper".equals(toolName)

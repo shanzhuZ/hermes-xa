@@ -62,7 +62,8 @@ public class VerifyTaskCreateService implements TaskCreateService {
     private boolean isVerifyIntent(String message) {
         Pattern p = Pattern.compile(
                 "(account-intelligence-verification|account-intelligence-verify|账号核查|核查.*?"
-                        + "(推特|twitter|微博|weibo|facebook|youtube|instagram|telegram))",
+                        + "(推特|twitter|微博|weibo|facebook|fb|脸书|youtube|instagram|ins|"
+                        + "telegram|tg|tiktok|抖音|github|bilibili|b站))",
                 Pattern.CASE_INSENSITIVE);
         return p.matcher(message).find();
     }

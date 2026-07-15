@@ -5,6 +5,8 @@ from __future__ import annotations
 from dataclasses import dataclass
 from typing import Dict, List, Optional, Tuple
 
+from collect_01.seed_platforms import REPORT_SEED_PROFILE_TOOLS as SEED_PROFILE_TOOLS
+
 PHASE_SEED = "seed"
 PHASE_DISCOVERY = "discovery"
 PHASE_PROFILES = "profiles"
@@ -86,6 +88,7 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_twitter_get_user_info": "step1_seed",
     "mcp_youtube_get_channel_stats": "step1_seed",
     "mcp_weibo_get_profile": "step1_seed",
+    "mcp_bilibili_get_user_info": "step1_seed",
     "mcp_maigret_collect_accounts": "step2_maigret",
     "web_search": "step3_web_search",
     "web_extract": "step3_web_search",
@@ -114,6 +117,7 @@ PROFILE_TOOLS = frozenset(
         "mcp_twitter_get_user_info",
         "mcp_youtube_get_channel_stats",
         "mcp_weibo_get_profile",
+        "mcp_bilibili_get_user_info",
         "mcp_apify_apify__instagram_scraper",
         "mcp_apify_clockworks__tiktok_scraper",
         "mcp_apify_vujeen__telegram_channel_scraper",
@@ -134,14 +138,6 @@ POST_TOOLS = frozenset(
 )
 
 STEP5_STREAM_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
-
-SEED_PROFILE_TOOLS = frozenset(
-    {
-        "mcp_twitter_get_user_info",
-        "mcp_youtube_get_channel_stats",
-        "mcp_weibo_get_profile",
-    }
-)
 
 STEP8_VISION_TOOLS = frozenset({"mcp_vision_analyze", "vision_analyze", "mcp_ocr_perform_ocr"})
 
@@ -184,6 +180,7 @@ TOOL_PLATFORM: Dict[str, str] = {
     "mcp_weibo_get_profile": "weibo",
     "mcp_weibo_get_user_feeds": "weibo",
     "mcp_weibo_get_feeds": "weibo",
+    "mcp_bilibili_get_user_info": "bilibili",
     **APIFY_TOOL_PLATFORM,
 }
 

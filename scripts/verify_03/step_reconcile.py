@@ -26,6 +26,13 @@ POST_TOOL_BY_PLATFORM: Dict[str, str] = {
     "weibo": "mcp_weibo_get_feeds",
 }
 
+PROFILE_TOOL_BY_PLATFORM: Dict[str, str] = {
+    "twitter": "mcp_twitter_get_user_info",
+    "youtube": "mcp_youtube_get_channel_stats",
+    "weibo": "mcp_weibo_get_profile",
+    "bilibili": "mcp_bilibili_get_user_info",
+}
+
 _PLATFORM_BY_APIFY_ACTOR: Dict[str, str] = {v: k for k, v in APIFY_TOOL_PLATFORM.items()}
 
 
@@ -57,6 +64,28 @@ def _post_tool_success(task_id: str, platform: str) -> bool:
         (task_id, tool),
     )
     return int((row or {}).get("c") or 0) > 0
+
+
+def _mcp_profile_terminal_fail(task_id: str, platform: str) -> bool:
+    """MCP 主页工具已失败且无一成功 → 视为采集终态失败（避免 running 永久卡住父步骤）。"""
+    tool = PROFILE_TOOL_BY_PLATFORM.get(platform)
+    if not tool:
+        return False
+    err = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name=%s AND status='error'
+        """,
+        (task_id, tool),
+    )
+    ok = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name=%s AND status='success'
+        """,
+        (task_id, tool),
+    )
+    return int((err or {}).get("c") or 0) > 0 and int((ok or {}).get("c") or 0) == 0
 
 
 def _apify_actor_success(task_id: str, platform: str) -> bool:
@@ -178,7 +207,16 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
             if cur == "completed":
                 continue
             if cur in {"failed", "skipped", "running", "pending"}:
-                if _apify_actor_success(task_id, platform):
+                if _mcp_profile_terminal_fail(task_id, platform):
+                    if cur not in {"failed", "skipped"}:
+                        store.set_step_status(
+                            task_id,
+                            step_key,
+                            "failed",
+                            message=f"{platform} 主页工具失败且未入库（如 YouTube 需 channelId）",
+                        )
+                        updated += 1
+                elif _apify_actor_success(task_id, platform):
                     if _dataset_success_for_platform(task_id, platform):
                         if cur != "failed":
                             store.set_step_status(
@@ -197,6 +235,16 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
                                 message=f"{platform} Actor 已完成但未拉取 dataset",
                             )
                             updated += 1
+                elif streams_done and cur in {"running", "pending"}:
+                    # 风格归纳已完成却仍卡 running：强制终态，解开父步骤闭环
+                    if cur != "failed":
+                        store.set_step_status(
+                            task_id,
+                            step_key,
+                            "failed",
+                            message=f"{platform} 主页采集未完成（已进入风格归纳）",
+                        )
+                        updated += 1
                 elif profiles_done and cur in {"running", "pending"}:
                     if cur != "failed":
                         store.set_step_status(
@@ -225,6 +273,16 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
                 updated += 1
             continue
         if cur == "completed":
+            continue
+        # 主页已失败/跳过 → 发文不再空等
+        if prof_status in {"failed", "skipped"} and cur in {"pending", "running"}:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "skipped",
+                message=f"{platform} 主页未成功，跳过发文",
+            )
+            updated += 1
             continue
         if cnt == 0 and cur in {"running", "pending"} and _dataset_success_for_platform(task_id, platform):
             if cur != "skipped":

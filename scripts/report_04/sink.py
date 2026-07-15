@@ -12,6 +12,13 @@ from collect_01.db import DbError
 from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
 from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint
+from collect_01.seed_platforms import (
+    APIFY_SEED_PLATFORM_TOOLS,
+    REPORT_SEED_PROFILE_TOOLS as SEED_PROFILE_TOOLS,
+    TOOL_TO_SEED_PLATFORM,
+    apify_seed_empty_ok,
+    is_apify_seed_platform,
+)
 from report_04.account_parser import looks_like_seed_done, parse_seed_from_assistant
 from report_04.candidate_parser import (
     looks_like_step3_summary,
@@ -38,7 +45,6 @@ from report_04.phases import (
     APIFY_TOOL_PLATFORM,
     POST_TOOLS,
     PROFILE_TOOLS,
-    SEED_PROFILE_TOOLS,
     STEP4_COLLECT_TOOLS,
     TOOL_PLATFORM,
     TOOL_PRIMARY_STEP,
@@ -225,11 +231,40 @@ def _resolve_collect_phase(
     return None, tool_step_key(tool_name)
 
 
+def _task_seed_platform(task_id: str) -> str:
+    row = _store().get_task(task_id) or {}
+    try:
+        seed = json.loads(row.get("seed_json") or "{}")
+    except Exception:
+        seed = {}
+    return str(seed.get("platform") or "twitter").lower()
+
+
 def _is_seed_profile_tool(tool_name: str, task_id: str) -> bool:
-    return (
-        tool_name in SEED_PROFILE_TOOLS
-        and get_step_status(task_id, "step1_seed") not in {"completed", "skipped", "failed"}
-    )
+    if get_step_status(task_id, "step1_seed") in {"completed", "skipped", "failed"}:
+        return False
+    if tool_name not in SEED_PROFILE_TOOLS:
+        return False
+    seed_plat = _task_seed_platform(task_id)
+    # MCP 种子主页
+    if tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_"):
+        return True
+    # Apify 种子：仅 seed_json.platform 为 Apify 平台时才绑定 step1
+    if not is_apify_seed_platform(seed_plat):
+        return False
+    expected = APIFY_SEED_PLATFORM_TOOLS.get(seed_plat)
+    if tool_name == expected:
+        return True
+    if tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}:
+        return True
+    return False
+
+
+def _strip_apify_posts_for_seed_phase(result_data: Dict[str, Any]) -> Dict[str, Any]:
+    """Apify dataset 常夹带 posts；种子步只入库 profile。"""
+    out = dict(result_data or {})
+    out["posts"] = []
+    return out
 
 
 def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False) -> str:
@@ -253,11 +288,21 @@ def _task_is_terminal(store: TaskStore, task_id: str) -> bool:
     return str(task.get("status") or "") in {"failed", "completed"}
 
 
+def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:
+    """步骤五空等 Vision 超时则 fail-forward（会话中途也能解开）。"""
+    try:
+        from report_04.step_reconcile import maybe_fail_forward_stale_step5
+
+        n = maybe_fail_forward_stale_step5(store, task_id, min_wait_seconds=90)
+        if n:
+            _maybe_advance_step67(store, task_id)
+    except Exception as exc:
+        logger.warning("step5 超时兜底失败 task=%s: %s", task_id, exc)
+
+
 def _on_pre_llm(payload: Dict[str, Any]) -> None:
     ex = _extra(payload)
     user_message = str(ex.get("user_message") or "").strip()
-    if not user_message or not is_report_intent(user_message):
-        return
     try:
         task_id = _resolve_task_id(payload, user_message=user_message)
         if not task_id:
@@ -266,11 +311,14 @@ def _on_pre_llm(payload: Dict[str, Any]) -> None:
         session_id = str(payload.get("session_id") or "").strip()
         if session_id:
             store.bind_session(task_id, session_id)
-        _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id)
-        if get_step_status(task_id, "step1_seed") == "pending":
-            store.set_step_status(task_id, "step1_seed", "running", message="等待 Agent 确认种子账号…")
-        if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
-            store.save_dialogue(task_id, session_id, "user", user_message, "user_input")
+        # 每轮 LLM 前检查：步骤五空等 Vision 超时则收口
+        _maybe_stale_step5(store, task_id)
+        if user_message and is_report_intent(user_message):
+            _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id)
+            if get_step_status(task_id, "step1_seed") == "pending":
+                store.set_step_status(task_id, "step1_seed", "running", message="等待 Agent 确认种子账号…")
+            if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
+                store.save_dialogue(task_id, session_id, "user", user_message, "user_input")
     except DbError as exc:
         logger.warning("%s", exc)
 
@@ -288,10 +336,11 @@ def _maybe_advance_step67(store: TaskStore, task_id: str) -> None:
     gate5 = can_advance_to_step5(task_id)
     if not gate5.get("ok"):
         return
-    if get_step_status(task_id, "step5_streams") != "completed":
-        store.run_stream_validation(task_id)
     from report_04.gates import count_image_streams
 
+    if get_step_status(task_id, "step5_streams") != "completed":
+        # 文本已比对方：只做轻量收口，避免反复整段文本比对导致 message 闪烁
+        store.kickoff_step5_if_ready(task_id)
     n_img = count_image_streams(task_id)
     if is_stream_compare_ready(task_id) and get_step_status(task_id, "step5_streams") != "completed":
         msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
@@ -315,8 +364,17 @@ def _on_step5_tool_after(
     success: bool,
 ) -> None:
     # vision 可提前回写图片流进度，但不得在未满足门禁时推进步骤五状态
+    matched = False
     if tool_name in _STEP5_STREAM_TOOLS:
-        store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success)
+        matched = bool(store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success))
+        # OCR 失败不阻塞：提示继续 vision；vision 未命中库内 URL 记日志
+        if tool_name == "mcp_ocr_perform_ocr" and not success:
+            logger.info("step5 OCR 失败/无字，继续 vision task=%s matched=%s", task_id, matched)
+        elif tool_name in {"mcp_vision_analyze", "vision_analyze"} and not matched:
+            logger.warning(
+                "step5 vision 未匹配库内图片流，不计入进度 task=%s",
+                task_id,
+            )
 
     gate = can_advance_to_step5(task_id)
     if not gate.get("ok"):
@@ -326,8 +384,21 @@ def _on_step5_tool_after(
 
     n_img = count_image_streams(task_id)
     n_done = count_image_streams_processed(task_id)
+    payload = store._step5_payload(task_id)
+    wait_since = payload.get("wait_images_since")
+    patch = {
+        "image_pending": max(n_img - n_done, 0),
+        "text_compare_done": bool(payload.get("text_compare_done")),
+        "wait_images_since": wait_since,
+    }
     if get_step_status(task_id, "step5_streams") == "pending":
-        store.set_step_status(task_id, "step5_streams", "running", message=f"图片流比对中 {n_done}/{n_img}")
+        store.set_step_status(
+            task_id,
+            "step5_streams",
+            "running",
+            message=f"图片流比对中 {n_done}/{n_img}",
+            payload=patch,
+        )
     if not is_stream_compare_ready(task_id):
         if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
             store.set_step_status(
@@ -335,13 +406,15 @@ def _on_step5_tool_after(
                 "step5_streams",
                 "running",
                 message=f"图片流比对中 {n_done}/{n_img}",
+                payload=patch,
+                touch_updated_at=False,
             )
         return
     if get_step_status(task_id, "step5_streams") != "completed":
         msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
         store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-    if can_advance_to_step7(task_id).get("ok"):
-        _maybe_advance_step67(store, task_id)
+    # 图片流齐后推进步骤六（不必等步骤七门禁）
+    _maybe_advance_step67(store, task_id)
 
 
 def _try_parse_seed(store: TaskStore, task_id: str, assistant: str, user_message: str) -> None:
@@ -762,19 +835,23 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         store, task_id, tool_name, platform, seed_collect=seed_collect
     )
 
-    primary_step = TOOL_PRIMARY_STEP.get(tool_name)
-    if primary_step and tool_name not in _STEP5_STREAM_TOOLS:
-        if primary_step == "step4_profiles" and not discovery_steps_terminal(task_id):
-            pass
-        elif primary_step == "step3_web_search" and not can_run_step3_web_search(task_id):
-            pass
-        elif primary_step == "step7_posts" and not can_run_step7_collect(task_id):
-            pass
-        else:
-            cur = get_step_status(task_id, primary_step)
-            if cur not in {"completed", "failed", "skipped"}:
-                store.set_step_status(task_id, primary_step, "running", message=f"执行 {tool_name}")
-    if collect_step:
+    if seed_collect:
+        if get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}:
+            store.set_step_status(task_id, "step1_seed", "running", message=f"种子采集中 ({tool_name})")
+    else:
+        primary_step = TOOL_PRIMARY_STEP.get(tool_name)
+        if primary_step and tool_name not in _STEP5_STREAM_TOOLS:
+            if primary_step == "step4_profiles" and not discovery_steps_terminal(task_id):
+                pass
+            elif primary_step == "step3_web_search" and not can_run_step3_web_search(task_id):
+                pass
+            elif primary_step == "step7_posts" and not can_run_step7_collect(task_id):
+                pass
+            else:
+                cur = get_step_status(task_id, primary_step)
+                if cur not in {"completed", "failed", "skipped"}:
+                    store.set_step_status(task_id, primary_step, "running", message=f"执行 {tool_name}")
+    if collect_step and not seed_collect:
         blocked = (
             (collect_step.startswith("step4_profile_") and not can_update_step4_children(task_id))
             or (collect_step.startswith("step7_post_") and not can_update_step7_children(task_id))
@@ -815,11 +892,30 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if tool_call_id:
         _SEEN_TOOL_CALLS.add(tool_call_id)
 
+    # OCR/Vision 快路径：无 profile/post 产物，必须先写图片流再退出。
+    # GPT 并行多工具时 db_sink 易在尾部超时，导致 tool_outputs 已成功、步骤五永远 pending。
+    if tool_name in _STEP5_STREAM_TOOLS:
+        _enter_step5(store, task_id)
+        try:
+            _on_step5_tool_after(
+                store,
+                task_id,
+                tool_name,
+                tool_args,
+                success=(status == "success"),
+            )
+            if status == "success" and is_stream_compare_ready(task_id):
+                _maybe_advance_step67(store, task_id)
+        except Exception as exc:
+            logger.exception("step5 快路径失败 task=%s tool=%s: %s", task_id, tool_name, exc)
+        return
+
     apify_platform = apify_platform_from_actor_tool(tool_name)
     if apify_platform:
         _LAST_APIFY_HINT[task_id] = tool_name.replace("mcp_apify_", "")
 
     # 方案 A：种子工具失败或空结果 → 任务硬失败，拦住后续步骤
+    # Apify Actor / get_actor_run 成功时通常尚无 profile，不算失败
     if seed_collect:
         if status != "success":
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=False)
@@ -828,9 +924,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             return
 
     if status != "success":
-        if tool_name in _STEP5_STREAM_TOOLS:
-            _on_step5_tool_after(store, task_id, tool_name, tool_args, success=False)
-        elif platform and can_update_step4_children(task_id):
+        if platform and can_update_step4_children(task_id):
             _prepare_step4_collect(store, task_id)
             _sync_platform_collect_steps(
                 store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
@@ -844,7 +938,11 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             task_id, tool_output_id, dataset_id=ds_id or None
         )
         platform = _infer_platform(tool_name, tool_args, store.get_seed_accounts(task_id), platform_hint) or platform
-        if platform:
+        if seed_collect:
+            output_step_key = "step1_seed"
+            collect_step = None
+            store.update_tool_output_phase(tool_output_id, "step1_seed")
+        elif platform:
             ds_phase = _resolve_dataset_collect_phase(task_id, platform)
             output_step_key = ds_phase
             collect_step = ds_phase
@@ -879,21 +977,42 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if seed_collect:
         profs = result_data.get("profiles") or []
         if not profs:
+            if apify_seed_empty_ok(tool_name):
+                store.set_step_status(
+                    task_id,
+                    "step1_seed",
+                    "running",
+                    message=f"Apify 种子采集进行中 ({tool_name})",
+                )
+                logger.info("种子 Apify 中间步 task=%s tool=%s（等待 dataset）", task_id, tool_name)
+                return
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=True)
             store.fail_seed_and_abort(task_id, fail_msg)
             logger.warning("种子采集失败(空结果) task=%s tool=%s", task_id, tool_name)
             return
+        if tool_name == "mcp_apify_get_dataset_items":
+            n_drop = len(result_data.get("posts") or [])
+            result_data = _strip_apify_posts_for_seed_phase(result_data)
+            if n_drop:
+                logger.info("Apify 种子轮丢弃 posts=%d task=%s", n_drop, task_id)
 
     _persist_normalized(store, task_id, result_data, platform=platform, tool_name=tool_name)
 
-    if tool_name in {"mcp_twitter_get_user_info", "mcp_youtube_get_channel_stats", "mcp_weibo_get_profile"}:
-        profs = result_data.get("profiles") or []
-        if (
-            profs
-            and get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}
-            and not _task_is_terminal(store, task_id)
-        ):
-            store.mark_seed_completed(task_id, profs, source="tool")
+    seed_plat = _task_seed_platform(task_id)
+    is_mcp_seed_tool = tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_")
+    is_apify_seed_dataset = (
+        tool_name == "mcp_apify_get_dataset_items"
+        and is_apify_seed_platform(seed_plat)
+        and get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}
+    )
+    if (
+        (is_mcp_seed_tool or is_apify_seed_dataset)
+        and (result_data.get("profiles") or [])
+        and get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}
+        and not _task_is_terminal(store, task_id)
+        and not apify_seed_empty_ok(tool_name)
+    ):
+        store.mark_seed_completed(task_id, result_data.get("profiles") or [], source="tool")
 
     if tool_name == "mcp_maigret_collect_accounts":
         cands = result_data.get("candidates") or []
@@ -933,14 +1052,15 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     for prof in result_data.get("profiles") or []:
         store.build_streams_from_profile(task_id, prof)
 
+    if seed_collect:
+        return
+
     if platform and can_update_step4_children(task_id):
         _sync_platform_collect_steps(
             store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
         )
     _try_complete_profiles(store, task_id)
-
-    if tool_name in _STEP5_STREAM_TOOLS:
-        _on_step5_tool_after(store, task_id, tool_name, tool_args, success=True)
+    _maybe_stale_step5(store, task_id)
 
 
 def _persist_normalized(
@@ -951,9 +1071,25 @@ def _persist_normalized(
     platform: Optional[str] = None,
     tool_name: str = "",
 ) -> None:
-    prof_step = "step1_seed" if (
-        tool_name in SEED_PROFILE_TOOLS and get_step_status(task_id, "step1_seed") not in {"completed", "skipped", "failed"}
-    ) else (profile_platform_step_key(platform) if platform else "step4_profiles")
+    seed_plat = _task_seed_platform(task_id)
+    is_seed_persist = (
+        get_step_status(task_id, "step1_seed") not in {"completed", "skipped", "failed"}
+        and (
+            (tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_"))
+            or (
+                is_apify_seed_platform(seed_plat)
+                and tool_name
+                in {
+                    APIFY_SEED_PLATFORM_TOOLS.get(seed_plat),
+                    "mcp_apify_get_actor_run",
+                    "mcp_apify_get_dataset_items",
+                }
+            )
+        )
+    )
+    prof_step = "step1_seed" if is_seed_persist else (
+        profile_platform_step_key(platform) if platform else "step4_profiles"
+    )
     post_step = post_platform_step_key(platform) if platform else "step4_profiles"
     for row in data.get("profiles") or []:
         store.save_profile_row(row, step_key=prof_step)
@@ -994,6 +1130,18 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
         _try_complete_profiles(store, task_id)
+        # 中途兜底：回放已成功的 vision；若长时间空等 Vision 则 fail-forward 解开 step5
+        try:
+            from report_04.step_reconcile import (
+                _reconcile_vision_from_tools,
+                maybe_fail_forward_stale_step5,
+            )
+
+            _reconcile_vision_from_tools(store, task_id)
+            maybe_fail_forward_stale_step5(store, task_id, min_wait_seconds=90)
+            _maybe_advance_step67(store, task_id)
+        except Exception as exc:
+            logger.warning("post_llm vision 回放失败 task=%s: %s", task_id, exc)
         if is_final_report(assistant):
             if get_step_status(task_id, "step6_validated") != "completed":
                 _maybe_advance_step67(store, task_id)

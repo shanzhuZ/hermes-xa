@@ -340,9 +340,11 @@ def _sync_platform_collect_steps(
     *,
     tool_name: str,
     tool_ok: bool,
+    tool_args: Optional[Dict[str, Any]] = None,
 ) -> None:
     if not platform:
         return
+    tool_args = tool_args if isinstance(tool_args, dict) else {}
     prof_key = profile_platform_step_key(platform)
     post_key = post_platform_step_key(platform)
     store.ensure_step_row(task_id, prof_key)
@@ -372,8 +374,23 @@ def _sync_platform_collect_steps(
         cur = get_step_status(task_id, prof_key)
         if has_prof:
             store.set_step_status(task_id, prof_key, "completed", message="已入库主页")
-        elif cur not in {"completed", "skipped"}:
-            # 首次失败（如 YouTube @handle）保持 running，等待 channelId 重试
+        elif tool_name == "mcp_youtube_get_channel_stats":
+            # channelId 传 @handle 会失败；无成功记录则直接 failed，避免永久「等待重试」
+            cid = str(tool_args.get("channelId") or tool_args.get("channel_id") or "").strip()
+            looks_like_uc = cid.upper().startswith("UC") and len(cid) >= 20
+            if not looks_like_uc and cur not in {"completed", "skipped", "failed"}:
+                store.set_step_status(
+                    task_id,
+                    prof_key,
+                    "failed",
+                    message="YouTube 需 channelId（UC…），不能用 @handle",
+                )
+            elif cur not in {"completed", "skipped", "failed"}:
+                store.set_step_status(
+                    task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…"
+                )
+        elif cur not in {"completed", "skipped", "failed"}:
+            # 首次失败保持 running，等待合法参数重试
             store.set_step_status(task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…")
     elif tool_name in PROFILE_TOOLS:
         cur = get_step_status(task_id, prof_key)
@@ -392,8 +409,13 @@ def _sync_platform_collect_steps(
     elif tool_name in POST_TOOLS and tool_ok:
         cur = get_step_status(task_id, post_key)
         if n_post == 0 and tool_name == "mcp_apify_get_dataset_items":
-            # dataset 已拉取但无发文（如 Instagram details 仅主页）
-            if cur not in {"completed", "skipped"}:
+            # 主页轮 dataset 常无 posts：勿提前 skipped，留给步骤三发文轮
+            if n_prof > 0:
+                if cur == "pending":
+                    store.set_step_status(
+                        task_id, post_key, "running", message=f"{platform} 等待发文采集…"
+                    )
+            elif cur not in {"completed", "skipped"}:
                 store.set_step_status(task_id, post_key, "skipped", message=f"{platform} 未采集到发文")
         elif cur == "pending":
             store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
@@ -498,7 +520,13 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             _on_step4_tool_after(store, task_id, tool_name, tool_args, success=False)
         elif platform:
             _sync_platform_collect_steps(
-                store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
+                store,
+                task_id,
+                platform,
+                {},
+                tool_name=tool_name,
+                tool_ok=False,
+                tool_args=tool_args,
             )
         return
 
@@ -509,9 +537,6 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             task_id, tool_output_id, dataset_id=ds_id or None
         )
         platform = _infer_platform(tool_name, tool_args, store.get_input_accounts(task_id), platform_hint) or platform
-        if platform:
-            output_step_key = post_platform_step_key(platform)
-            store.update_tool_output_phase(tool_output_id, output_step_key)
 
     ctx: Dict[str, Any] = {
         "task_id": task_id,
@@ -529,10 +554,33 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         logger.exception("normalizer 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
         if platform:
             _sync_platform_collect_steps(
-                store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
+                store,
+                task_id,
+                platform,
+                {},
+                tool_name=tool_name,
+                tool_ok=False,
+                tool_args=tool_args,
             )
         store.reconcile_profile_platform_steps(task_id)
         return
+
+    # Apify dataset：有主页归 profile 子步骤；仅发文归 post 子步骤
+    if tool_name == "mcp_apify_get_dataset_items" and platform:
+        n_prof = len(result_data.get("profiles") or [])
+        n_post = len(result_data.get("posts") or [])
+        if n_prof > 0:
+            output_step_key = profile_platform_step_key(platform)
+        elif n_post > 0:
+            output_step_key = post_platform_step_key(platform)
+        else:
+            # 主页尚未完成时先记到主页子步骤，避免误判为发文轮
+            prof_cur = get_step_status(task_id, profile_platform_step_key(platform))
+            if prof_cur not in {"completed", "skipped"}:
+                output_step_key = profile_platform_step_key(platform)
+            else:
+                output_step_key = post_platform_step_key(platform)
+        store.update_tool_output_phase(tool_output_id, output_step_key)
 
     _persist_normalized(store, task_id, result_data, platform=platform, tool_name=tool_name)
     for prof in result_data.get("profiles") or []:
@@ -540,7 +588,13 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     if platform:
         _sync_platform_collect_steps(
-            store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
+            store,
+            task_id,
+            platform,
+            result_data,
+            tool_name=tool_name,
+            tool_ok=True,
+            tool_args=tool_args,
         )
     _try_complete_profiles(store, task_id)
 

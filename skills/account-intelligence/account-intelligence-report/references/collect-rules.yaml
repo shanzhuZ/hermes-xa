@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.13.0"
+version: "1.15.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -10,7 +10,25 @@ forbidden_always:
 
 steps:
   "1_seed":
-    do: 种子平台 MCP profile（Twitter→get_user_info）
+    do: |
+      按用户指定的种子平台采主页（MCP 或 Apify，与 01 一致）：
+      【MCP】
+      - twitter → mcp_twitter_get_user_info(screen_name=种子handle)
+      - weibo   → mcp_weibo_get_profile
+      - youtube → mcp_youtube_get_channel_stats(channelId=…)
+      - bilibili→ mcp_bilibili_get_user_info(uid=数字uid)
+      【Apify，必须走三轮：Actor → get_actor_run → get_dataset_items】
+      - instagram → mcp_apify_apify__instagram_scraper
+        input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 }
+      - tiktok → mcp_apify_clockworks__tiktok_scraper
+        input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 }
+      - telegram → mcp_apify_vujeen__telegram_channel_scraper
+        input: { channels: ["{ch}"], maxPostsPerChannel: 3 }（ch=@名或 t.me/xxx）
+      - facebook → mcp_apify_headlessagent__facebook_profile_post_scraper
+        input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] }
+      - github → mcp_apify_knotless_cadence__github_profile_scraper
+        input: { usernames: ["{u}"], maxRepos: 5 }
+      Apify 种子：Actor 启动成功后轮询 get_actor_run，再 get_dataset_items 取 profile；禁止因「无 MCP」跳过；种子步只取主页，发文留到步骤7。
     forbid: [get_user_tweets, maigret, vision, web_search, web_extract, browser_*]
 
   "2_maigret":
@@ -49,13 +67,19 @@ steps:
     do: |
       对步骤4成功采到 profile 的候选账号 + 种子：
       文本流：昵称/handle/简介/互链/邮箱 → 与种子比对 → 供 2.2
-      图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze → 供 2.3
-      （步骤5只产出核查数据，不输出报告章节）
-    forbid: [发文工具, 写最终报告, web_search, web_extract, browser_*]
+      图片流（硬约束）：
+      1) 仅处理库内已登记的头像 URL（collect_identity_streams / 步骤4 profile.avatar_url）
+      2) vision_analyze / OCR 的 image_url|input_data 必须等于该 payload_url，禁止用其它 CDN/Instagram 临时链
+      3) 人脸头像通常无字 → 默认跳过 OCR，直接 vision_analyze（每流 1 次）
+      4) 仅当头像明显含文字/水印时才 OCR：language 只能 chi_sim 或 eng（禁止 eng+chi_sim）
+      5) OCR 失败或 No text detected → 立即 vision，禁止同参重试 OCR；OCR 不可达时也直接 vision
+      6) 必须等全部图片流 vision 结束（成功或失败）后才进入步骤6；禁止提前发文工具
+      （步骤5只产出核查数据，不输出报告章节；步骤5完成以 Vision 为准，OCR 可选）
+    forbid: [发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, mcp_weibo_get_feeds, mcp_apify_get_dataset_items发文轮, 写最终报告, web_search, web_extract, browser_*]
 
   "6_validated":
     do: validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded
-    forbid: [一切发文工具, web_search, web_extract, browser_*]
+    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*]
 
   "7_posts":
     do: |

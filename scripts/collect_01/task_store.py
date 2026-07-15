@@ -33,12 +33,20 @@ from collect_01.phases import (
 logger = logging.getLogger(__name__)
 
 _COLLECT_INTENT = re.compile(
-    r"(account-intelligence-collect|账号信息采集|采集.*?(推特|twitter|微博|weibo|@))",
+    r"(account-intelligence-collect|账号信息采集|采集.*?(推特|twitter|微博|weibo|youtube|bilibili|"
+    r"instagram|tiktok|telegram|facebook|github|@))",
     re.I,
 )
 _CROSS_YES = re.compile(r"(跨平台|cross.?platform)", re.I)
 _CROSS_NO = re.compile(r"(仅当前平台|只采当前平台|只要当前平台|不跨平台|不要跨平台|不需要跨平台|单平台)", re.I)
-_PLATFORM_HINT = re.compile(r"(推特|twitter|微博|weibo|youtube|bilibili)", re.I)
+from collect_01.seed_platforms import (
+    PLATFORM_HINT as _PLATFORM_HINT,
+    SEED_PROFILE_TOOLS,
+    TOOL_TO_SEED_PLATFORM,
+    parse_platform_from_message,
+    seed_platform_label,
+    seed_step_completed_message,
+)
 
 
 def _now_sql() -> str:
@@ -46,16 +54,7 @@ def _now_sql() -> str:
 
 
 def _parse_seed(user_message: str) -> Dict[str, Any]:
-    platform = "twitter"
-    m = _PLATFORM_HINT.search(user_message or "")
-    if m:
-        token = m.group(1).lower()
-        if token in {"微博", "weibo"}:
-            platform = "weibo"
-        elif token in {"youtube"}:
-            platform = "youtube"
-        elif token in {"bilibili"}:
-            platform = "bilibili"
+    platform = parse_platform_from_message(user_message)
     handle = None
     hm = re.search(r"@([A-Za-z0-9_\.]+)", user_message or "")
     if hm:
@@ -92,68 +91,15 @@ def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
 
 
 def _extract_image_source(tool_args: Dict[str, Any]) -> str:
-    for key in ("image_url", "input_data", "image_path", "file_path", "url"):
-        val = tool_args.get(key)
-        if isinstance(val, str) and val.strip():
-            return val.strip()
-    return ""
+    from collect_01.image_stream_match import extract_image_source
+
+    return extract_image_source(tool_args)
 
 
 def _find_image_stream_for_tool(task_id: str, tool_args: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    source = _extract_image_source(tool_args)
-    if not source:
-        return None
-    streams = db.fetch_all(
-        """
-        SELECT stream_id, source_platform, source_account_id, payload_url, validation_status, validation_detail
-        FROM collect_identity_streams
-        WHERE task_id=%s AND stream_type='image'
-        """,
-        (task_id,),
-    )
-    if not streams:
-        return None
-    if source.startswith(("http://", "https://")):
-        for row in streams:
-            if (row.get("payload_url") or "").strip() == source:
-                return row
-        base = source.split("?")[0]
-        for row in streams:
-            url = (row.get("payload_url") or "").split("?")[0]
-            if url == base:
-                return row
-        return None
-    basename = os.path.basename(source).lower()
-    hints: List[str] = []
-    if any(k in basename for k in ("twitter", "tw_", "x.com")):
-        hints.append("twitter")
-    if any(k in basename for k in ("youtube", "yt_", "yt3")):
-        hints.append("youtube")
-    if "instagram" in basename or "ig_" in basename:
-        hints.append("instagram")
-    if "tiktok" in basename:
-        hints.append("tiktok")
-    if "weibo" in basename:
-        hints.append("weibo")
-    if "bilibili" in basename or "bili" in basename:
-        hints.append("bilibili")
-    for platform in hints:
-        pending = [
-            row
-            for row in streams
-            if row.get("source_platform") == platform and row.get("validation_status") == "pending"
-        ]
-        waiting = [
-            row for row in pending if "OCR" in str(row.get("validation_detail") or "")
-        ]
-        if len(waiting) == 1:
-            return waiting[0]
-        if len(pending) == 1:
-            return pending[0]
-    pending = [row for row in streams if row.get("validation_status") == "pending"]
-    if len(pending) == 1:
-        return pending[0]
-    return None
+    from collect_01.image_stream_match import find_image_stream_for_tool
+
+    return find_image_stream_for_tool(task_id, tool_args)
 
 
 def _step_status(task_id: str, step_key: str) -> str:
@@ -773,15 +719,15 @@ class TaskStore:
         if not stream_id:
             return False
         if tool_name == "mcp_ocr_perform_ocr":
-            if success:
-                db.execute(
-                    """
-                    UPDATE collect_identity_streams
-                    SET validation_detail=%s, updated_at=NOW(3)
-                    WHERE stream_id=%s AND validation_status='pending'
-                    """,
-                    ("OCR 完成，等待 vision", stream_id),
-                )
+            detail = "OCR 完成，等待 vision" if success else "OCR 失败，请改 language=chi_sim 或跳过 OCR 继续 vision"
+            db.execute(
+                """
+                UPDATE collect_identity_streams
+                SET validation_detail=%s, updated_at=NOW(3)
+                WHERE stream_id=%s AND validation_status='pending'
+                """,
+                (detail, stream_id),
+            )
             return True
         status = "processed" if success else "fail"
         detail = "vision 分析完成" if success else "vision 分析失败"

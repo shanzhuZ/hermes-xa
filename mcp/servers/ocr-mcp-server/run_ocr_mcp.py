@@ -69,6 +69,51 @@ def _configure_tesseract() -> None:
     pytesseract.pytesseract.tesseract_cmd = cmd
 
 
+def _normalize_ocr_language(language: str) -> str:
+    """mcp-ocr 只允许单个已安装语言码；Agent 常传 eng+chi_sim / chi_sim+eng。
+
+    组合串不在 Available languages 列表中会直接 400，导致步骤五反复重试。
+    规则：含 chi_sim → 用 chi_sim；否则取第一个已安装片段；都没有则 eng。
+    """
+    raw = (language or "eng").strip().lower().replace(",", "+").replace(" ", "")
+    if not raw:
+        return "eng"
+    if "+" not in raw:
+        return raw
+    parts = [p for p in raw.split("+") if p]
+    if "chi_sim" in parts:
+        return "chi_sim"
+    if "eng" in parts:
+        return "eng"
+    return parts[0]
+
+
+def _patch_perform_ocr_language(mcp: object) -> None:
+    """包装 perform_ocr / image_to_data / perform_batch_ocr，兼容组合 language。"""
+    import functools
+
+    tool_manager = getattr(mcp, "_tool_manager", None)
+    tools = getattr(tool_manager, "_tools", None) if tool_manager else None
+    if not isinstance(tools, dict):
+        return
+
+    for name in ("perform_ocr", "image_to_data", "perform_batch_ocr"):
+        tool = tools.get(name)
+        if tool is None or not getattr(tool, "fn", None):
+            continue
+        orig = tool.fn
+
+        @functools.wraps(orig)
+        async def _wrapped(*args, _orig=orig, **kwargs):  # noqa: ANN001
+            if "language" in kwargs and kwargs["language"] is not None:
+                kwargs["language"] = _normalize_ocr_language(str(kwargs["language"]))
+            elif len(args) >= 2 and isinstance(args[1], str):
+                args = (args[0], _normalize_ocr_language(args[1]), *args[2:])
+            return await _orig(*args, **kwargs)
+
+        object.__setattr__(tool, "fn", _wrapped)
+
+
 def main() -> None:
     os.environ.setdefault("PYTHONUNBUFFERED", "1")
     os.environ.setdefault("PYTHONUTF8", "1")
@@ -81,6 +126,7 @@ def main() -> None:
 
     from mcp_ocr.server import mcp
 
+    _patch_perform_ocr_language(mcp)
     mcp.run(transport="stdio")
 
 

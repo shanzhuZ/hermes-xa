@@ -1,5 +1,5 @@
-# 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.12.0"
+# 03 账号核查 — 唯一参考（Skill 只加载本文件）
+version: "1.13.0"
 
 identity: 用户指定的多个 @种子账号 作为目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -9,33 +9,47 @@ forbidden_always:
 
 steps:
   "1_seed":
-    do: 多平台 MCP profile
-    forbid: [get_user_tweets, maigret, vision]
+    do: |
+      确认用户给出的多种子账号列表（平台+handle/uid）。
+      支持种子平台（与 01/02 对齐）：
+      【MCP】twitter / weibo / youtube / bilibili
+      【Apify】instagram / tiktok / telegram / facebook / github
+      须清晰列出全部种子账号后再进入步骤二；禁止因「无原生 MCP」拒绝 Apify 平台种子。
+    forbid: [get_user_tweets, maigret, vision, 发文采集]
 
   "2_profiles":
     do: |
-      遍历 summary.accounts 所有账号：
-      - 有 MCP
-          Twitter使用mcp__twitter__get_user_info 获取主页数据采集
-          YouTube使用mcp__youtube__get_channel_stats + channelId 获取主页信息，禁止 analyze_channel_videos
-          bilibili（B站）使用 mcp__bilibili__get_user_info 获取主页数据采集
-      - 无 MCP
-          Instagram/TikTok/Telegram/Facebook/GitHub  使用Apify mcp__apify__get_actor_run 获取 主页信息
-      - discovery_only（Discord/ImgInn 等）：只记 URL
-      失败/空数据→跳过该候选，禁止 web_search，禁止重试超过 1 次
+      遍历步骤一确认的全部种子账号，采集主页：
+      【MCP】
+      - twitter → mcp_twitter_get_user_info
+      - youtube → mcp_youtube_get_channel_stats(channelId=…)（禁止 analyze_channel_videos）
+      - weibo → mcp_weibo_get_profile
+      - bilibili → mcp_bilibili_get_user_info
+      【Apify，必须走三轮：Actor → get_actor_run → get_dataset_items】
+      - instagram → mcp_apify_apify__instagram_scraper
+        input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 }
+      - tiktok → mcp_apify_clockworks__tiktok_scraper
+        input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 }
+      - telegram → mcp_apify_vujeen__telegram_channel_scraper
+        input: { channels: ["{ch}"], maxPostsPerChannel: 3 }
+      - facebook → mcp_apify_headlessagent__facebook_profile_post_scraper
+        input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] }
+      - github → mcp_apify_knotless_cadence__github_profile_scraper
+        input: { usernames: ["{u}"], maxRepos: 5 }
+      Apify：三轮拿 profile；本步以主页为主，dataset 若夹带 posts 可入库但不替代步骤三发文义务。
+      失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
     forbid: [maigret, get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
 
   "3_contents":
     do: |
-      遍历 summary.accounts 所有账号，采集展示近30天的所有发言内容：
-      - 有 MCP：
-          Twitter使用mcp__twitter__get_user_tweets
-          微博
-          B站（bilibili）使用mcp__bilibili__get_video_info
-          YouTube使用mcp__youtube__analyze_channel_videos
-      - 无 MCP：
-          Instagram/TikTok/Telegram/Facebook/GitHub  使用 Apify mcp__apify__get_dataset_items 三轮（resultsLimit≤5）
-      失败/空数据→跳过该候选，禁止 web_search，禁止重试超过 1 次
+      遍历全部种子账号，采集近 30 天发文：
+      【MCP】
+      - twitter → get_user_tweets
+      - weibo → get_user_feeds / get_feeds
+      - youtube → analyze_channel_videos(channelId)
+      - bilibili → 平台发文/视频 MCP（若有）
+      【Apify】同步骤二 Actor，三轮 resultsLimit 按平台；已有 dataset 可复用，不足则再拉一轮
+      失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
     forbid: [maigret, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, youtube search, vision, ocr, 任何报告文字]
 
   "4_analysis_content":
@@ -49,7 +63,8 @@ steps:
     do: |
       结合对步骤2采集账号主页信息 与 步骤4账号发言观点与发言风格，同时展开一下分析：
         - 文本流：昵称/handle/简介/互链/邮箱/码值/电话 → 使用账号主页信息做多组合对比
-        - 图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr + vision_analyze
+        - 图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr(language=chi_sim) + vision_analyze
+          （language 只能 chi_sim 或 eng；禁止 eng+chi_sim）
     forbid: [发文工具, 写最终报告]
 
   "6_validated":
@@ -67,7 +82,7 @@ apify:
   instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
   tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
   telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }
-  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
-  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
+  facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper, input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] } }
+  github: { tool: mcp_apify_knotless_cadence__github_profile_scraper, input: { usernames: ["{u}"], maxRepos: 5 } }
 
 midflight: 步骤1-6 对用户展示 全部 进度，描述尽可能详细；

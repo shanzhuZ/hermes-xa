@@ -1,5 +1,5 @@
 # 账号扩建 — 唯一参考（Skill 只加载本文件）
-version: "1.1.0"
+version: "1.2.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -16,7 +16,25 @@ forbidden_always:
 
 steps:
   "1_seed":
-    do: 种子平台 MCP profile（Twitter→mcp_twitter_get_user_info）
+    do: |
+      按用户指定的种子平台采主页（MCP 或 Apify，与 01 一致）：
+      【MCP】
+      - twitter → mcp_twitter_get_user_info(screen_name=种子handle)
+      - weibo   → mcp_weibo_get_profile
+      - youtube → mcp_youtube_get_channel_stats(channelId=…)
+      - bilibili→ mcp_bilibili_get_user_info(uid=数字uid)
+      【Apify，必须走三轮：Actor → get_actor_run → get_dataset_items】
+      - instagram → mcp_apify_apify__instagram_scraper
+        input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 }
+      - tiktok → mcp_apify_clockworks__tiktok_scraper
+        input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 }
+      - telegram → mcp_apify_vujeen__telegram_channel_scraper
+        input: { channels: ["{ch}"], maxPostsPerChannel: 3 }（ch=@名或 t.me/xxx）
+      - facebook → mcp_apify_headlessagent__facebook_profile_post_scraper
+        input: { profileUrls: ["https://www.facebook.com/{u}"], postUrls: [] }
+      - github → mcp_apify_knotless_cadence__github_profile_scraper
+        input: { usernames: ["{u}"], maxRepos: 5 }
+      Apify 种子：Actor 启动成功后轮询 get_actor_run，再 get_dataset_items 取 profile；禁止因「无 MCP」跳过；种子步只取主页，发文留到步骤3。
     forbid: [get_user_tweets, maigret, vision]
 
   "2_discover":
@@ -52,6 +70,7 @@ steps:
         - Twitter → get_user_info(profile) + get_user_tweets(50)
         - YouTube → get_channel_stats(channelId)(profile) + analyze_channel_videos(channelId)(发文)
         - 微博 → get_profile(profile) + get_user_feeds(发文)
+        - B站 → get_user_info(uid)(profile)；发文暂无 MCP 批量工具，可跳过或仅 profile
       - 无 MCP：Instagram/Telegram/Facebook/TikTok/GitHub → Apify（resultsLimit≤50）
         一次 run 同时取 profile 字段 + 发文原文（从同一 dataset 读）
       - discovery_only（Discord/ImgInn 等）：只记 URL，无 profile/发文
@@ -72,7 +91,7 @@ steps:
          - 发文内容：分析候选平台发文主题、风格、观点是否与种子一致（基于步骤3与 profile 同源采集的发文原文）
       3. 图片流（**只用头像 avatar_url**，不用背景图、不用发文图片；头像来自步骤3 profile）：
          - 对候选 profile 里的头像 URL：
-           a. mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim+eng") 提取头像内文字（水印/logo/handle 等）
+           a. mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim") 提取头像内文字（水印/logo/handle 等；勿传 chi_sim+eng / eng+chi_sim）
            b. vision_analyze(image_url=头像URL, user_prompt="描述这张头像的外观、风格、颜色、主体内容，用于与种子账号头像做相似度比对")
          - 同样对种子头像做 OCR+vision（作为比对基准）
          - 输出：图内文字（候选：xxx vs 种子：xxx）+ 视觉描述（候选：xxx vs 种子：xxx）→ 相似度分析

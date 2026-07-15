@@ -29,7 +29,7 @@ metadata:
 5. **步骤 3 采主页 + 发文（平台顺序稳定）**：Maigret 结束后，先按“步骤二已确认的平台列表”建立本轮要采集的平台顺序；之后按平台顺序逐个平台完成采集。每个平台允许在同一步内拿 profile + 发文，但**禁止**只先跑种子 Twitter 发文、再回头补其他平台主页；也**禁止**步骤 4 先于步骤 3 全量采集启动。有 MCP→MCP，无 MCP→Apify；失败重试最多 2 次，三次均失败→跳过并标记"采集失败"；不换工具、不用 web_search
 6. **步骤 4** 双流核查（候选 vs 种子），两条流都要做：
    - **文本流**（账号信息 + 发文信息）：昵称 / handle / 简介 / 互链 / 邮箱 / 发文内容，共 6 项逐条对比
-   - **图片流**（**只用头像 avatar_url**，不用背景图、不用发文图片）：对步骤 3 profile 里的头像 URL 调 `mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim+eng")` 提取图内文字 **+** `vision_analyze` 描述画面，候选头像 vs 种子头像做比对
+   - **图片流**（**只用头像 avatar_url**，不用背景图、不用发文图片）：对步骤 3 profile 里的头像 URL 调 `mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim")` 提取图内文字 **+** `vision_analyze` 描述画面，候选头像 vs 种子头像做比对（language 只能单码：`chi_sim` 或 `eng`）
    - 综合判定基于文本流 + 图片流；发文内容对比基于步骤 3 采到的发文
 7. **第四节只列 HIGH 账号**：仅相似度极高（HIGH）的账号入选，MEDIUM/LOW 一律不展示；每条附一句判断依据；不含 profile、不含发文
 8. **步骤 6** 一次性输出四节
@@ -38,7 +38,7 @@ metadata:
 
 | 步 | 动作 |
 |----|------|
-| 1 | 种子平台 MCP profile |
+| 1 | 种子平台 MCP/Apify profile（Instagram/TikTok/Telegram/Facebook/GitHub 走 Apify 三轮） |
 | 2 | Maigret MCP（跨平台发现） |
 | 3 | 按步骤二的平台顺序，逐个平台采集 profile + 发文（MCP **或** Apify，小 limit）；禁止只先跑单个平台发文 |
 | 4 | 文本流（账号信息+发文内容）+ 图片流（**头像 avatar_url** OCR+vision）vs 种子（核查打分） |
@@ -49,16 +49,14 @@ metadata:
 
 | 平台 | 工具 |
 |------|------|
-| Twitter | `mcp_twitter_get_user_info`（profile）；发文 `get_user_tweets` |
-| YouTube | `mcp_youtube_get_channel_stats(channelId=UC…)`；发文 `analyze_channel_videos` |
-| 微博 | `mcp_weibo_get_profile`；发文 `get_user_feeds` |
-| Instagram | `mcp_apify_apify__instagram_scraper` → run → dataset |
-| Facebook | `mcp_apify_headlessagent__facebook_profile_post_scraper` |
-| Telegram | `mcp_apify_vujeen__telegram_channel_scraper` → run → dataset |
-| TikTok | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
-| GitHub | `mcp_apify_knotless_cadence__github_profile_scraper` |
+| Twitter | 步骤1：`mcp_twitter_get_user_info`；步骤3 发文：`get_user_tweets` |
+| YouTube | 步骤1：`mcp_youtube_get_channel_stats(channelId=UC…)`；步骤3 发文：`analyze_channel_videos` |
+| 微博 | 步骤1：`mcp_weibo_get_profile`；步骤3 发文：`get_user_feeds` |
+| B站 | 步骤1：`mcp_bilibili_get_user_info` |
+| Instagram / TikTok / Telegram / Facebook / GitHub | 步骤1 与步骤3：**Apify 三轮**（Actor → get_actor_run → get_dataset_items）；步骤1 只取 profile，步骤3 再采发文 |
 
-**步骤 3 同时用两类工具**：profile 类（`get_user_info`/`get_channel_stats`/`get_profile`）+ 发文类（`get_user_tweets`/`get_user_feeds`/`analyze_channel_videos`/Apify dataset），一次采完，确保 profile 与发文同源。**仍禁止**：YouTube 搜视频（只对已知 channelId 采）、`web_search`。
+**步骤 1**：有 MCP 用 MCP；无 MCP 必须 Apify 三轮，禁止因「无 MCP」跳过。
+**步骤 3 同时用两类工具**：profile 类 + 发文类（MCP 或 Apify），一次采完，确保 profile 与发文同源。**仍禁止**：YouTube 搜视频（只对已知 channelId 采）、`web_search`。
 
 ## 步骤 7 输出骨架
 
