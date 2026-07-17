@@ -32,10 +32,9 @@ _FINAL_MARKERS = (
 def is_progress_only(text: str) -> bool:
     """进度播报，不应完成分析步骤。"""
     t = (text or "").strip()
-    if len(t) < 400:
-        for pat in _PROGRESS_PATTERNS:
-            if pat.search(t):
-                return True
+    for pat in _PROGRESS_PATTERNS:
+        if pat.search(t):
+            return True
     return False
 
 

@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.15.0"
+version: "1.16.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -74,11 +74,14 @@ steps:
       4) 仅当头像明显含文字/水印时才 OCR：language 只能 chi_sim 或 eng（禁止 eng+chi_sim）
       5) OCR 失败或 No text detected → 立即 vision，禁止同参重试 OCR；OCR 不可达时也直接 vision
       6) 必须等全部图片流 vision 结束（成功或失败）后才进入步骤6；禁止提前发文工具
+      7) 步骤5进行中调用 get_user_tweets / analyze_channel_videos / get_user_feeds / Apify发文 → 会被系统拦截
       （步骤5只产出核查数据，不输出报告章节；步骤5完成以 Vision 为准，OCR 可选）
     forbid: [发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, mcp_weibo_get_feeds, mcp_apify_get_dataset_items发文轮, 写最终报告, web_search, web_extract, browser_*]
 
   "6_validated":
-    do: validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded
+    do: |
+      validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded。
+      本步完成前禁止一切发文工具；完成后才能进入步骤7。
     forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*]
 
   "7_posts":

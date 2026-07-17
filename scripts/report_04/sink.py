@@ -43,10 +43,13 @@ from report_04.gates import (
     discovery_steps_terminal,
     get_step_status,
     is_stream_compare_ready,
+    seconds_since_last_tool,
+    step4_profile_collect_started,
     step7_collect_active,
 )
 from report_04.phases import (
     ANALYSIS_STEP_KEYS,
+    APIFY_POST_TOOLS,
     APIFY_TOOL_PLATFORM,
     POST_TOOLS,
     PROFILE_TOOLS,
@@ -77,6 +80,11 @@ _SKIP_STEP_TOOLS = frozenset({
     "skill_view", "clarify", "tool_search", "describe_tool", "todo", "terminal",
     "mcp_firecrawl_firecrawl_search", "mcp_firecrawl_firecrawl_scrape",
 })
+# 步骤3 web 安静期：避免 3 条并行 search 刚结束就收口，stream 还在搜
+_STEP3_QUIET_SECONDS = 40
+# 步骤5 vision 安静期：图片流已齐后仍等模型可能继续发的 vision
+_STEP5_VISION_SETTLE_SECONDS = 25
+_VISION_TOOL_NAMES = ("vision_analyze", "mcp_vision_analyze", "mcp_ocr_perform_ocr", "mcp_ocr_perform_batch_ocr")
 _STEP5_STREAM_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
 _SEEN_TOOL_CALLS: set = set()
 _LAST_APIFY_HINT: Dict[str, str] = {}
@@ -107,16 +115,130 @@ def _setup_logging() -> None:
 _setup_logging()
 
 
-def handle_event(payload: Dict[str, Any]) -> None:
+def handle_event(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     event = payload.get("hook_event_name") or ""
     if event == "pre_llm_call":
-        _on_pre_llm(payload)
-    elif event == "post_tool_call":
+        return _on_pre_llm(payload)
+    if event == "pre_tool_call":
+        return _on_pre_tool(payload)
+    if event == "post_tool_call":
         _on_post_tool(payload)
     elif event == "post_llm_call":
         _on_post_llm_call(payload)
     elif event == "on_session_end":
         _on_session_end(payload)
+    return None
+
+
+def _normalize_hook_tool_name(raw: Optional[str]) -> str:
+    from collect_01.normalizers.base import normalize_mcp_tool_name
+
+    return normalize_mcp_tool_name(str(raw or "").strip())
+
+
+def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
+    """步骤五/六未完成时禁止发文类工具。返回拦截原因，允许则 None。"""
+    if can_run_step7_collect(task_id):
+        return None
+    s5 = get_step_status(task_id, "step5_streams")
+    s6 = get_step_status(task_id, "step6_validated")
+    # MCP 发文工具：一律拦截
+    if tool_name in POST_TOOLS and tool_name != "mcp_apify_get_dataset_items":
+        return (
+            f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
+            "请先完成全部图片流 vision，再等步骤6收敛可信账号后，才允许 get_user_tweets / "
+            "analyze_channel_videos / get_user_feeds / Apify 发文。"
+        )
+    # 步骤四已收口后的 Apify：只可能是抢跑步骤7
+    apify_like = (
+        tool_name in APIFY_POST_TOOLS
+        or tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}
+    )
+    if apify_like and get_step_status(task_id, "step4_profiles") in {"completed", "skipped"}:
+        return (
+            f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
+            "禁止提前用 Apify 采发文；请先完成步骤5全部 vision，再进入步骤6。"
+        )
+    return None
+
+
+def _is_late_web_search_tool(tool_name: str, task_id: str) -> Optional[str]:
+    """步骤四主页采集已开始后禁止继续 web_search（避免 stream 还在步骤3、树已进步骤4）。"""
+    if tool_name not in WEB_SEARCH_TOOLS:
+        return None
+    if not step4_profile_collect_started(task_id):
+        return None
+    return (
+        "步骤4主页采集已开始，禁止再调用 web_search/web_extract/browser_*。"
+        "请继续候选主页 MCP/Apify 采集，勿回到步骤3检索。"
+    )
+
+
+def _step5_guidance_context(task_id: str) -> Optional[str]:
+    """步骤五进行中时注入硬约束，约束模型勿抢跑发文。"""
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 not in {"pending", "running"}:
+        return None
+    if can_run_step7_collect(task_id):
+        return None
+    from report_04.gates import count_image_streams, count_image_streams_processed
+
+    n_img = count_image_streams(task_id)
+    n_done = count_image_streams_processed(task_id)
+    return (
+        "【写报硬约束·当前步骤5】必须完成全部图片流 vision 后才能进入步骤6/7。"
+        f"图片流进度 {n_done}/{n_img}。"
+        "禁止调用：get_user_tweets、analyze_channel_videos、get_user_feeds、"
+        "以及任何 Apify 发文采集。步骤6 validated 完成前禁止发文工具。"
+    )
+
+
+def _vision_settle_ready(task_id: str) -> bool:
+    """图片流已齐，且距最近一次 vision/ocr 已过安静期（或无图片流）。"""
+    from report_04.gates import count_image_streams
+
+    if not is_stream_compare_ready(task_id):
+        return False
+    if count_image_streams(task_id) == 0:
+        return True
+    age = seconds_since_last_tool(task_id, tool_names=list(_VISION_TOOL_NAMES))
+    if age is None:
+        # 库内流已齐但尚无 vision 工具：允许收口（可能全失败标记 processed）
+        return True
+    return age >= float(_STEP5_VISION_SETTLE_SECONDS)
+
+
+def _reopen_step5_for_late_vision(store: TaskStore, task_id: str) -> None:
+    """步骤5已完成后又来 vision，且步骤7尚未真正发文：回开步骤5并回滚6/7。"""
+    from report_04.step_reconcile import _post_collect_attempted, ensure_step7_parent_not_premature
+    from collect_01 import db as _db
+
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 not in {"completed", "skipped"}:
+        return
+    plats = _db.fetch_all(
+        """
+        SELECT DISTINCT platform FROM collect_validated_accounts
+        WHERE task_id=%s AND verdict='validated'
+        """,
+        (task_id,),
+    )
+    for r in plats:
+        plat = str(r.get("platform") or "")
+        if plat and _post_collect_attempted(task_id, plat):
+            return
+    store.set_step_status(
+        task_id,
+        "step5_streams",
+        "running",
+        message="检测到晚到 vision，重新确认图片流…",
+    )
+    if get_step_status(task_id, "step6_validated") in {"running", "completed", "skipped"}:
+        store.set_step_status(task_id, "step6_validated", "pending", message="等待步骤五完成")
+    ensure_step7_parent_not_premature(store, task_id)
+    if get_step_status(task_id, "step7_posts") in {"running", "completed", "skipped"}:
+        store.set_step_status(task_id, "step7_posts", "pending", message="等待步骤五、六完成")
+    logger.info("晚到 vision，回开步骤5并回滚6/7 task=%s", task_id)
 
 
 def _extra(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -179,10 +301,17 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
 
 
 def _prepare_step4_collect(store: TaskStore, task_id: str) -> bool:
-    """步骤二、三均结束后，按候选去重生成步骤四子节点。"""
+    """步骤二结束后可物化步骤四；若步骤3未收口则先收口。"""
+    if get_step_status(task_id, "step2_maigret") not in {"completed", "skipped"}:
+        return False
+    if get_step_status(task_id, "step3_web_search") not in {"completed", "skipped"}:
+        _close_step3_before_step4_tool(store, task_id)
     if not can_update_step4_children(task_id):
         return False
     store.materialize_step4_from_candidates(task_id)
+    # 首个主页工具到来：点亮父步骤四
+    if get_step_status(task_id, "step4_profiles") in {"pending", None}:
+        store.set_step_status(task_id, "step4_profiles", "running", message="候选主页采集中")
     return True
 
 
@@ -205,6 +334,23 @@ def _resolve_collect_phase(
     if tool_name in _STEP5_STREAM_TOOLS:
         sk = tool_step_key(tool_name)
         return None, sk
+    # 步骤七已可跑：Apify Actor/dataset / 发文 MCP 优先归 step7，禁止误进 step4 重开已完成主页
+    apify_like = (
+        tool_name in APIFY_POST_TOOLS
+        or tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}
+    )
+    if (
+        platform
+        and can_run_step7_collect(task_id)
+        and (tool_name in POST_TOOLS or apify_like)
+    ):
+        # 首个发文工具才点亮步骤7父节点（避免步骤5 vision 未停就假 running）
+        store.start_step7_if_ready(task_id)
+        if tool_name == "mcp_apify_get_dataset_items":
+            cs = _resolve_dataset_collect_phase(task_id, platform)
+        else:
+            cs = post_platform_step_key(platform)
+        return cs, cs
     if tool_name in STEP4_COLLECT_TOOLS or (tool_name == "mcp_apify_get_dataset_items" and platform):
         _prepare_step4_collect(store, task_id)
         if platform and can_update_step4_children(task_id):
@@ -220,9 +366,9 @@ def _resolve_collect_phase(
         and step7_collect_active(task_id)
     ):
         if not can_run_step7_collect(task_id):
-            # 步骤六完成前：仅记录 tool_outputs，不推进步骤七状态
-            return None, post_platform_step_key(platform) if platform else "step4_profiles"
-        store.materialize_step7_from_validated(task_id)
+            # 步骤六完成前：仅记录 tool_outputs（phase 挂 step5，避免步骤树/前端误判进步骤7）
+            return None, "step5_streams"
+        store.start_step7_if_ready(task_id)
         if platform:
             cs = post_platform_step_key(platform)
             return cs, cs
@@ -308,27 +454,66 @@ def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:
         logger.warning("step5 超时兜底失败 task=%s: %s", task_id, exc)
 
 
-def _on_pre_llm(payload: Dict[str, Any]) -> None:
+def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """硬拦截：步骤4已开始禁止 web；步骤5/6 未完成禁止发文。"""
+    tool_name = _normalize_hook_tool_name(payload.get("tool_name"))
+    if not tool_name or tool_name in _SKIP_STEP_TOOLS:
+        return None
+    try:
+        task_id = _resolve_task_id(payload)
+        if not task_id:
+            return None
+        reason = _is_late_web_search_tool(tool_name, task_id) or _is_premature_step7_tool(
+            tool_name, task_id
+        )
+        if not reason:
+            return None
+        try:
+            from report_04.step_reconcile import ensure_step7_parent_not_premature
+
+            ensure_step7_parent_not_premature(_store(), task_id)
+        except Exception:
+            pass
+        logger.warning("拦截越序工具 task=%s tool=%s: %s", task_id, tool_name, reason)
+        return {"decision": "block", "reason": reason}
+    except DbError as exc:
+        logger.warning("pre_tool 门禁失败: %s", exc)
+        return None
+
+
+def _on_pre_llm(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     ex = _extra(payload)
     user_message = str(ex.get("user_message") or "").strip()
+    context: Optional[str] = None
     try:
         task_id = _resolve_task_id(payload, user_message=user_message)
         if not task_id:
-            return
+            return None
         store = _store()
         session_id = str(payload.get("session_id") or "").strip()
         if session_id:
             store.bind_session(task_id, session_id)
-        # 每轮 LLM 前检查：步骤五空等 Vision 超时则收口
         _maybe_stale_step5(store, task_id)
+        _try_complete_step3_if_quiet(store, task_id)
+        _try_complete_step5_if_settled(store, task_id)
+        try:
+            from report_04.step_reconcile import ensure_step7_parent_not_premature
+
+            ensure_step7_parent_not_premature(store, task_id)
+        except Exception:
+            pass
         if user_message and is_report_intent(user_message):
             _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id)
             if get_step_status(task_id, "step1_seed") == "pending":
                 store.set_step_status(task_id, "step1_seed", "running", message="等待 Agent 确认种子账号…")
             if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
                 store.save_dialogue(task_id, session_id, "user", user_message, "user_input")
+        context = _step5_guidance_context(task_id)
     except DbError as exc:
         logger.warning("%s", exc)
+    if context:
+        return {"context": context}
+    return None
 
 
 def _enter_step5(store: TaskStore, task_id: str) -> None:
@@ -341,26 +526,48 @@ def _enter_step5(store: TaskStore, task_id: str) -> None:
 
 
 def _maybe_advance_step67(store: TaskStore, task_id: str) -> None:
+    """仅在步骤5真正 completed 后推进步骤6；步骤7父节点等发文工具再点亮。"""
     gate5 = can_advance_to_step5(task_id)
     if not gate5.get("ok"):
         return
-    from report_04.gates import count_image_streams
-
+    _try_complete_step5_if_settled(store, task_id)
     if get_step_status(task_id, "step5_streams") != "completed":
-        # 文本已比对方：只做轻量收口，避免反复整段文本比对导致 message 闪烁
         store.kickoff_step5_if_ready(task_id)
-    n_img = count_image_streams(task_id)
-    if is_stream_compare_ready(task_id) and get_step_status(task_id, "step5_streams") != "completed":
-        msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
-        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+        _try_complete_step5_if_settled(store, task_id)
     if (
         get_step_status(task_id, "step5_streams") == "completed"
         and get_step_status(task_id, "step6_validated") != "completed"
     ):
         store.run_validated_accounts(task_id)
-    if can_advance_to_step7(task_id).get("ok"):
-        store.materialize_step7_from_validated(task_id)
-        store.reconcile_collect_child_steps(task_id)
+
+
+def _try_complete_step5_if_settled(store: TaskStore, task_id: str) -> bool:
+    """图片流已齐且 vision 安静期过后，才 completed 步骤5。"""
+    from report_04.gates import count_image_streams, count_image_streams_processed
+
+    if not can_advance_to_step5(task_id).get("ok"):
+        return False
+    if get_step_status(task_id, "step5_streams") in {"completed", "skipped"}:
+        return False
+    if not is_stream_compare_ready(task_id):
+        return False
+    n_img = count_image_streams(task_id)
+    n_done = count_image_streams_processed(task_id)
+    if not _vision_settle_ready(task_id):
+        store.set_step_status(
+            task_id,
+            "step5_streams",
+            "running",
+            message=f"图片流已齐 {n_done}/{n_img}，等待 vision 轮次结束…",
+            payload={"text_compare_done": True, "image_pending": 0, "vision_ready": True},
+            touch_updated_at=False,
+        )
+        return False
+    msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
+    store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+    if get_step_status(task_id, "step6_validated") != "completed":
+        store.run_validated_accounts(task_id)
+    return True
 
 
 def _on_step5_tool_after(
@@ -371,11 +578,16 @@ def _on_step5_tool_after(
     *,
     success: bool,
 ) -> None:
-    # vision 可提前回写图片流进度，但不得在未满足门禁时推进步骤五状态
+    # 晚到 vision：若步骤5已完成且步骤7未发文，回开步骤5
+    if tool_name in _STEP5_STREAM_TOOLS and get_step_status(task_id, "step5_streams") in {
+        "completed",
+        "skipped",
+    }:
+        _reopen_step5_for_late_vision(store, task_id)
+
     matched = False
     if tool_name in _STEP5_STREAM_TOOLS:
         matched = bool(store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success))
-        # OCR 失败不阻塞：提示继续 vision；vision 未命中库内 URL 记日志
         if tool_name == "mcp_ocr_perform_ocr" and not success:
             logger.info("step5 OCR 失败/无字，继续 vision task=%s matched=%s", task_id, matched)
         elif tool_name in {"mcp_vision_analyze", "vision_analyze"} and not matched:
@@ -418,11 +630,16 @@ def _on_step5_tool_after(
                 touch_updated_at=False,
             )
         return
-    if get_step_status(task_id, "step5_streams") != "completed":
-        msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
-        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-    # 图片流齐后推进步骤六（不必等步骤七门禁）
-    _maybe_advance_step67(store, task_id)
+    # 已齐：进入 settle，禁止立刻 completed→级联步骤6/7
+    if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
+        store.set_step_status(
+            task_id,
+            "step5_streams",
+            "running",
+            message=f"图片流已齐 {n_done}/{n_img}，等待 vision 轮次结束…",
+            payload={**patch, "image_pending": 0, "vision_ready": True},
+        )
+    _try_complete_step5_if_settled(store, task_id)
 
 
 def _try_parse_seed(store: TaskStore, task_id: str, assistant: str, user_message: str) -> None:
@@ -498,6 +715,17 @@ def _apply_skip_steps(store: TaskStore, task_id: str, text: str) -> None:
 
 
 def _mark_analysis_running(store: TaskStore, task_id: str) -> None:
+    try:
+        from report_04.step_reconcile import (
+            reconcile_step4_and_step7_children,
+            reconcile_step7_from_post_tools,
+        )
+
+        reconcile_step7_from_post_tools(store, task_id)
+        reconcile_step4_and_step7_children(store, task_id)
+        store.reconcile_collect_child_steps(task_id)
+    except Exception as exc:
+        logger.warning("步骤七收口失败 task=%s: %s", task_id, exc)
     if not can_advance_to_analysis(task_id).get("ok"):
         return
     for step_key in ANALYSIS_STEP_KEYS:
@@ -505,19 +733,7 @@ def _mark_analysis_running(store: TaskStore, task_id: str) -> None:
             store.set_step_status(task_id, step_key, "running", message="分析进行中…")
 
 
-def _maybe_complete_step3_after_web_tool(
-    store: TaskStore,
-    task_id: str,
-    tool_name: str,
-) -> None:
-    """步骤三：web 工具成功后解析候选，并在检索阶段结束时收口为 completed。"""
-    if tool_name not in WEB_SEARCH_TOOLS:
-        return
-    if not can_run_step3_web_search(task_id):
-        return
-    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
-        return
-
+def _step3_threshold_met(task_id: str) -> tuple[bool, int, int, int]:
     from collect_01 import db as _db
 
     row = _db.fetch_one(
@@ -534,17 +750,18 @@ def _maybe_complete_step3_after_web_tool(
     n_search = int((row or {}).get("n_search") or 0)
     n_extract = int((row or {}).get("n_extract") or 0)
     n_browser = int((row or {}).get("n_browser") or 0)
+    ok = n_extract >= 1 or n_browser >= 1 or n_search >= 3
+    return ok, n_search, n_extract, n_browser
 
-    should_complete = False
-    if tool_name == "web_extract" and n_extract >= 1:
-        should_complete = True
-    elif tool_name.startswith("browser_") and n_browser >= 1 and n_search >= 1:
-        should_complete = True
-    elif tool_name == "web_search" and n_search >= 3:
-        should_complete = True
 
-    if not should_complete:
-        return
+def _complete_step3_now(
+    store: TaskStore,
+    task_id: str,
+    *,
+    n_search: int,
+    n_extract: int,
+) -> None:
+    from collect_01 import db as _db
 
     n_web_cands = _db.fetch_one(
         """
@@ -561,6 +778,60 @@ def _maybe_complete_step3_after_web_tool(
         message=f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web}）",
     )
     store.materialize_step4_from_candidates(task_id)
+
+
+def _try_complete_step3_if_quiet(store: TaskStore, task_id: str) -> bool:
+    """检索安静期过后才收口步骤3，避免 stream 仍在 web_search 时树已进步骤4。"""
+    if not can_run_step3_web_search(task_id):
+        return False
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return False
+    ok, n_search, n_extract, _n_browser = _step3_threshold_met(task_id)
+    if not ok:
+        return False
+    age = seconds_since_last_tool(task_id, phase_prefix="step3_web_search")
+    if age is None or age < float(_STEP3_QUIET_SECONDS):
+        if get_step_status(task_id, "step3_web_search") == "pending":
+            store.set_step_status(
+                task_id,
+                "step3_web_search",
+                "running",
+                message="网页检索中，等待本轮检索结束…",
+            )
+        return False
+    _complete_step3_now(store, task_id, n_search=n_search, n_extract=n_extract)
+    return True
+
+
+def _maybe_complete_step3_after_web_tool(
+    store: TaskStore,
+    task_id: str,
+    tool_name: str,
+) -> None:
+    """步骤三：web 工具成功后解析候选；仅安静期后收口（或由步骤4工具触发）。"""
+    if tool_name not in WEB_SEARCH_TOOLS:
+        return
+    if not can_run_step3_web_search(task_id):
+        return
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return
+    if get_step_status(task_id, "step3_web_search") == "pending":
+        store.set_step_status(task_id, "step3_web_search", "running", message=f"网页检索中 ({tool_name})")
+    # 不在此处 completed：等安静期 / 步骤4首工具
+    _try_complete_step3_if_quiet(store, task_id)
+
+
+def _close_step3_before_step4_tool(store: TaskStore, task_id: str) -> None:
+    """首个步骤4主页工具到来时，强制收口步骤3。"""
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return
+    if not can_run_step3_web_search(task_id):
+        return
+    ok, n_search, n_extract, _ = _step3_threshold_met(task_id)
+    if not ok and n_search < 1 and n_extract < 1:
+        # 无 web 结果也允许进入步骤4（仅种子候选）
+        n_search = max(n_search, 0)
+    _complete_step3_now(store, task_id, n_search=n_search, n_extract=n_extract)
 
 
 def _save_step3_candidates_from_tool(
@@ -587,8 +858,9 @@ def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) ->
     text = assistant or ""
     if not text:
         return
+    progress_text = is_progress_only(text)
     _apply_skip_steps(store, task_id, text)
-    if is_progress_only(text) and mentions_analysis_steps(text):
+    if progress_text and mentions_analysis_steps(text):
         _mark_analysis_running(store, task_id)
         return
     if not can_run_step3_web_search(task_id):
@@ -608,10 +880,14 @@ def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) ->
                 message=f"网页检索候选 {len(candidates)} 个",
             )
             store.materialize_step4_from_candidates(task_id)
-    if is_progress_only(text):
+    if progress_text:
         return
     blocks = parse_standalone_analysis_blocks(text)
+    analysis_ok = can_advance_to_analysis(task_id).get("ok")
     for step_key, content in blocks.items():
+        if not analysis_ok:
+            logger.info("步骤7未收口，暂不写分析块 task=%s step=%s", task_id, step_key)
+            continue
         if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
             store.save_analysis_display(task_id, step_key, content, source="standalone")
     if mentions_analysis_steps(text):
@@ -626,10 +902,22 @@ def _complete_step11_from_report(
 ) -> None:
     if get_step_status(task_id, "step11_report") == "completed":
         return
+    try:
+        from report_04.step_reconcile import (
+            reconcile_step4_and_step7_children,
+            reconcile_step7_from_post_tools,
+        )
+
+        reconcile_step7_from_post_tools(store, task_id)
+        reconcile_step4_and_step7_children(store, task_id)
+        store.reconcile_collect_child_steps(task_id)
+    except Exception as exc:
+        logger.warning("终稿前步骤七收口失败 task=%s: %s", task_id, exc)
     backfill = backfill_analysis_from_report(assistant)
-    for step_key, content in backfill.items():
-        if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
-            store.save_analysis_display(task_id, step_key, content, source="backfill_from_step11")
+    if can_advance_to_analysis(task_id).get("ok"):
+        for step_key, content in backfill.items():
+            if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
+                store.save_analysis_display(task_id, step_key, content, source="backfill_from_step11")
     for step_key in ANALYSIS_STEP_KEYS:
         if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
             store.set_step_status(task_id, step_key, "skipped", message="终稿已出，未单独输出")
@@ -689,11 +977,14 @@ def _sync_platform_collect_steps(
 ) -> None:
     if not platform:
         return
-    if not can_update_step4_children(task_id):
+    # 步骤七发文轮：只推进 step7_post_*，禁止把已完成的 step4_profile_* 打回 running
+    in_step7 = can_run_step7_collect(task_id) and step7_collect_active(task_id)
+    if not in_step7 and not can_update_step4_children(task_id):
         return
     prof_key = profile_platform_step_key(platform)
     post_key = post_platform_step_key(platform)
-    store.ensure_step_row(task_id, prof_key)
+    if not in_step7:
+        store.ensure_step_row(task_id, prof_key)
 
     n_prof = len(result_data.get("profiles") or [])
     n_post = len(result_data.get("posts") or [])
@@ -705,6 +996,63 @@ def _sync_platform_collect_steps(
             (task_id, platform),
         )
         n_post = int((row or {}).get("c") or 0)
+
+    apify_actor = bool(apify_platform_from_actor_tool(tool_name))
+
+    if in_step7:
+        store.ensure_step_row(task_id, post_key)
+        if n_post > 0:
+            cur_post = get_step_status(task_id, post_key)
+            store.set_step_status(
+                task_id,
+                post_key,
+                "completed",
+                message=f"已入库发文 {n_post} 条",
+                force_reopen=(cur_post == "skipped"),
+            )
+        elif apify_actor and tool_ok:
+            cur = get_step_status(task_id, post_key)
+            if cur not in {"completed", "skipped"}:
+                store.set_step_status(
+                    task_id, post_key, "running", message=f"{platform} Actor 已完成，等待发文 dataset…"
+                )
+        elif tool_name == "mcp_apify_get_dataset_items" and tool_ok:
+            cur = get_step_status(task_id, post_key)
+            if n_post == 0 and cur not in {"completed", "skipped"}:
+                n_prof = len(result_data.get("profiles") or [])
+                raw_items = result_data.get("raw_item_count")
+                if raw_items is None:
+                    outcome = str(result_data.get("collect_outcome") or "")
+                    raw_items = -1 if outcome not in {"empty", "not_found", ""} else 0
+                raw_items = int(raw_items or 0)
+                if platform == "facebook" and n_prof > 0 and raw_items > 0:
+                    store.set_step_status(
+                        task_id,
+                        post_key,
+                        "skipped",
+                        message=f"{platform} Apify 仅返回主页，未采集到 PAGE 发帖",
+                    )
+                elif raw_items > 0:
+                    store.set_step_status(
+                        task_id,
+                        post_key,
+                        "running",
+                        message=f"{platform} dataset 有 {raw_items} 条但未解析入库，待补字段或重拉",
+                    )
+                else:
+                    store.set_step_status(task_id, post_key, "skipped", message=f"{platform} 未采集到发文")
+        elif tool_name in POST_TOOLS and tool_ok:
+            cur = get_step_status(task_id, post_key)
+            if cur == "pending":
+                store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
+        elif tool_name in POST_TOOLS and not tool_ok:
+            cur = get_step_status(task_id, post_key)
+            if cur not in {"completed", "skipped"}:
+                store.set_step_status(
+                    task_id, post_key, "running", message=f"{platform} 发文采集中（等待重试）…"
+                )
+        store.reconcile_collect_child_steps(task_id)
+        return
 
     if n_prof > 0:
         store.set_step_status(task_id, prof_key, "completed", message=f"已入库主页 {n_prof} 条")
@@ -846,8 +1194,22 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if seed_collect:
         if get_step_status(task_id, "step1_seed") not in {"completed", "failed", "skipped"}:
             store.set_step_status(task_id, "step1_seed", "running", message=f"种子采集中 ({tool_name})")
+        # 粗同步可能误点 step4：种子轮立刻纠正
+        try:
+            from report_04.step_reconcile import ensure_step4_parent_not_premature
+
+            ensure_step4_parent_not_premature(store, task_id)
+        except Exception:
+            pass
     else:
         primary_step = TOOL_PRIMARY_STEP.get(tool_name)
+        # 步骤一已完成后，主页 MCP 应驱动 step4_profiles，而非再点 step1_seed
+        if (
+            primary_step == "step1_seed"
+            and get_step_status(task_id, "step1_seed") in {"completed", "failed", "skipped"}
+            and tool_name in PROFILE_TOOLS
+        ):
+            primary_step = "step4_profiles"
         if primary_step and tool_name not in _STEP5_STREAM_TOOLS:
             if primary_step == "step4_profiles" and not discovery_steps_terminal(task_id):
                 pass
@@ -913,7 +1275,9 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 success=(status == "success"),
             )
             if status == "success" and is_stream_compare_ready(task_id):
-                _maybe_advance_step67(store, task_id)
+                _try_complete_step5_if_settled(store, task_id)
+                if get_step_status(task_id, "step5_streams") == "completed":
+                    _maybe_advance_step67(store, task_id)
         except Exception as exc:
             logger.exception("step5 快路径失败 task=%s tool=%s: %s", task_id, tool_name, exc)
         return
@@ -1003,6 +1367,21 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             result_data = _strip_apify_posts_for_seed_phase(result_data)
             if n_drop:
                 logger.info("Apify 种子轮丢弃 posts=%d task=%s", n_drop, task_id)
+
+    # 兜底：若 pre_tool 未拦住抢跑发文，丢弃 posts 并纠正步骤七
+    premature = _is_premature_step7_tool(tool_name, task_id)
+    if premature:
+        n_drop = len(result_data.get("posts") or [])
+        if n_drop:
+            result_data = dict(result_data)
+            result_data["posts"] = []
+            logger.warning("丢弃抢跑发文 posts=%d task=%s tool=%s", n_drop, task_id, tool_name)
+        try:
+            from report_04.step_reconcile import ensure_step7_parent_not_premature
+
+            ensure_step7_parent_not_premature(store, task_id)
+        except Exception:
+            pass
 
     _persist_normalized(store, task_id, result_data, platform=platform, tool_name=tool_name)
 

@@ -29,10 +29,14 @@ public interface CollectTaskMapper {
                             @Param("content") String content,
                             @Param("payloadJson") String payloadJson);
 
-    long countAllDialogues();
+    long countAllDialogues(@Param("dbTaskType") String dbTaskType);
 
     List<Map<String, Object>> selectDialoguesPage(@Param("offset") int offset,
-                                                  @Param("limit") int limit);
+                                                  @Param("limit") int limit,
+                                                  @Param("dbTaskType") String dbTaskType);
+
+    /** 按任务类型统计历史对话条数（与 selectDialoguesPage 同一折叠规则） */
+    List<Map<String, Object>> countDialoguesGroupByTaskType();
 
     void insertPhaseStep(@Param("taskId") String taskId,
                          @Param("stepKey") String stepKey,

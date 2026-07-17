@@ -135,16 +135,19 @@ hooks:
   pre_llm_call:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
     timeout: 120
-  post_tool_call:
-  # OCR/vision 已走快路径；其它 MCP 归一化仍可能较慢，给足超时避免尾部被掐
+  pre_tool_call:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 180
+    timeout: 120
+  post_tool_call:
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
   post_llm_call:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 180
+    timeout: 120
   on_session_end:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 180
+    timeout: 120
+hooks_auto_accept: true
 hooks_auto_accept: true
 hooks_auto_accept: true
 hooks_auto_accept: true

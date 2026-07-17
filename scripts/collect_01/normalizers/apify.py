@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import hashlib
+import re
 from typing import Any, Dict, List, Optional
 
 from collect_01.normalizers.base import first_str, parse_fuzzy_count, post_row, profile_row, safe_int
@@ -128,8 +130,10 @@ def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "candidates": [],
         "platforms": [],
         "collect_outcome": "empty",
+        "raw_item_count": 0,
     }
     if not platform:
+        empty["raw_item_count"] = len(items) if isinstance(items, list) else 0
         return empty
 
     profiles: List[Dict[str, Any]] = []
@@ -153,6 +157,7 @@ def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         "candidates": [],
         "platforms": plats,
         "collect_outcome": _apify_collect_outcome(items, profiles, posts),
+        "raw_item_count": len(items),
     }
 
 
@@ -163,7 +168,18 @@ def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
             return key
     if items and isinstance(items[0], dict):
         sample = items[0]
-        if "ownerUsername" in sample or "instagram" in str(sample.get("url", "")).lower():
+        sample_blob = " ".join(
+            str(sample.get(k) or "") for k in ("url", "displayUrl", "inputUrl", "type")
+        ).lower()
+        if (
+            "ownerUsername" in sample
+            or "instagram" in sample_blob
+            or "cdninstagram" in sample_blob
+            or (
+                sample.get("caption") is not None
+                and ("likesCount" in sample or "commentsCount" in sample or "displayUrl" in sample)
+            )
+        ):
             return "instagram"
         if "authorMeta" in sample or "tiktok" in str(sample.get("webVideoUrl", "")).lower():
             return "tiktok"
@@ -188,9 +204,74 @@ def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
     return ""
 
 
+def _normalize_published_at(value: Any) -> Optional[str]:
+    """ISO8601 → MySQL DATETIME 可接受字符串。"""
+    text = first_str(value)
+    if not text:
+        return None
+    text = text.replace("T", " ").replace("Z", "").strip()
+    if "." in text:
+        text = text.split(".", 1)[0]
+    return text[:19] if text else None
+
+
+def _short_content_url(url: Optional[str], limit: int = 512) -> Optional[str]:
+    """CDN 签名 URL 极长，截断避免 content_url 列溢出；完整地址仍在 raw_json。"""
+    text = first_str(url)
+    if not text:
+        return None
+    return text if len(text) <= limit else text[: limit - 3] + "..."
+
+
+def _instagram_content_id(item: Dict[str, Any]) -> Optional[str]:
+    """发文 content_id：优先 id/shortCode；Agent 常只拉 caption 等字段时用 URL/哈希兜底。"""
+    pid = first_str(item.get("id"), item.get("shortCode"), item.get("code"), item.get("shortcode"))
+    if pid:
+        return str(pid)
+    url = first_str(item.get("url"), item.get("displayUrl"), item.get("imageUrl"), item.get("videoUrl"))
+    if url:
+        m = re.search(r"instagram\.com/(?:p|reel|tv)/([^/?#]+)", url, re.I)
+        if m:
+            return m.group(1)
+        # CDN 文件名常含 media id：375594674_18386609008061743_xxx.jpg
+        m2 = re.search(r"/(\d{5,}_\d{5,}[^/?#]*)", url)
+        if m2:
+            return m2.group(1).split(".")[0]
+    cap = first_str(item.get("caption")) or ""
+    ts = first_str(item.get("timestamp"), item.get("takenAt"), item.get("taken_at")) or ""
+    if not cap and not ts and not url:
+        return None
+    digest = hashlib.sha1(f"{cap}|{ts}|{url or ''}".encode("utf-8", errors="ignore")).hexdigest()[:20]
+    return f"ig_{digest}"
+
+
+def _instagram_account_id(ctx: Dict[str, Any], item: Dict[str, Any], fallback: str = "") -> str:
+    username = first_str(item.get("ownerUsername"), item.get("username"), item.get("ownerId"))
+    if username:
+        return username
+    hint = first_str(ctx.get("account_id"), ctx.get("account_handle"))
+    if hint:
+        return hint
+    args = ctx.get("tool_args") if isinstance(ctx.get("tool_args"), dict) else {}
+    for key in ("username", "user_id", "directUrls", "directUrl"):
+        val = args.get(key)
+        if isinstance(val, list) and val:
+            val = val[0]
+        text = first_str(val)
+        if not text:
+            continue
+        m = re.search(r"instagram\.com/([^/?#]+)", text, re.I)
+        if m and m.group(1).lower() not in {"p", "reel", "tv", "stories"}:
+            return m.group(1)
+        if "/" not in text and " " not in text:
+            return text
+    return fallback or "unknown"
+
+
 def _instagram_items(ctx: Dict[str, Any], items: List[Any]):
     profiles: List[Dict[str, Any]] = []
     posts: List[Dict[str, Any]] = []
+    default_user = ""
     for item in items:
         if not isinstance(item, dict):
             continue
@@ -203,6 +284,7 @@ def _instagram_items(ctx: Dict[str, Any], items: List[Any]):
             for k in ("biography", "followersCount", "fullName", "ownerFullName", "postsCount", "id")
         )
         if username and not profiles and has_signal:
+            default_user = username
             profiles.append(
                 profile_row(
                     ctx,
@@ -218,20 +300,42 @@ def _instagram_items(ctx: Dict[str, Any], items: List[Any]):
                     collect_status="success" if item else "empty",
                 )
             )
-        pid = first_str(item.get("id"), item.get("shortCode"))
-        if pid and item.get("caption") is not None:
-            posts.append(
-                post_row(
-                    ctx,
-                    platform="instagram",
-                    account_id=username or "unknown",
-                    content_id=str(pid),
-                    content_text=first_str(item.get("caption")),
-                    like_count=safe_int(item.get("likesCount")),
-                    comment_count=safe_int(item.get("commentsCount")),
-                    raw=item,
-                )
+        # 发文行：Agent 常只请求 caption/timestamp/likes… 无 id/shortCode，仍须入库
+        is_postish = any(
+            item.get(k) not in (None, "", [], {})
+            for k in ("caption", "displayUrl", "timestamp", "likesCount", "commentsCount", "type", "shortCode", "id")
+        ) and not has_signal
+        # 同时有主页字段与 caption 的 latestPosts 混排：有 caption/displayUrl 也当发文
+        has_post_body = item.get("caption") is not None or first_str(
+            item.get("displayUrl"), item.get("url"), item.get("shortCode"), item.get("id")
+        )
+        if not has_post_body and not is_postish:
+            continue
+        # 纯主页壳（无发文信号）跳过
+        if has_signal and item.get("caption") is None and not first_str(item.get("displayUrl"), item.get("shortCode")):
+            continue
+        pid = _instagram_content_id(item)
+        if not pid:
+            continue
+        account_id = _instagram_account_id(ctx, item, fallback=default_user)
+        posts.append(
+            post_row(
+                ctx,
+                platform="instagram",
+                account_id=account_id,
+                content_id=str(pid),
+                content_text=first_str(item.get("caption")) or "",
+                content_url=_short_content_url(
+                    first_str(item.get("url"), item.get("displayUrl"))
+                ),
+                published_at=_normalize_published_at(
+                    first_str(item.get("timestamp"), item.get("takenAt"))
+                ),
+                like_count=safe_int(item.get("likesCount")),
+                comment_count=safe_int(item.get("commentsCount")),
+                raw=item,
             )
+        )
     return profiles, posts
 
 

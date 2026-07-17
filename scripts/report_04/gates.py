@@ -118,6 +118,67 @@ def step4_profiles_terminal(task_id: str) -> bool:
     return _step4_profile_children_pending(task_id) is None
 
 
+def step4_profile_collect_started(task_id: str) -> bool:
+    """是否已真正开始步骤四主页采集（排除仅种子主页复用 completed）。"""
+    parent = get_step_status(task_id, "step4_profiles")
+    if parent in {"running", "completed", "skipped"}:
+        return True
+    rows = db.fetch_all(
+        """
+        SELECT status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    if any(str(r.get("status") or "") == "running" for r in rows):
+        return True
+    row = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND status='success'
+          AND (phase LIKE 'step4_profile_%%' OR phase='step4_profiles')
+        """,
+        (task_id,),
+    )
+    return int((row or {}).get("c") or 0) > 0
+
+
+def seconds_since_last_tool(
+    task_id: str,
+    *,
+    tool_names: Optional[List[str]] = None,
+    phase_prefix: Optional[str] = None,
+) -> Optional[float]:
+    """距最近一次匹配工具成功的秒数；无记录返回 None。"""
+    from datetime import datetime
+
+    clauses = ["task_id=%s", "status='success'"]
+    params: List[Any] = [task_id]
+    if tool_names:
+        placeholders = ",".join(["%s"] * len(tool_names))
+        clauses.append(f"tool_name IN ({placeholders})")
+        params.extend(tool_names)
+    if phase_prefix:
+        clauses.append("phase LIKE %s")
+        params.append(f"{phase_prefix}%")
+    row = db.fetch_one(
+        f"""
+        SELECT MAX(executed_at) AS last_at FROM hermes_tool_outputs
+        WHERE {' AND '.join(clauses)}
+        """,
+        tuple(params),
+    )
+    last_at = (row or {}).get("last_at")
+    if last_at is None:
+        return None
+    if hasattr(last_at, "timestamp"):
+        try:
+            return max(0.0, (datetime.now() - last_at).total_seconds())
+        except Exception:
+            return None
+    return None
+
+
 def can_advance_to_step5(task_id: str) -> Dict[str, Any]:
     s1 = get_step_status(task_id, "step1_seed")
     if s1 != "completed":

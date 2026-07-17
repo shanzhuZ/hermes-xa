@@ -2,7 +2,9 @@ package com.example.aw.collect.registry;
 
 import org.springframework.stereotype.Component;
 
+import java.util.ArrayList;
 import java.util.HashMap;
+import java.util.List;
 import java.util.Locale;
 import java.util.Map;
 import java.util.regex.Pattern;
@@ -84,6 +86,68 @@ public class TaskTypeRegistry {
             return msg.matches("(?is).*(account-intelligence-report|account-intelligence-profile|画像写报|写报).*");
         }
         return true;
+    }
+
+    /**
+     * 解析前端短码或库内 task_type；无法识别返回 null（不做 collect 回退）。
+     */
+    public TaskTypeDef resolveExact(String type) {
+        if (type == null || type.trim().isEmpty()) {
+            return null;
+        }
+        String key = type.trim().toLowerCase(Locale.ROOT);
+        TaskTypeDef byFrontend = byFrontendType.get(key);
+        if (byFrontend != null) {
+            return byFrontend;
+        }
+        if ("account_collect".equals(key)) {
+            return byFrontendType.get("collect");
+        }
+        if ("account_expand".equals(key)) {
+            return byFrontendType.get("expand");
+        }
+        if ("account_verify".equals(key)) {
+            return byFrontendType.get("verify");
+        }
+        if ("account_report".equals(key)) {
+            return byFrontendType.get("report");
+        }
+        return null;
+    }
+
+    /**
+     * 库内 task_type → 中文标签；未知则原样返回。
+     */
+    public String labelOfDbTaskType(String dbTaskType) {
+        TaskTypeDef def = resolveExact(dbTaskType);
+        return def == null ? (dbTaskType == null ? "" : dbTaskType) : def.getLabel();
+    }
+
+    /**
+     * 库内 task_type → 前端短码；未知返回空串。
+     */
+    public String frontendCodeOfDbTaskType(String dbTaskType) {
+        TaskTypeDef def = resolveExact(dbTaskType);
+        if (def == null) {
+            return "";
+        }
+        // profile 与 report 同库类型，统一对外短码 report
+        if ("profile".equals(def.getFrontendType())) {
+            return "report";
+        }
+        return def.getFrontendType();
+    }
+
+    /**
+     * 四业务对外枚举（不含 profile 别名）。
+     */
+    public List<TaskTypeDef> listPublicTypes() {
+        List<TaskTypeDef> list = new ArrayList<TaskTypeDef>();
+        list.add(byFrontendType.get("collect"));
+        list.add(byFrontendType.get("expand"));
+        list.add(byFrontendType.get("verify"));
+        list.add(byFrontendType.get("report"));
+        return list;
     }
 
     private String normalize(String frontendType) {

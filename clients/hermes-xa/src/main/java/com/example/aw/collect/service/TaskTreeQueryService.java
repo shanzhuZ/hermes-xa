@@ -153,7 +153,10 @@ public class TaskTreeQueryService {
     }
 
     /**
-     * 按 parent_step_key 组装层级：step6_post_* 挂在 step3_profiles.children 下；
+     * 按 parent_step_key 组装层级：
+     * - 01：step4_text/image_compare → step3_streams.children；step6_post_* → step6_posts.children
+     * - 02/03：step4_* → step3_streams；发文子步骤 → step3_profiles
+     * - 04：step4_profile_* → step4_profiles；step7_post_* → step7_posts
      * 顶层 nodes 仅保留无父步骤的根节点。
      */
     private List<Map<String, Object>> buildStepHierarchy(

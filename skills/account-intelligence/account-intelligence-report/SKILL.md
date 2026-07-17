@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
 description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→分析→画像报告。禁search_username。"
-version: 1.15.0
+version: 1.18.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -27,9 +27,13 @@ metadata:
 - **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
 - **步骤3用浏览器 + 搜索引擎** 搜索类似昵称的账号及账号ID， 严查推特（X）、facebook、telegram、youtube、github、reddit、weibo、linkedin、ins、vk等中大型社交网站
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
-- **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具
-- **步骤 5** 有头像必须 vision（OCR 可选：人脸无字默认跳过）；`image_url` 必须用库内 avatar/`payload_url`；OCR 失败禁止盲重试；核查结果供 2.2/2.3（步骤5本身不输出报告章节）
-- **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天
+- **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台
+- **步骤 5** 有头像必须 vision（OCR 可选：人脸无字默认跳过）；`image_url` 必须用库内 avatar/`payload_url`；OCR 失败禁止盲重试；核查结果供 2.2/2.3（步骤5本身不输出报告章节）；**全部图片流 vision 结束前禁止任何发文工具**；**步骤4全部主页子节点终态前禁止进步骤5/vision**
+- **步骤 6** 完成 `validated_accounts` 之前，**禁止**发文工具与 Apify 发文轮
+- **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天；**种子平台必须单独采发文**（Twitter/YouTube/微博用 MCP 发文工具；Instagram/TikTok/Telegram/Facebook/GitHub 再走一轮 Apify→dataset 入库 posts）。**禁止**因步骤1已采过主页而跳过种子平台发文；步骤1 Apify 只保留 profile，不算步骤7发文
+- **硬顺序**：步骤5 → 步骤6 → 步骤7，不可并行抢跑；步骤5未完成时调用发文工具会被系统拦截并要求继续 vision
+- **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search
+- **步骤5→6→7**：全部 vision 结束后再进步骤6；步骤7仅在真正调用发文工具时开始，禁止「vision 还在跑、步骤7已 running」
 - **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
 - **步骤11** 必须按照整体章节的结构输出， 每一章节内容必须使用整段叙述性文字描述。不要换行输出展示
@@ -105,6 +109,8 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 | TikTok    | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
 | Telegram  | `mcp_apify_vujeen__telegram_channel_scraper` → run → dataset |
 | Facebook  | `mcp__apify__headlessagent__facebook_profile_post_scraper` → run → dataset |
+
+**种子平台硬约束**：无论种子是 Twitter / YouTube / 微博 / Facebook 等，步骤7都必须对该平台再采一轮发文；Apify 种子平台步骤1 dataset 只入主页，步骤7须再 Actor→run→dataset 才能入 posts。
 
 ## 步骤 11 输出骨架
 

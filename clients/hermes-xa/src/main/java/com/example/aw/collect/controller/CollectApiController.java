@@ -2,6 +2,7 @@ package com.example.aw.collect.controller;
 
 import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectTaskMapper;
+import com.example.aw.collect.registry.TaskTypeRegistry;
 import com.example.aw.collect.service.CollectSubmitService;
 import com.example.aw.collect.service.TaskFinalAnswerQueryService;
 import com.example.aw.collect.service.TaskStepDataQueryService;
@@ -25,6 +26,7 @@ import org.springframework.web.server.ResponseStatusException;
 import org.springframework.web.servlet.mvc.method.annotation.SseEmitter;
 
 import java.util.ArrayList;
+import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
@@ -62,6 +64,9 @@ public class CollectApiController {
 
     @Autowired
     private ThoughtStreamHub thoughtStreamHub;
+
+    @Autowired
+    private TaskTypeRegistry taskTypeRegistry;
 
     /**
      * 新对话：向 Hermes 申请 session_id。
@@ -311,7 +316,7 @@ public class CollectApiController {
                 Map<String, Object> item = new LinkedHashMap<String, Object>();
                 Object tid = row.get("task_id");
                 item.put("taskId", tid);
-                item.put("taskType", row.get("task_type"));
+                item.put("taskType", taskTypeRegistry.labelOfDbTaskType(stringVal(row.get("task_type"))));
                 item.put("status", row.get("status"));
                 item.put("createdAt", row.get("created_at"));
                 item.put("treeUrl", "/api/tasks/" + tid + "/tree");
@@ -325,14 +330,55 @@ public class CollectApiController {
     }
 
     /**
-     * 历史对话分页查询（仅分页参数）。
+     * 历史对话业务类型枚举（含条数，供前端 Tab）。
+     */
+    @GetMapping("/dialogues/types")
+    public ResponseEntity<Map<String, Object>> listDialogueTypes() {
+        Map<String, Long> countByDb = new HashMap<String, Long>();
+        List<Map<String, Object>> groups = collectTaskMapper.countDialoguesGroupByTaskType();
+        if (groups != null) {
+            for (Map<String, Object> row : groups) {
+                String dbType = stringVal(row.get("task_type"));
+                Object cntObj = row.get("cnt");
+                long cnt = 0L;
+                if (cntObj instanceof Number) {
+                    cnt = ((Number) cntObj).longValue();
+                }
+                if (!dbType.isEmpty()) {
+                    countByDb.put(dbType, Long.valueOf(cnt));
+                }
+            }
+        }
+        List<Map<String, Object>> types = new ArrayList<Map<String, Object>>();
+        for (TaskTypeRegistry.TaskTypeDef def : taskTypeRegistry.listPublicTypes()) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("code", def.getFrontendType());
+            item.put("taskType", def.getLabel());
+            long cnt = 0L;
+            Long found = countByDb.get(def.getDbTaskType());
+            if (found != null) {
+                cnt = found.longValue();
+            }
+            item.put("count", Long.valueOf(cnt));
+            types.add(item);
+        }
+        Map<String, Object> body = new LinkedHashMap<String, Object>();
+        body.put("types", types);
+        return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 历史对话分页查询。
      * 同一 taskId 若已有 assistant，只返回该任务最新一条 assistant；
      * 若该条 payload 为空，则从同任务其它记录（通常为 user）回填 payload。
+     *
+     * @param taskType 可选，前端短码 collect/expand/verify/report，或库内 account_*
      */
     @GetMapping("/dialogues")
     public ResponseEntity<Map<String, Object>> listDialogues(
             @RequestParam(value = "page", defaultValue = "1") int page,
-            @RequestParam(value = "pageSize", defaultValue = "20") int pageSize) {
+            @RequestParam(value = "pageSize", defaultValue = "20") int pageSize,
+            @RequestParam(value = "taskType", required = false) String taskType) {
         if (page < 1) {
             page = 1;
         }
@@ -342,21 +388,38 @@ public class CollectApiController {
         if (pageSize > 200) {
             pageSize = 200;
         }
-        long total = collectTaskMapper.countAllDialogues();
+        String dbTaskType = null;
+        String filterLabel = null;
+        if (taskType != null && !taskType.trim().isEmpty()) {
+            TaskTypeRegistry.TaskTypeDef def = taskTypeRegistry.resolveExact(taskType);
+            if (def == null) {
+                Map<String, Object> err = new LinkedHashMap<String, Object>();
+                err.put("error", "invalid_taskType");
+                err.put("hint", "支持 collect/expand/verify/report 或 account_*");
+                return ResponseEntity.badRequest().body(err);
+            }
+            dbTaskType = def.getDbTaskType();
+            filterLabel = def.getLabel();
+        }
+        long total = collectTaskMapper.countAllDialogues(dbTaskType);
         int offset = (page - 1) * pageSize;
-        List<Map<String, Object>> rows = collectTaskMapper.selectDialoguesPage(offset, pageSize);
+        List<Map<String, Object>> rows = collectTaskMapper.selectDialoguesPage(offset, pageSize, dbTaskType);
         List<Map<String, Object>> dialogues = toDialogueItems(rows);
 
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("page", page);
         body.put("pageSize", pageSize);
-        body.put("total", total);
+        body.put("total", Long.valueOf(total));
+        if (filterLabel != null) {
+            body.put("taskType", filterLabel);
+        }
         body.put("list", dialogues);
         return ResponseEntity.ok(body);
     }
 
     /**
      * 将库行转为前端驼峰结构；payload_json 解析为对象原样返回。
+     * taskType 对外返回中文业务名。
      */
     private List<Map<String, Object>> toDialogueItems(List<Map<String, Object>> rows) {
         List<Map<String, Object>> dialogues = new ArrayList<Map<String, Object>>();
@@ -371,11 +434,17 @@ public class CollectApiController {
             item.put("role", row.get("role"));
             item.put("content", row.get("content"));
             item.put("msgType", row.get("msg_type"));
+            String dbType = stringVal(row.get("task_type"));
+            item.put("taskType", taskTypeRegistry.labelOfDbTaskType(dbType));
             item.put("payload", parsePayloadJson(row.get("payload_json")));
             item.put("createdAt", row.get("created_at"));
             dialogues.add(item);
         }
         return dialogues;
+    }
+
+    private static String stringVal(Object v) {
+        return v == null ? "" : String.valueOf(v).trim();
     }
 
     private Object parsePayloadJson(Object raw) {

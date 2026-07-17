@@ -169,6 +169,12 @@ public final class CoarseToolStepMapping {
         if (stepKey.startsWith("step3_post_") || stepKey.startsWith("step3_profile_")) {
             parents.add("step3_profiles");
         }
+        if (stepKey.startsWith("step4_profile_")) {
+            parents.add("step4_profiles");
+        }
+        if (stepKey.startsWith("step7_post_")) {
+            parents.add("step7_posts");
+        }
         return parents;
     }
 
@@ -292,6 +298,7 @@ public final class CoarseToolStepMapping {
             return new Target("step7_post_weibo", false);
         }
         String platform = TOOL_PLATFORM.get(tool);
+        // Apify dataset/actor：默认挂步骤四；步骤七进行中时由 CoarseStepSync 改写为 step7_post_*
         if ("mcp_apify_get_dataset_items".equals(tool) || "mcp_apify_get_actor_run".equals(tool)) {
             return new Target("step4_profiles", false);
         }
@@ -302,5 +309,38 @@ public final class CoarseToolStepMapping {
             return new Target("step4_profile_" + platform, false);
         }
         return null;
+    }
+
+    public static String platformOfTool(String toolName) {
+        if (toolName == null || toolName.isEmpty()) {
+            return null;
+        }
+        return TOOL_PLATFORM.get(toolName);
+    }
+
+    /** 04：Apify Actor / run / dataset（种子三轮或步骤四/七采集）。 */
+    public static boolean isApifySeedLikeTool(String toolName) {
+        if (toolName == null || toolName.isEmpty()) {
+            return false;
+        }
+        return APIFY_ACTOR_OR_DATASET.contains(toolName);
+    }
+
+    /**
+     * 04：步骤七发文进行中时，Apify 工具应粗同步到 step7_post_{platform}，
+     * 避免把已完成的 step4_profile_* 再次点成 running。
+     */
+    public static String remapReportApifyIfStep7(String stepKey, String step7PostsStatus, String platform) {
+        if (stepKey == null || platform == null || platform.isEmpty()) {
+            return stepKey;
+        }
+        if (!"running".equals(step7PostsStatus) && !"completed".equals(step7PostsStatus)) {
+            return stepKey;
+        }
+        if ("step4_profiles".equals(stepKey)
+                || stepKey.startsWith("step4_profile_")) {
+            return "step7_post_" + platform;
+        }
+        return stepKey;
     }
 }

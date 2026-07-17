@@ -49,21 +49,31 @@
                 'user_input')
     </insert>
 
-    <select id="countAllDialogues" resultType="long">
-        SELECT COUNT(1)
+    <sql id="dialogueHistoryWhere">
         FROM hermes_user_dialogues d
-        WHERE NOT EXISTS (
-                  SELECT 1 FROM hermes_user_dialogues a
-                  WHERE a.task_id = d.task_id AND a.role = 'assistant'
-              )
-           OR (
-                  d.role = 'assistant'
-              AND d.id = (
-                      SELECT MAX(a2.id)
-                      FROM hermes_user_dialogues a2
-                      WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+        INNER JOIN hermes_tasks t ON t.task_id = d.task_id
+        WHERE (
+                  NOT EXISTS (
+                      SELECT 1 FROM hermes_user_dialogues a
+                      WHERE a.task_id = d.task_id AND a.role = 'assistant'
+                  )
+               OR (
+                      d.role = 'assistant'
+                  AND d.id = (
+                          SELECT MAX(a2.id)
+                          FROM hermes_user_dialogues a2
+                          WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+                      )
                   )
               )
+        <if test="dbTaskType != null and dbTaskType != ''">
+            AND t.task_type = #{dbTaskType}
+        </if>
+    </sql>
+
+    <select id="countAllDialogues" resultType="long">
+        SELECT COUNT(1)
+        <include refid="dialogueHistoryWhere"/>
     </select>
 
     <select id="selectDialoguesPage" resultType="java.util.HashMap">
@@ -84,22 +94,32 @@
                    )
                ) AS payload_json,
                d.msg_type,
+               t.task_type,
                d.created_at
-        FROM hermes_user_dialogues d
-        WHERE NOT EXISTS (
-                  SELECT 1 FROM hermes_user_dialogues a
-                  WHERE a.task_id = d.task_id AND a.role = 'assistant'
-              )
-           OR (
-                  d.role = 'assistant'
-              AND d.id = (
-                      SELECT MAX(a2.id)
-                      FROM hermes_user_dialogues a2
-                      WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
-                  )
-              )
+        <include refid="dialogueHistoryWhere"/>
         ORDER BY d.created_at DESC, d.id DESC
         LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <select id="countDialoguesGroupByTaskType" resultType="java.util.HashMap">
+        SELECT t.task_type AS task_type, COUNT(1) AS cnt
+        FROM hermes_user_dialogues d
+        INNER JOIN hermes_tasks t ON t.task_id = d.task_id
+        WHERE (
+                  NOT EXISTS (
+                      SELECT 1 FROM hermes_user_dialogues a
+                      WHERE a.task_id = d.task_id AND a.role = 'assistant'
+                  )
+               OR (
+                      d.role = 'assistant'
+                  AND d.id = (
+                          SELECT MAX(a2.id)
+                          FROM hermes_user_dialogues a2
+                          WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+                      )
+                  )
+              )
+        GROUP BY t.task_type
     </select>
 
     <insert id="insertPhaseStep">
@@ -137,6 +157,7 @@
         SET status = 'running',
             message = #{message},
             started_at = COALESCE(started_at, NOW(3)),
+            finished_at = NULL,
             updated_at = NOW(3)
         WHERE task_id = #{taskId}
           AND step_key = #{stepKey}

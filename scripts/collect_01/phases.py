@@ -71,8 +71,8 @@ def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ..
         StepDef("step2_cross_platform", "Maigret Agent 跨平台收集", 20, "2", None, PHASE_CROSS_PLATFORM),
         StepDef("step3_profiles", "MCP/Apify Agent 候选主页采集", 30, "3", None, PHASE_CROSS_PLATFORM),
         StepDef("step3_streams", "信息核验流 Agent 拆分", 40, "4", None, PHASE_STREAM_GEN),
-        StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
-        StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", None, PHASE_STREAM_VALIDATE),
+        StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", "step3_streams", PHASE_STREAM_VALIDATE),
+        StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", "step3_streams", PHASE_STREAM_VALIDATE),
         StepDef("step5_validated", "可信账号核验 Agent", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
         StepDef("step6_posts", "跨平台发文采集 Agent", 60, "6", None, PHASE_COLLECT),
     )

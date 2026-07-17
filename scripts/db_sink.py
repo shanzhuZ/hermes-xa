@@ -155,7 +155,11 @@ def main() -> int:
         if not isinstance(payload, dict):
             return 0
         sink = _resolve_sink_module(payload)
-        sink.handle_event(payload)
+        result = sink.handle_event(payload)
+        # pre_tool_call / pre_llm_call 可向 Agent 回写 block / context
+        if isinstance(result, dict) and result:
+            sys.stdout.write(json.dumps(result, ensure_ascii=False))
+            sys.stdout.flush()
     except Exception as exc:
         import logging
 

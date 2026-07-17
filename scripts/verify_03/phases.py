@@ -30,8 +30,8 @@ ROOT_STEPS: Tuple[StepDef, ...] = (
     StepDef("step1_input_accounts", "种子账号确认 Agent", 10, "1", None, PHASE_INPUT_ACCOUNTS),
     StepDef("step3_profiles", "MCP/Apify Agent 主页与发文采集", 30, "2", None, PHASE_CROSS_PLATFORM),
     StepDef("step3_streams", "发文风格与领域归纳 Agent", 40, "3", None, PHASE_STREAM_GEN),
-    StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", None, PHASE_STREAM_VALIDATE),
-    StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", None, PHASE_STREAM_VALIDATE),
+    StepDef("step4_text_compare", "文本流 Agent 对比", 41, "4.1", "step3_streams", PHASE_STREAM_VALIDATE),
+    StepDef("step4_image_compare", "图片流 Agent 分析", 42, "4.2", "step3_streams", PHASE_STREAM_VALIDATE),
     StepDef("step5_validated", "账号核验 Agent", 50, "5", None, PHASE_ACCOUNT_FINALIZE),
 )
 

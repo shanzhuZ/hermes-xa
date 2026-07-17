@@ -172,15 +172,8 @@ public class HermesGatewayClient {
                     String logData = data.length() > 200 ? data.substring(0, 200) : data;
                     log.debug("[gateway] task={} event={} data={}", taskId, eventName, logData);
                     thoughtStreamHub.publishGatewayEvent(taskId, eventName, data);
-                    // tool.completed 后 Hook 可能稍后才 mark failed：稍等再查；
-                    // tool.started 再查一次，拦住失败后的 web_search 等后续工具
-                    if ("tool.completed".equals(eventName) || "tool.failed".equals(eventName)) {
-                        try {
-                            Thread.sleep(400);
-                        } catch (InterruptedException ie) {
-                            Thread.currentThread().interrupt();
-                        }
-                    }
+                    // 禁止 Thread.sleep 拖慢整条 SSE（会造成步骤树已完成、stream 还在播旧工具）
+                    // tool.started / completed 时检查业务 failed，及时断开
                     if ("tool.completed".equals(eventName) || "tool.failed".equals(eventName)
                             || "tool.started".equals(eventName)
                             || linesSinceStatusCheck >= 40) {
