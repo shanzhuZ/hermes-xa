@@ -49,6 +49,24 @@
                 'user_input')
     </insert>
 
+    <!-- 历史对话折叠：每个 task 只展示一条 assistant；优先 summary，不用 thoughts_final 顶替 -->
+    <sql id="dialogueHistoryAssistantId">
+        (
+            SELECT a2.id
+            FROM hermes_user_dialogues a2
+            WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+            ORDER BY
+                CASE a2.msg_type
+                    WHEN 'summary' THEN 0
+                    WHEN 'assistant_reply' THEN 1
+                    WHEN 'thoughts_final' THEN 9
+                    ELSE 5
+                END,
+                a2.id DESC
+            LIMIT 1
+        )
+    </sql>
+
     <sql id="dialogueHistoryWhere">
         FROM hermes_user_dialogues d
         INNER JOIN hermes_tasks t ON t.task_id = d.task_id
@@ -59,11 +77,7 @@
                   )
                OR (
                       d.role = 'assistant'
-                  AND d.id = (
-                          SELECT MAX(a2.id)
-                          FROM hermes_user_dialogues a2
-                          WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
-                      )
+                  AND d.id = <include refid="dialogueHistoryAssistantId"/>
                   )
               )
         <if test="dbTaskType != null and dbTaskType != ''">
@@ -88,6 +102,8 @@
                        SELECT u.payload_json
                        FROM hermes_user_dialogues u
                        WHERE u.task_id = d.task_id
+                         AND u.role = 'user'
+                         AND u.msg_type = 'user_input'
                          AND u.payload_json IS NOT NULL
                        ORDER BY u.id ASC
                        LIMIT 1
@@ -103,22 +119,7 @@
 
     <select id="countDialoguesGroupByTaskType" resultType="java.util.HashMap">
         SELECT t.task_type AS task_type, COUNT(1) AS cnt
-        FROM hermes_user_dialogues d
-        INNER JOIN hermes_tasks t ON t.task_id = d.task_id
-        WHERE (
-                  NOT EXISTS (
-                      SELECT 1 FROM hermes_user_dialogues a
-                      WHERE a.task_id = d.task_id AND a.role = 'assistant'
-                  )
-               OR (
-                      d.role = 'assistant'
-                  AND d.id = (
-                          SELECT MAX(a2.id)
-                          FROM hermes_user_dialogues a2
-                          WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
-                      )
-                  )
-              )
+        <include refid="dialogueHistoryWhere"/>
         GROUP BY t.task_type
     </select>
 
@@ -203,12 +204,85 @@
         WHERE task_id = #{taskId}
     </update>
 
+    <!-- 任务首条用户提问（历史详情 question；含 payload_json） -->
     <select id="selectUserInput" resultType="java.util.HashMap">
-        SELECT content, created_at
+        SELECT content, payload_json, created_at
         FROM hermes_user_dialogues
         WHERE task_id = #{taskId} AND msg_type = 'user_input'
         ORDER BY id ASC
         LIMIT 1
+    </select>
+
+    <!--
+      历史问答专用 SQL（供 HistoryQaQueryService 使用）
+      - 仅包含 pending / running / completed
+      - 列表通过子查询附带用户提问、payload、summary 预览，避免 N+1
+    -->
+    <!-- 历史问答：仅 pending/running/completed；可选按业务类型、单一状态再筛 -->
+    <sql id="historyTaskWhere">
+        FROM hermes_tasks t
+        WHERE t.status IN ('pending', 'running', 'completed')
+        <if test="dbTaskType != null and dbTaskType != ''">
+            AND t.task_type = #{dbTaskType}
+        </if>
+        <if test="status != null and status != ''">
+            AND t.status = #{status}
+        </if>
+    </sql>
+
+    <!-- 列表总数：与 selectHistoryTasksPage 使用同一 historyTaskWhere，保证 total 与 list 一致 -->
+    <select id="countHistoryTasks" resultType="long">
+        SELECT COUNT(1)
+        <include refid="historyTaskWhere"/>
+    </select>
+
+    <!--
+      列表分页行：
+      question / payload_json —— 该任务最早一条 user_input
+      answer_preview —— 该任务最新一条 summary（没有则 NULL，前端 hasAnswer=false）
+    -->
+    <select id="selectHistoryTasksPage" resultType="java.util.HashMap">
+        SELECT t.task_id,
+               t.session_id,
+               t.task_type,
+               t.status,
+               t.created_at,
+               t.started_at,
+               t.finished_at,
+               (
+                   SELECT u.content
+                   FROM hermes_user_dialogues u
+                   WHERE u.task_id = t.task_id AND u.msg_type = 'user_input'
+                   ORDER BY u.id ASC
+                   LIMIT 1
+               ) AS question,
+               (
+                   SELECT u.payload_json
+                   FROM hermes_user_dialogues u
+                   WHERE u.task_id = t.task_id AND u.msg_type = 'user_input'
+                   ORDER BY u.id ASC
+                   LIMIT 1
+               ) AS payload_json,
+               (
+                   SELECT s.content
+                   FROM hermes_user_dialogues s
+                   WHERE s.task_id = t.task_id AND s.msg_type = 'summary'
+                   ORDER BY s.id DESC
+                   LIMIT 1
+               ) AS answer_preview
+        <include refid="historyTaskWhere"/>
+        ORDER BY t.created_at DESC, t.task_id DESC
+        LIMIT #{limit} OFFSET #{offset}
+    </select>
+
+    <!-- 详情页 counts.profiles -->
+    <select id="countProfilesByTaskId" resultType="long">
+        SELECT COUNT(1) FROM collect_profiles WHERE task_id = #{taskId}
+    </select>
+
+    <!-- 详情页 counts.posts -->
+    <select id="countPostsByTaskId" resultType="long">
+        SELECT COUNT(1) FROM collect_posts WHERE task_id = #{taskId}
     </select>
 
     <select id="selectSummary" resultType="java.util.HashMap">
@@ -314,7 +388,7 @@
     <select id="selectPostsByTaskId" resultType="java.util.HashMap">
         SELECT id, platform, account_id, content_id, content_type, title, content_text,
                content_url, published_at, view_count, like_count, comment_count, repost_count,
-               created_at
+               media_json, created_at
         FROM collect_posts
         WHERE task_id = #{taskId}
         ORDER BY published_at DESC, id DESC
@@ -344,5 +418,54 @@
         ORDER BY FIELD(msg_type, 'summary'), id DESC
         LIMIT 1
     </select>
+
+    <!-- 历史问答删除：按 task_id 清业务子表，最后删 hermes_tasks -->
+    <delete id="deleteCollectImagesByTaskId">
+        DELETE FROM collect_images WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectDisplayRecordsByTaskId">
+        DELETE FROM collect_display_records WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectIdentityStreamsByTaskId">
+        DELETE FROM collect_identity_streams WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectPhaseStepsByTaskId">
+        DELETE FROM collect_phase_steps WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectPostsByTaskId">
+        DELETE FROM collect_posts WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectProfilesByTaskId">
+        DELETE FROM collect_profiles WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectTaskSummariesByTaskId">
+        DELETE FROM collect_task_summaries WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectValidatedAccountsByTaskId">
+        DELETE FROM collect_validated_accounts WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCrossPlatformCandidatesByTaskId">
+        DELETE FROM cross_platform_candidates WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteHermesToolOutputsByTaskId">
+        DELETE FROM hermes_tool_outputs WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteHermesUserDialoguesByTaskId">
+        DELETE FROM hermes_user_dialogues WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteHermesTaskById">
+        DELETE FROM hermes_tasks WHERE task_id = #{taskId}
+    </delete>
 
 </mapper>

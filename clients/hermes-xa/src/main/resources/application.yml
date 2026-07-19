@@ -47,3 +47,17 @@ spring:
 #  model: hermes-persona
 #  connect-timeout-ms: 10000
 #  read-timeout-ms: 1800000   # 画像任务可能很久，30 分钟
+
+# 图片原图存储
+# Python 写：HTTP insertHbaseData；Java 读：ZK 原生（须与写入同一集群）
+hermes:
+  hbase:
+    enabled: ${HERMES_HBASE_ENABLED:false}
+    zookeeper:
+      # insertHbaseData(171:6666) 若落到 171 本机集群则用 192.168.3.171；若落到 hp1 则改 192.168.3.124
+      quorum: ${HERMES_HBASE_ZK:192.168.3.171}
+      port: ${HERMES_HBASE_ZK_PORT:2181}
+    image-table: ${HERMES_HBASE_IMAGE_TABLE:collect_image_bytes}
+    column-family: ${HERMES_HBASE_COLUMN_FAMILY:info}
+    # 与 scripts/image_pipeline 默认一致；HBase 关闭时读本地回退
+    local-dir: ${HERMES_IMAGE_LOCAL_DIR:../../data/image_bytes}

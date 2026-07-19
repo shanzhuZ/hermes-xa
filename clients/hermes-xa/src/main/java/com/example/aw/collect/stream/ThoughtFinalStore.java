@@ -11,6 +11,8 @@ import java.util.Map;
 /**
  * 落库 assistant.completed 思考终稿（msg_type=thoughts_final）。
  * <p>
+ * 历史对话接口不展示 thoughts_final（与 summary 重复）；仅 /thoughts 查询使用。
+ * 若已有 summary 终稿，则不再重复写入 thoughts_final。
  * 异常不得向上抛，以免打断 SSE 中继。
  */
 @Component
@@ -22,7 +24,7 @@ public class ThoughtFinalStore {
     private CollectTaskMapper collectTaskMapper;
 
     /**
-     * 保存或覆盖终稿；空内容忽略。多次 completed 后写覆盖先写。
+     * 保存或覆盖终稿；空内容忽略。已有 summary 时跳过（避免与业务终稿重复落库）。
      */
     public void saveAssistantCompleted(String taskId, String content) {
         if (taskId == null || taskId.trim().isEmpty()) {
@@ -32,6 +34,14 @@ public class ThoughtFinalStore {
             return;
         }
         try {
+            Map<String, Object> summary = collectTaskMapper.selectSummary(taskId);
+            if (summary != null && !summary.isEmpty() && summary.get("content") != null) {
+                String summaryText = String.valueOf(summary.get("content")).trim();
+                if (!summaryText.isEmpty()) {
+                    log.debug("已有 summary，跳过 thoughts_final 落库 taskId={}", taskId);
+                    return;
+                }
+            }
             Map<String, Object> existing = collectTaskMapper.selectThoughtsFinal(taskId);
             if (existing != null && !existing.isEmpty() && existing.get("id") != null) {
                 collectTaskMapper.updateThoughtsFinal(taskId, content);
@@ -53,7 +63,7 @@ public class ThoughtFinalStore {
     }
 
     /**
-     * @return 终稿正文，无则 null
+     * @return 终稿正文：优先 thoughts_final，否则回退 summary（供 /thoughts 使用）
      */
     public String findFinalContent(String taskId) {
         if (taskId == null || taskId.trim().isEmpty()) {
@@ -61,11 +71,18 @@ public class ThoughtFinalStore {
         }
         try {
             Map<String, Object> row = collectTaskMapper.selectThoughtsFinal(taskId);
-            if (row == null || row.isEmpty() || row.get("content") == null) {
-                return null;
+            if (row != null && !row.isEmpty() && row.get("content") != null) {
+                String text = String.valueOf(row.get("content")).trim();
+                if (!text.isEmpty()) {
+                    return text;
+                }
             }
-            String text = String.valueOf(row.get("content"));
-            return text.isEmpty() ? null : text;
+            Map<String, Object> summary = collectTaskMapper.selectSummary(taskId);
+            if (summary != null && !summary.isEmpty() && summary.get("content") != null) {
+                String text = String.valueOf(summary.get("content")).trim();
+                return text.isEmpty() ? null : text;
+            }
+            return null;
         } catch (Exception e) {
             log.warn("查询思考终稿失败 taskId={}: {}", taskId, e.getMessage());
             return null;

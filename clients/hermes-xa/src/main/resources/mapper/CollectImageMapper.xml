@@ -1,0 +1,51 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.aw.collect.mapper.CollectImageMapper">
+
+    <sql id="filterWhere">
+        WHERE task_id = #{taskId}
+        <if test="sourceType != null and sourceType != ''">
+            AND source_type = #{sourceType}
+        </if>
+        <if test="analyzeStatus != null and analyzeStatus != ''">
+            AND analyze_status = #{analyzeStatus}
+        </if>
+        <if test="storageStatus != null and storageStatus != ''">
+            AND storage_status = #{storageStatus}
+        </if>
+    </sql>
+
+    <select id="countByTask" resultType="long">
+        SELECT COUNT(*) FROM collect_images
+        <include refid="filterWhere"/>
+    </select>
+
+    <select id="selectPageByTask" resultType="java.util.HashMap">
+        SELECT image_id, task_id, task_type, source_type, platform,
+               account_id, post_id, profile_id, origin_url,
+               hbase_row_key, content_sha256, mime_type, file_size, width, height,
+               storage_status, analyze_status,
+               ocr_text, vision_text, analysis_json,
+               error_message, retry_count, tool_output_id,
+               created_at, updated_at, stored_at, analyzed_at
+        FROM collect_images
+        <include refid="filterWhere"/>
+        ORDER BY created_at ASC
+        LIMIT #{offset}, #{limit}
+    </select>
+
+    <select id="selectByImageId" resultType="java.util.HashMap">
+        SELECT image_id, task_id, task_type, source_type, platform,
+               account_id, post_id, profile_id, origin_url,
+               hbase_row_key, content_sha256, mime_type, file_size, width, height,
+               storage_status, analyze_status,
+               ocr_text, vision_text, analysis_json,
+               error_message, retry_count, tool_output_id,
+               created_at, updated_at, stored_at, analyzed_at
+        FROM collect_images
+        WHERE image_id = #{imageId}
+        LIMIT 1
+    </select>
+
+</mapper>

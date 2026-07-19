@@ -82,9 +82,59 @@ public interface CollectTaskMapper {
 
     int updateThoughtsFinal(@Param("taskId") String taskId, @Param("content") String content);
 
+    /**
+     * 查询任务首条用户提问（msg_type=user_input）。
+     * 返回 content、payload_json、created_at；历史详情的 question 节点用此方法。
+     */
     Map<String, Object> selectUserInput(@Param("taskId") String taskId);
 
+    /**
+     * 查询任务业务终稿（msg_type=summary）。
+     * 思考区 thoughts_final 不在此列；终稿统一看本方法或 TaskFinalAnswerQueryService。
+     */
     Map<String, Object> selectSummary(@Param("taskId") String taskId);
+
+    /**
+     * 统计历史问答可见任务数。
+     * <p>
+     * 基础范围：status IN (pending, running, completed)。
+     * dbTaskType 非空时按 hermes_tasks.task_type 过滤；
+     * status 非空时再精确到单一状态（仍须属于上述三种之一，由调用方保证）。
+     *
+     * @param dbTaskType 库内业务类型，如 account_collect；可空
+     * @param status     pending/running/completed；可空表示三种都算
+     */
+    long countHistoryTasks(@Param("dbTaskType") String dbTaskType,
+                           @Param("status") String status);
+
+    /**
+     * 分页查询历史任务列表行。
+     * <p>
+     * 除任务主字段外，还通过子查询附带：
+     * question（首条 user_input.content）、
+     * payload_json（首条 user_input.payload_json）、
+     * answer_preview（最新 summary.content）。
+     * 排序：created_at DESC。供 HistoryQaQueryService.listHistoryTasks 使用。
+     *
+     * @param dbTaskType 库内业务类型，可空
+     * @param status     单一状态，可空
+     * @param offset     偏移量 = (page-1)*pageSize
+     * @param limit      每页条数
+     */
+    List<Map<String, Object>> selectHistoryTasksPage(@Param("dbTaskType") String dbTaskType,
+                                                     @Param("status") String status,
+                                                     @Param("offset") int offset,
+                                                     @Param("limit") int limit);
+
+    /**
+     * 统计某任务下 collect_profiles 条数（历史详情 counts.profiles）。
+     */
+    long countProfilesByTaskId(@Param("taskId") String taskId);
+
+    /**
+     * 统计某任务下 collect_posts 条数（历史详情 counts.posts）。
+     */
+    long countPostsByTaskId(@Param("taskId") String taskId);
 
     List<Map<String, Object>> selectPhaseSteps(@Param("taskId") String taskId);
 
@@ -122,4 +172,32 @@ public interface CollectTaskMapper {
             @Param("taskId") String taskId, @Param("stepKey") String stepKey);
 
     Map<String, Object> selectLatestAssistantReply(@Param("taskId") String taskId);
+
+    // ---------- 按 taskId 级联删除（须先删子表，最后删 hermes_tasks） ----------
+
+    /** 删除 collect_images（含 FK → hermes_tasks，必须先于任务主表删除） */
+    int deleteCollectImagesByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectDisplayRecordsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectIdentityStreamsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectPhaseStepsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectPostsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectProfilesByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectTaskSummariesByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectValidatedAccountsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCrossPlatformCandidatesByTaskId(@Param("taskId") String taskId);
+
+    int deleteHermesToolOutputsByTaskId(@Param("taskId") String taskId);
+
+    int deleteHermesUserDialoguesByTaskId(@Param("taskId") String taskId);
+
+    /** 删除任务主表 hermes_tasks 自身；须在所有子表删除之后调用 */
+    int deleteHermesTaskById(@Param("taskId") String taskId);
 }

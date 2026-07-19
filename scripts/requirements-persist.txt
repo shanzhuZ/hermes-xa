@@ -2,3 +2,5 @@
 pymysql>=1.1.0
 python-dotenv>=1.0.0
 PyYAML>=6.0.0
+# 图片资产管线（下载；HBase 写入走 HTTP insertHbaseData）
+requests>=2.28.0

@@ -433,7 +433,12 @@ public class CollectApiController {
             item.put("sessionId", row.get("session_id"));
             item.put("role", row.get("role"));
             item.put("content", row.get("content"));
-            item.put("msgType", row.get("msg_type"));
+            String msgType = stringVal(row.get("msg_type"));
+            // 历史列表仅在没有 summary 时才落到 thoughts_final，对外统一展示为 summary
+            if ("thoughts_final".equals(msgType)) {
+                msgType = "summary";
+            }
+            item.put("msgType", msgType);
             String dbType = stringVal(row.get("task_type"));
             item.put("taskType", taskTypeRegistry.labelOfDbTaskType(dbType));
             item.put("payload", parsePayloadJson(row.get("payload_json")));
