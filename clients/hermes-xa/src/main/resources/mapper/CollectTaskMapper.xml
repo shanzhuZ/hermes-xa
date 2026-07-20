@@ -204,6 +204,16 @@
         WHERE task_id = #{taskId}
     </update>
 
+    <update id="markTaskCompleted">
+        UPDATE hermes_tasks
+        SET status = 'completed',
+            current_phase = #{phase},
+            finished_at = COALESCE(finished_at, NOW(3)),
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId}
+          AND status NOT IN ('failed')
+    </update>
+
     <!-- 任务首条用户提问（历史详情 question；含 payload_json） -->
     <select id="selectUserInput" resultType="java.util.HashMap">
         SELECT content, payload_json, created_at
@@ -467,5 +477,52 @@
     <delete id="deleteHermesTaskById">
         DELETE FROM hermes_tasks WHERE task_id = #{taskId}
     </delete>
+
+    <delete id="deleteAllPhaseStepsByTaskId">
+        DELETE FROM collect_phase_steps WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deletePhaseStepsNotIn">
+        DELETE FROM collect_phase_steps
+        WHERE task_id = #{taskId}
+        <if test="keepKeys != null and keepKeys.size() &gt; 0">
+            AND step_key NOT IN
+            <foreach collection="keepKeys" item="k" open="(" separator="," close=")">
+                #{k}
+            </foreach>
+        </if>
+    </delete>
+
+    <insert id="upsertPhaseStepMeta">
+        INSERT INTO collect_phase_steps
+            (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+        VALUES
+            (#{taskId}, #{stepKey}, #{parentStepKey}, #{stepOrder}, #{stepNode}, #{title}, 'pending')
+        ON DUPLICATE KEY UPDATE
+            parent_step_key = VALUES(parent_step_key),
+            step_order = VALUES(step_order),
+            step_node = VALUES(step_node),
+            title = VALUES(title),
+            updated_at = NOW(3)
+    </insert>
+
+    <update id="updatePhaseStepLifecycle">
+        UPDATE collect_phase_steps
+        SET status = #{status},
+            message = #{message},
+            started_at = CASE
+                WHEN #{status} = 'running' THEN COALESCE(started_at, NOW(3))
+                ELSE started_at
+            END,
+            finished_at = CASE
+                WHEN #{status} = 'running' THEN NULL
+                WHEN #{status} = 'pending' THEN NULL
+                WHEN #{status} IN ('completed', 'failed', 'skipped')
+                    THEN COALESCE(finished_at, NOW(3))
+                ELSE finished_at
+            END,
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId} AND step_key = #{stepKey}
+    </update>
 
 </mapper>

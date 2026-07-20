@@ -69,6 +69,12 @@ public class CoarseStepSync {
                             taskId, stepKey, toolName);
                     return;
                 }
+                // report：步骤4 子节点未全部终态前禁止粗点亮步骤5（vision 抢跑导致 youtube/github 被跳过）
+                if (isReportStep5Blocked(taskType, taskId, stepKey)) {
+                    log.debug("粗同步跳过 step5（步骤4未终态）taskId={} step={} tool={}",
+                            taskId, stepKey, toolName);
+                    return;
+                }
                 // 先父后子：父节点不得晚于子节点 running
                 for (String parentKey : CoarseToolStepMapping.parentsToEnsureRunning(taskType, stepKey)) {
                     int pn = collectTaskMapper.updateStepStatusCoarseRunning(
@@ -195,5 +201,44 @@ public class CoarseStepSync {
         }
         String s6 = collectTaskMapper.selectStepStatus(taskId, "step6_validated");
         return !"completed".equals(s6);
+    }
+
+    /**
+     * account_report：步骤四父/子未全部终态前禁止粗同步点亮 step5_streams。
+     * 否则 vision 一调用就点亮步骤5，模型以为步骤4已结束，youtube/github 等子节点会被永久跳过。
+     */
+    private boolean isReportStep5Blocked(String taskType, String taskId, String stepKey) {
+        if (!"account_report".equals(taskType) || stepKey == null) {
+            return false;
+        }
+        if (!"step5_streams".equals(stepKey)) {
+            return false;
+        }
+        String parent = collectTaskMapper.selectStepStatus(taskId, "step4_profiles");
+        if (!"completed".equals(parent) && !"skipped".equals(parent)) {
+            return true;
+        }
+        // 仍有 pending/running 子节点则禁止
+        // 用 selectPhaseSteps 过滤，避免新增 Mapper 方法
+        java.util.List<java.util.Map<String, Object>> steps = collectTaskMapper.selectPhaseSteps(taskId);
+        if (steps == null) {
+            return false;
+        }
+        for (java.util.Map<String, Object> row : steps) {
+            if (row == null) {
+                continue;
+            }
+            Object parentObj = row.get("parent_step_key");
+            String parentKey = parentObj == null ? "" : String.valueOf(parentObj);
+            if (!"step4_profiles".equals(parentKey)) {
+                continue;
+            }
+            Object stObj = row.get("status");
+            String st = stObj == null ? "" : String.valueOf(stObj);
+            if ("pending".equals(st) || "running".equals(st)) {
+                return true;
+            }
+        }
+        return false;
     }
 }

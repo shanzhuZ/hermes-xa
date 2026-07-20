@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
 description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→分析→画像报告。禁search_username。"
-version: 1.18.0
+version: 1.20.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -22,18 +22,18 @@ metadata:
 - **执行流程中的每一步都必须要执行，未满足执行条件说明原因！**
 - **执行流程必须严格呈现出 “步骤X： xxxxx”**
 - **步骤 2 Maigret 工具（硬约束）**：**只允许** `mcp_maigret_collect_accounts(username=种子handle)`；**禁止** `mcp_maigret_search_username`、`mcp_maigret_search_usernames`、`mcp_maigret_get_prompt`、`search_username`、`search_usernames`。调错工具会导致步骤二无法收口、步骤三被门禁挡住。
-- **仅步骤 3 允许** `web_search` / `web_extract` / `browser_*`；**其余所有步骤（1、2、4～11）禁止**这三类工具；全程禁止写报告、人物传记、综合介绍（步骤11 的最终画像报告除外）
+- **仅步骤 3 允许** `web_search` / `web_extract` / `browser_*`；**其余所有步骤（1、2、4～11）禁止**这三类工具（**唯一例外**：步骤4 的 YouTube 子步骤仍 pending/running 且仅有 `@handle` 时，可用 `web_search`/`web_extract` 解析出正式 `UC…` channelId）；全程禁止写报告、人物传记、综合介绍（步骤11 的最终画像报告除外）
 - **步骤 1、2、4～11**：详细描述执行流程
-- **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
-- **步骤3用浏览器 + 搜索引擎** 搜索类似昵称的账号及账号ID， 严查推特（X）、facebook、telegram、youtube、github、reddit、weibo、linkedin、ins、vk等中大型社交网站
+- **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像。Maigret 常只给 YouTube `@handle`/链接，**不等于**可调 MCP；**必须在步骤3（或步骤4例外 web）解析出 `UC…`** 才能采 YouTube 主页
+- **步骤3用浏览器 + 搜索引擎** 搜索类似昵称的账号及账号ID， 严查推特（X）、facebook、telegram、youtube、github、reddit、weibo、linkedin、ins、vk等中大型社交网站；**YouTube 候选必须落到 `channelId=UC…`**（禁止把 `@handle` 当 channelId）
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
-- **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台
-- **步骤 5** 有头像必须 vision（OCR 可选：人脸无字默认跳过）；`image_url` 必须用库内 avatar/`payload_url`；OCR 失败禁止盲重试；核查结果供 2.2/2.3（步骤5本身不输出报告章节）；**全部图片流 vision 结束前禁止任何发文工具**；**步骤4全部主页子节点终态前禁止进步骤5/vision**
-- **步骤 6** 完成 `validated_accounts` 之前，**禁止**发文工具与 Apify 发文轮
+- **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台（含 youtube/github）；**全部 step4_profile_* 子节点终态前禁止 vision/OCR**
+- **步骤 5** 批次闭环：步骤4全部主页子节点终态后，对本批入库头像 **一次列齐并全部 vision**（可并行）；OCR 可选；远程 URL 失败即该流终态。**全部图片流终态后系统自动收口步骤5并进入步骤6；收口后禁止再调 vision/OCR**（勿回补）。全部图片流结束前禁止任何发文工具
+- **步骤 6** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮
 - **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天；**种子平台必须单独采发文**（Twitter/YouTube/微博用 MCP 发文工具；Instagram/TikTok/Telegram/Facebook/GitHub 再走一轮 Apify→dataset 入库 posts）。**禁止**因步骤1已采过主页而跳过种子平台发文；步骤1 Apify 只保留 profile，不算步骤7发文
 - **硬顺序**：步骤5 → 步骤6 → 步骤7，不可并行抢跑；步骤5未完成时调用发文工具会被系统拦截并要求继续 vision
-- **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search
-- **步骤5→6→7**：全部 vision 结束后再进步骤6；步骤7仅在真正调用发文工具时开始，禁止「vision 还在跑、步骤7已 running」
+- **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search（YouTube 解析 UC 例外见上）
+- **步骤5→6→7**：图片流批次收口后进步骤6；步骤7仅在真正调用发文工具时开始，禁止「vision 还在跑、步骤7已 running」
 - **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
 - **步骤11** 必须按照整体章节的结构输出， 每一章节内容必须使用整段叙述性文字描述。不要换行输出展示
@@ -63,15 +63,15 @@ metadata:
 
 **步骤1禁止**：发文工具、Maigret、OCR/vision、web_search。
 
-## 步骤 5 图片流（Vision 优先）
+## 步骤 5 图片流（Vision 批次闭环）
 
 | 规则 | 说明 |
 |------|------|
-| URL | 只用步骤4已入库的 `avatar_url` / 图片流 `payload_url` |
+| 开门 | 仅当步骤4全部 `step4_profile_*` 终态 |
+| URL | 只用已入库的 `avatar_url` / 图片流 `payload_url`；一次列齐本批全部待 vision |
 | OCR | 人脸无字默认跳过；失败或 No text → 立刻 vision，禁止同参重试 |
-| Vision | 每条图片流 1 次；全部结束后才进步骤6 |
-| 禁止 | 对未入库 CDN（如临时 Instagram 链）空跑 vision |
-
+| Vision | 每条图片流 1 次；全部终态后系统收口步骤5→步骤6 |
+| 禁止 | 步骤5收口后再调 vision；禁止对未入库 CDN 空跑；禁止未齐就写步骤6/发文 |
 ## 步骤 2 Maigret（必须用 collect_accounts）
 
 | 允许 | 禁止 |
@@ -91,13 +91,14 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 ## 步骤 4 工具对照
 | 平台 | 工具 |
 |------|------|
-| YouTube | `mcp_youtube_get_channel_stats(channelId=UC…)` |
+| YouTube | **仅** `mcp_youtube_get_channel_stats(channelId=UC…)`；`channelId` 必须是正式 `UC` 开头 ID。Maigret `ids.youtube_channel_id` 若已有 UC，**直接用**，勿再搜。仅有 `@handle`/`youtube.com/@xxx` 时：先 web 解析 UC，解析不到则 **skip** YouTube 子步骤，**禁止**把 handle 当 channelId，**禁止**因其它平台采完就跳过本平台不处理 |
+| GitHub | Apify（username / 仓库用户名），gist URL 可抽 username；失败则 skip，勿空跑 |
 | 微博 | `mcp_weibo_get_profile` |
 | Instagram | `mcp_apify_apify__instagram_scraper` → run → dataset |
 | TikTok | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
 | Telegram | `mcp_apify_vujeen__telegram_channel_scraper` → run → dataset |
 | Facebook  | `mcp__apify__headlessagent__facebook_profile_post_scraper` → run → dataset |
-**步骤4禁止使用**：`get_user_tweets`、`get_user_feeds`、`analyze_channel_videos`、YouTube 搜视频（这些是步骤7发文用）。
+**步骤4禁止使用**：`get_user_tweets`、`get_user_feeds`、`analyze_channel_videos`、YouTube 搜视频（这些是步骤7发文用）；**禁止**未收口 youtube/github 就进步骤5 vision。
 
 ## 步骤 7 可使用工具参考
 | 平台        | 工具 |

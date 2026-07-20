@@ -46,6 +46,23 @@ def _handle_from_url(url: str) -> Optional[str]:
     return last.lstrip("@") or None
 
 
+def _youtube_channel_id_from_item(item: Dict[str, Any]) -> Optional[str]:
+    """Maigret YouTube 常把正式 UC 放在 ids.youtube_channel_id，url 仍是 @handle。"""
+    from collect_01.normalizers.youtube import youtube_channel_id_ok
+
+    ids = item.get("ids") if isinstance(item.get("ids"), dict) else {}
+    cid = first_str(
+        ids.get("youtube_channel_id"),
+        ids.get("channel_id"),
+        item.get("youtube_channel_id"),
+        item.get("channel_id"),
+        item.get("channelId"),
+    )
+    if cid and youtube_channel_id_ok(str(cid)):
+        return str(cid).strip()
+    return None
+
+
 def normalize_candidates(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
     data = raw if isinstance(raw, dict) else {}
     summary = data.get("summary") or data
@@ -60,6 +77,16 @@ def normalize_candidates(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         if not platform or not account_id:
             continue
         handle = first_str(item.get("username"), item.get("handle")) or _handle_from_url(str(account_id))
+        # YouTube：优先正式 UC…，避免 account_id 落成 youtube.com/@handle 导致步骤4无法调 MCP
+        if platform == "youtube":
+            yt_cid = _youtube_channel_id_from_item(item)
+            if yt_cid:
+                account_id = yt_cid
+        # GitHub：gist/主页 URL 时优先 username，便于 Apify
+        elif platform == "github" and handle:
+            aid = str(account_id)
+            if "github.com" in aid or "gist.github" in aid or aid.startswith("http"):
+                account_id = handle
         platforms.append(platform)
         rows.append(
             {

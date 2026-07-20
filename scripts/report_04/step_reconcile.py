@@ -325,6 +325,66 @@ def force_skip_unattempted_step4_children(store: Any, task_id: str) -> int:
     return updated
 
 
+def maybe_close_abandoned_step4(
+    store: Any,
+    task_id: str,
+    *,
+    min_quiet_seconds: float = 90.0,
+    force: bool = False,
+) -> int:
+    """中途收口：Agent 已进入步骤五，或步骤四工具长时间无进展时，跳过未尝试子节点并关闭父节点。
+
+    保护条件（降低误伤）：
+    - 步骤二、三已终态
+    - 父节点尚未 completed/skipped
+    - 至少已有一个 step4 子节点 completed（说明主页采集已真实开始过）
+    - force=True，或步骤五已 running/completed，或距上次 step4_* 成功工具 ≥ min_quiet_seconds
+    """
+    from report_04.gates import seconds_since_last_tool
+
+    if not discovery_steps_terminal(task_id):
+        return 0
+    parent_st = get_step_status(task_id, PROFILE_PARENT_STEP_KEY)
+    if parent_st in {"completed", "skipped"}:
+        return 0
+
+    children = db.fetch_all(
+        "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    has_completed_child = any(str(r.get("status") or "") == "completed" for r in children)
+    has_open_child = any(str(r.get("status") or "") in {"pending", "running"} for r in children)
+    if not has_completed_child:
+        return 0
+    if not has_open_child:
+        return close_collect_parent_if_ready(
+            store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"
+        )
+
+    s5 = get_step_status(task_id, "step5_streams")
+    moved_on = s5 in {"running", "completed"}
+    age = seconds_since_last_tool(task_id, phase_prefix="step4_")
+    quiet = age is not None and age >= float(min_quiet_seconds)
+    if not force and not moved_on and not quiet:
+        return 0
+
+    updated = force_skip_unattempted_step4_children(store, task_id)
+    updated += close_collect_parent_if_ready(
+        store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"
+    )
+    if updated:
+        logger.info(
+            "abandoned step4 收口 task=%s force=%s moved_on=%s quiet=%s age=%s updated=%s",
+            task_id,
+            force,
+            moved_on,
+            quiet,
+            age,
+            updated,
+        )
+    return updated
+
+
 def _skip_irrelevant_step4_children(store: Any, task_id: str) -> int:
     """跳过与种子无关的步骤四子节点。"""
     from report_04.candidate_parser import candidate_relevant_for_seed, relevant_profile_platforms
@@ -1192,6 +1252,7 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     reconcile_step3_from_web_tools(store, task_id)
     ensure_step3_not_premature(store, task_id)
     ensure_step4_children_not_premature(store, task_id)
+    maybe_close_abandoned_step4(store, task_id)
     _skip_irrelevant_step4_children(store, task_id)
     reconcile_step4_and_step7_children(store, task_id)
     # 会话收口路径：才跳过未尝试的步骤四子节点（中途禁止 peer-skip）

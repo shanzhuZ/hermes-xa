@@ -83,7 +83,7 @@ _SKIP_STEP_TOOLS = frozenset({
 # 步骤3 web 安静期：避免 3 条并行 search 刚结束就收口，stream 还在搜
 _STEP3_QUIET_SECONDS = 40
 # 步骤5 vision 安静期：图片流已齐后仍等模型可能继续发的 vision
-_STEP5_VISION_SETTLE_SECONDS = 25
+_STEP5_VISION_SETTLE_SECONDS = 5  # 批次闭环：图片齐后短安静期即收口，不再等 25s
 _VISION_TOOL_NAMES = ("vision_analyze", "mcp_vision_analyze", "mcp_ocr_perform_ocr", "mcp_ocr_perform_batch_ocr")
 _STEP5_STREAM_TOOLS = frozenset({"mcp_ocr_perform_ocr", "mcp_vision_analyze", "vision_analyze"})
 _SEEN_TOOL_CALLS: set = set()
@@ -163,14 +163,69 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
 
 
 def _is_late_web_search_tool(tool_name: str, task_id: str) -> Optional[str]:
-    """步骤四主页采集已开始后禁止继续 web_search（避免 stream 还在步骤3、树已进步骤4）。"""
+    """步骤四主页采集已开始后禁止继续 web_search（避免 stream 还在步骤3、树已进步骤4）。
+
+    例外：步骤四仍有 pending/running 的 youtube 子节点时，允许仅用于解析 UC channelId 的检索。
+    """
     if tool_name not in WEB_SEARCH_TOOLS:
         return None
     if not step4_profile_collect_started(task_id):
         return None
+    # YouTube 仅有 @handle 时：允许在步骤4期间用 web 解析 UC（否则工具硬要 UC… 必然跳过）
+    yt_st = get_step_status(task_id, "step4_profile_youtube")
+    if yt_st in {"pending", "running"} and tool_name in {"web_search", "web_extract"}:
+        return None
     return (
         "步骤4主页采集已开始，禁止再调用 web_search/web_extract/browser_*。"
         "请继续候选主页 MCP/Apify 采集，勿回到步骤3检索。"
+        "（例外：仅当 youtube 子步骤仍 pending/running 时可用 web_search/web_extract 解析 UC channelId。）"
+    )
+
+
+def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
+    """步骤4未终态禁止 vision；步骤5已收口后禁止再 vision（批次闭环，不回开）。"""
+    if tool_name not in _STEP5_STREAM_TOOLS:
+        return None
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 in {"completed", "skipped"}:
+        return (
+            "步骤5图片流已收口，禁止再调用 vision/OCR。"
+            "请进入步骤6收敛可信账号，勿回补 vision（系统不再回开步骤5）。"
+        )
+    from report_04.gates import step4_profiles_terminal
+
+    if step4_profiles_terminal(task_id):
+        return None
+    pending = None
+    try:
+        from report_04.gates import _step4_profile_children_pending
+
+        pending = _step4_profile_children_pending(task_id)
+    except Exception:
+        pending = "step4_profile_*"
+    return (
+        f"步骤4主页子节点未全部终态（仍有 {pending or 'pending/running'}），禁止 vision/OCR。"
+        "请先完成或显式 skip 剩余平台（尤其 youtube 需 UC channelId、github 用 Apify username），"
+        "禁止因其它平台已采完提前进入步骤5。"
+    )
+
+
+def _is_invalid_youtube_channel_id(tool_name: str, tool_args: Dict[str, Any]) -> Optional[str]:
+    """YouTube MCP 必须合法 UC…；@handle / 伪 UC 直接拦截并提示解析路径。"""
+    if tool_name not in {
+        "mcp_youtube_get_channel_stats",
+        "mcp_youtube_analyze_channel_videos",
+    }:
+        return None
+    from collect_01.normalizers.youtube import youtube_channel_id_ok
+
+    cid = str(tool_args.get("channelId") or tool_args.get("channel_id") or "").strip()
+    if youtube_channel_id_ok(cid):
+        return None
+    return (
+        f"YouTube 参数非法 channelId={cid!r}。必须是 UC 开头且足够长的正式 channelId。"
+        "禁止传 @handle / youtube.com/@xxx。"
+        "请先 web_search/web_extract 解析出 UC… 再调 MCP；解析不到则 skip YouTube 子步骤，继续其它平台。"
     )
 
 
@@ -194,7 +249,7 @@ def _step5_guidance_context(task_id: str) -> Optional[str]:
 
 
 def _vision_settle_ready(task_id: str) -> bool:
-    """图片流已齐，且距最近一次 vision/ocr 已过安静期（或无图片流）。"""
+    """图片流已齐，且距最近一次 vision/ocr 已过短安静期（或无图片流）。"""
     from report_04.gates import count_image_streams
 
     if not is_stream_compare_ready(task_id):
@@ -206,39 +261,6 @@ def _vision_settle_ready(task_id: str) -> bool:
         # 库内流已齐但尚无 vision 工具：允许收口（可能全失败标记 processed）
         return True
     return age >= float(_STEP5_VISION_SETTLE_SECONDS)
-
-
-def _reopen_step5_for_late_vision(store: TaskStore, task_id: str) -> None:
-    """步骤5已完成后又来 vision，且步骤7尚未真正发文：回开步骤5并回滚6/7。"""
-    from report_04.step_reconcile import _post_collect_attempted, ensure_step7_parent_not_premature
-    from collect_01 import db as _db
-
-    s5 = get_step_status(task_id, "step5_streams")
-    if s5 not in {"completed", "skipped"}:
-        return
-    plats = _db.fetch_all(
-        """
-        SELECT DISTINCT platform FROM collect_validated_accounts
-        WHERE task_id=%s AND verdict='validated'
-        """,
-        (task_id,),
-    )
-    for r in plats:
-        plat = str(r.get("platform") or "")
-        if plat and _post_collect_attempted(task_id, plat):
-            return
-    store.set_step_status(
-        task_id,
-        "step5_streams",
-        "running",
-        message="检测到晚到 vision，重新确认图片流…",
-    )
-    if get_step_status(task_id, "step6_validated") in {"running", "completed", "skipped"}:
-        store.set_step_status(task_id, "step6_validated", "pending", message="等待步骤五完成")
-    ensure_step7_parent_not_premature(store, task_id)
-    if get_step_status(task_id, "step7_posts") in {"running", "completed", "skipped"}:
-        store.set_step_status(task_id, "step7_posts", "pending", message="等待步骤五、六完成")
-    logger.info("晚到 vision，回开步骤5并回滚6/7 task=%s", task_id)
 
 
 def _extra(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -455,7 +477,7 @@ def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:
 
 
 def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """硬拦截：步骤4已开始禁止 web；步骤5/6 未完成禁止发文。"""
+    """硬拦截：非法 YouTube channelId；步骤4未终态禁止 vision；步骤4后禁止无关 web；步骤5/6 未完成禁止发文。"""
     tool_name = _normalize_hook_tool_name(payload.get("tool_name"))
     if not tool_name or tool_name in _SKIP_STEP_TOOLS:
         return None
@@ -463,8 +485,12 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         task_id = _resolve_task_id(payload)
         if not task_id:
             return None
-        reason = _is_late_web_search_tool(tool_name, task_id) or _is_premature_step7_tool(
-            tool_name, task_id
+        tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        reason = (
+            _is_invalid_youtube_channel_id(tool_name, tool_args)
+            or _is_premature_step5_tool(tool_name, task_id)
+            or _is_late_web_search_tool(tool_name, task_id)
+            or _is_premature_step7_tool(tool_name, task_id)
         )
         if not reason:
             return None
@@ -525,6 +551,11 @@ def _enter_step5(store: TaskStore, task_id: str) -> None:
         store.set_step_status(task_id, "step5_streams", "running", message="文本/图片流核查中")
 
 
+def _prepare_enter_step5(store: TaskStore, task_id: str) -> None:
+    """步骤五工具到来时：仅当步骤4已终态才进入；不再 force 跳过未采平台。"""
+    _enter_step5(store, task_id)
+
+
 def _maybe_advance_step67(store: TaskStore, task_id: str) -> None:
     """仅在步骤5真正 completed 后推进步骤6；步骤7父节点等发文工具再点亮。"""
     gate5 = can_advance_to_step5(task_id)
@@ -578,12 +609,13 @@ def _on_step5_tool_after(
     *,
     success: bool,
 ) -> None:
-    # 晚到 vision：若步骤5已完成且步骤7未发文，回开步骤5
+    # 方案3：步骤5已收口则忽略迟到 vision（pre_tool 应已 block；此处双保险不回开）
     if tool_name in _STEP5_STREAM_TOOLS and get_step_status(task_id, "step5_streams") in {
         "completed",
         "skipped",
     }:
-        _reopen_step5_for_late_vision(store, task_id)
+        logger.info("步骤5已收口，忽略迟到 vision/OCR task=%s tool=%s", task_id, tool_name)
+        return
 
     matched = False
     if tool_name in _STEP5_STREAM_TOOLS:
@@ -630,13 +662,13 @@ def _on_step5_tool_after(
                 touch_updated_at=False,
             )
         return
-    # 已齐：进入 settle，禁止立刻 completed→级联步骤6/7
+    # 已齐：短 settle 后 completed→步骤6（不再因迟到 vision 回开）
     if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
         store.set_step_status(
             task_id,
             "step5_streams",
             "running",
-            message=f"图片流已齐 {n_done}/{n_img}，等待 vision 轮次结束…",
+            message=f"图片流已齐 {n_done}/{n_img}，批次收口中…",
             payload={**patch, "image_pending": 0, "vision_ready": True},
         )
     _try_complete_step5_if_settled(store, task_id)
@@ -858,6 +890,10 @@ def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) ->
     text = assistant or ""
     if not text:
         return
+    # 终稿由 _complete_step11_from_report 收口 8～11，禁止再点亮分析步骤 running
+    if is_final_report(text):
+        _apply_skip_steps(store, task_id, text)
+        return
     progress_text = is_progress_only(text)
     _apply_skip_steps(store, task_id, text)
     if progress_text and mentions_analysis_steps(text):
@@ -894,14 +930,66 @@ def _try_step3_web_candidates(store: TaskStore, task_id: str, assistant: str) ->
         _mark_analysis_running(store, task_id)
 
 
+def _looks_like_report_meta_closing(text: str) -> bool:
+    """终稿后的短收尾（「报告已完成」），本身不是 summary 正文。"""
+    t = (text or "").strip()
+    if not t or is_final_report(t):
+        return False
+    if len(t) > 400:
+        return False
+    markers = ("报告已完成", "画像报告已完成", "全部11个步骤", "四个章节", "完整画像报告")
+    return any(m in t for m in markers)
+
+
+def _resolve_final_report_text(assistant: str, session_id: Optional[str]) -> Optional[str]:
+    """当前轮是终稿则用当前轮；否则从 state.db 回扫真终稿（避免短收尾覆盖）。"""
+    text = (assistant or "").strip()
+    if is_final_report(text):
+        return text
+    from_state = _load_assistant_output_from_state(session_id or "")
+    if from_state and is_final_report(from_state):
+        return from_state
+    if text and not _looks_like_report_meta_closing(text):
+        return None
+    return from_state
+
+
 def _complete_step11_from_report(
     store: TaskStore,
     task_id: str,
     assistant: str,
     session_id: Optional[str],
 ) -> None:
+    """先轻量落 summary / 收口 8～11，再可选 backfill 与 reconcile（防 Hook 120s 超时半截）。"""
     if get_step_status(task_id, "step11_report") == "completed":
         return
+    if not is_final_report(assistant):
+        return
+
+    # —— 轻量路径：立刻终态，避免超时停在 running ——
+    backfill = backfill_analysis_from_report(assistant)
+    try:
+        if can_advance_to_analysis(task_id).get("ok"):
+            for step_key, content in backfill.items():
+                if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
+                    store.save_analysis_display(
+                        task_id, step_key, content, source="backfill_from_step11"
+                    )
+    except Exception as exc:
+        logger.warning("终稿轻量 backfill 失败 task=%s: %s", task_id, exc)
+    for step_key in ANALYSIS_STEP_KEYS:
+        st = get_step_status(task_id, step_key)
+        if st not in {"completed", "skipped"}:
+            # pending/running 一律 skip，禁止停在 running
+            store.set_step_status(task_id, step_key, "skipped", message="终稿已出，未单独输出")
+    store.save_assistant_output(task_id, session_id, assistant)
+    store.set_step_status(task_id, "step11_report", "completed", message="画像报告已生成")
+    from report_04.phases import PHASE_DONE
+
+    store.set_task_phase(task_id, PHASE_DONE)
+    logger.info("终稿轻量收口完成 task=%s summary_len=%d", task_id, len(assistant or ""))
+
+    # —— 重路径：步骤4/7 收口（失败不影响已落的 summary）——
     try:
         from report_04.step_reconcile import (
             reconcile_step4_and_step7_children,
@@ -912,23 +1000,7 @@ def _complete_step11_from_report(
         reconcile_step4_and_step7_children(store, task_id)
         store.reconcile_collect_child_steps(task_id)
     except Exception as exc:
-        logger.warning("终稿前步骤七收口失败 task=%s: %s", task_id, exc)
-    backfill = backfill_analysis_from_report(assistant)
-    if can_advance_to_analysis(task_id).get("ok"):
-        for step_key, content in backfill.items():
-            if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
-                store.save_analysis_display(task_id, step_key, content, source="backfill_from_step11")
-    for step_key in ANALYSIS_STEP_KEYS:
-        if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
-            store.set_step_status(task_id, step_key, "skipped", message="终稿已出，未单独输出")
-    if not can_complete_step11(task_id).get("ok"):
-        logger.info("终稿已到但步骤8～10未收口 task=%s", task_id)
-        return
-    store.save_assistant_output(task_id, session_id, assistant)
-    store.set_step_status(task_id, "step11_report", "completed", message="画像报告已生成")
-    from report_04.phases import PHASE_DONE
-
-    store.set_task_phase(task_id, PHASE_DONE)
+        logger.warning("终稿后步骤七收口失败 task=%s: %s", task_id, exc)
 
 
 def _infer_platform(
@@ -1128,6 +1200,12 @@ def _sync_platform_collect_steps(
 
 
 def _try_complete_profiles(store: TaskStore, task_id: str) -> None:
+    try:
+        from report_04.step_reconcile import maybe_close_abandoned_step4
+
+        maybe_close_abandoned_step4(store, task_id)
+    except Exception as exc:
+        logger.warning("abandoned step4 收口失败 task=%s: %s", task_id, exc)
     store.reconcile_collect_child_steps(task_id)
     if get_step_status(task_id, "step4_profiles") in {"completed", "skipped"}:
         store.kickoff_step5_if_ready(task_id)
@@ -1233,7 +1311,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 store.set_step_status(task_id, collect_step, "running", message=f"{platform} {kind}采集中…")
 
     if tool_name in _STEP5_STREAM_TOOLS:
-        _enter_step5(store, task_id)
+        _prepare_enter_step5(store, task_id)
 
     result = ex.get("result")
     if isinstance(result, (dict, list)):
@@ -1265,7 +1343,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     # OCR/Vision 快路径：无 profile/post 产物，必须先写图片流再退出。
     # GPT 并行多工具时 db_sink 易在尾部超时，导致 tool_outputs 已成功、步骤五永远 pending。
     if tool_name in _STEP5_STREAM_TOOLS:
-        _enter_step5(store, task_id)
+        _prepare_enter_step5(store, task_id)
         try:
             _on_step5_tool_after(
                 store,
@@ -1514,6 +1592,15 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id)
         if not assistant or assistant == "(empty)":
             return
+        # 终稿优先：短收尾时回扫 state.db；先收口 8～11，再做候选/vision（防超时半截）
+        report = _resolve_final_report_text(assistant, session_id)
+        if report and is_final_report(report):
+            if get_step_status(task_id, "step6_validated") != "completed":
+                _maybe_advance_step67(store, task_id)
+            _complete_step11_from_report(
+                store, task_id, report, session_id or payload.get("session_id")
+            )
+            return
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
         _try_complete_profiles(store, task_id)
@@ -1529,17 +1616,14 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             _maybe_advance_step67(store, task_id)
         except Exception as exc:
             logger.warning("post_llm vision 回放失败 task=%s: %s", task_id, exc)
-        if is_final_report(assistant):
-            if get_step_status(task_id, "step6_validated") != "completed":
-                _maybe_advance_step67(store, task_id)
-            _complete_step11_from_report(store, task_id, assistant, session_id or payload.get("session_id"))
-        elif not is_progress_only(assistant):
+        if not is_progress_only(assistant) and not _looks_like_report_meta_closing(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
     except DbError as exc:
         logger.warning("post_llm_call 失败 task=%s: %s", task_id, exc)
 
 
 def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
+    """从 Hermes state.db 回扫最近助手消息，返回第一条符合终稿结构的正文。"""
     if not session_id:
         return None
     db_path = hermes_home() / "state.db"
@@ -1556,7 +1640,7 @@ def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
               AND content IS NOT NULL AND TRIM(content) != ''
               AND TRIM(content) != '(empty)'
             ORDER BY id DESC
-            LIMIT 30
+            LIMIT 50
             """,
             (session_id,),
         ).fetchall()
@@ -1564,11 +1648,17 @@ def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
         conn.close()
     if not rows:
         return None
+    best: Optional[str] = None
+    best_len = 0
     for row in rows:
         text = str(row[0] or "").strip()
-        if is_final_report(text):
-            return text
-    return None
+        if not is_final_report(text):
+            continue
+        # 取最近若干条中最长的真终稿，避免短摘要误抢
+        if len(text) > best_len:
+            best = text
+            best_len = len(text)
+    return best
 
 
 def _on_session_end(payload: Dict[str, Any]) -> None:
@@ -1577,18 +1667,34 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         return
     session_id = str(payload.get("session_id") or "").strip() or None
     store = _store()
+    # 先做轻量步骤5收口，避免 finalize 过重导致 Hook 120s 超时后步骤5永久 running
+    try:
+        from report_04.step_reconcile import _fail_forward_step5_pending_images
+
+        _fail_forward_step5_pending_images(
+            store, task_id, reason="会话结束兜底：未完成 vision"
+        )
+        if (
+            get_step_status(task_id, "step5_streams") == "completed"
+            and get_step_status(task_id, "step6_validated") != "completed"
+        ):
+            store.run_validated_accounts(task_id)
+    except Exception as exc:
+        logger.warning("on_session_end step5 轻量收口失败 task=%s: %s", task_id, exc)
     try:
         user_message = str(_extra(payload).get("user_message") or "")
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id or "")
-        assistant = _load_assistant_output_from_state(session_id or "")
-        if assistant:
-            user_message = str(_extra(payload).get("user_message") or "")
+        # 优先回扫真终稿；短「报告已完成」不能当 summary
+        assistant = _resolve_final_report_text("", session_id or "")
+        if not assistant:
+            assistant = _load_assistant_output_from_state(session_id or "")
+        if assistant and is_final_report(assistant):
+            if get_step_status(task_id, "step6_validated") != "completed":
+                _maybe_advance_step67(store, task_id)
+            _complete_step11_from_report(store, task_id, assistant, session_id)
+        elif assistant:
             _try_parse_seed(store, task_id, assistant, user_message)
             _try_step3_web_candidates(store, task_id, assistant)
-            if is_final_report(assistant):
-                if get_step_status(task_id, "step6_validated") != "completed":
-                    _maybe_advance_step67(store, task_id)
-                _complete_step11_from_report(store, task_id, assistant, session_id)
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
     try:

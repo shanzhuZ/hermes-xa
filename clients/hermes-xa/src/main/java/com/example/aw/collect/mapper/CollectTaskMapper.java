@@ -73,6 +73,9 @@ public interface CollectTaskMapper {
 
     void markTaskFailed(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
 
+    /** 任务置为 completed（不覆盖 failed） */
+    int markTaskCompleted(@Param("taskId") String taskId, @Param("phase") String phase);
+
     /** 思考终稿（msg_type=thoughts_final） */
     Map<String, Object> selectThoughtsFinal(@Param("taskId") String taskId);
 
@@ -200,4 +203,32 @@ public interface CollectTaskMapper {
 
     /** 删除任务主表 hermes_tasks 自身；须在所有子表删除之后调用 */
     int deleteHermesTaskById(@Param("taskId") String taskId);
+
+    // ---------- 动态流程图（custom flow） ----------
+
+    /** 按 step_key 删除该任务下未出现在 keep 列表中的步骤（replace 模式用） */
+    int deletePhaseStepsNotIn(@Param("taskId") String taskId,
+                              @Param("keepKeys") List<String> keepKeys);
+
+    /** 删除某任务全部步骤 */
+    int deleteAllPhaseStepsByTaskId(@Param("taskId") String taskId);
+
+    /**
+     * 插入或更新步骤元数据（title/order/parent/node）；status 仅在行新建时用 pending，
+     * 已存在行默认不改 status（由 begin/finish 管）。
+     */
+    int upsertPhaseStepMeta(@Param("taskId") String taskId,
+                            @Param("stepKey") String stepKey,
+                            @Param("parentStepKey") String parentStepKey,
+                            @Param("stepOrder") int stepOrder,
+                            @Param("stepNode") String stepNode,
+                            @Param("title") String title);
+
+    /**
+     * 更新步骤状态（含 finished_at 规则，对齐 Python set_step_status）。
+     */
+    int updatePhaseStepLifecycle(@Param("taskId") String taskId,
+                                 @Param("stepKey") String stepKey,
+                                 @Param("status") String status,
+                                 @Param("message") String message);
 }

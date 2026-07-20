@@ -52,6 +52,8 @@ public class HermesGatewayClient {
         conn.setRequestMethod("POST");
         conn.setDoOutput(true);
         conn.setConnectTimeout(30 * 1000);
+
+        
         conn.setReadTimeout(30 * 1000);
         conn.setRequestProperty("Authorization", "Bearer " + apiKey);
         conn.setRequestProperty("Content-Type", "application/json; charset=utf-8");

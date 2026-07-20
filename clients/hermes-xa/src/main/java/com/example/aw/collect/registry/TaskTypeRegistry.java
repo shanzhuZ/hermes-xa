@@ -20,7 +20,8 @@ public class TaskTypeRegistry {
     private static final Pattern SKILL_PREFIX = Pattern.compile(
             "^(account-intelligence-collect|account-expansion|account-intelligence-expand|"
                     + "account-intelligence-verification|account-intelligence-verify|"
-                    + "account-intelligence-report|account-intelligence-profile)\\b",
+                    + "account-intelligence-report|account-intelligence-profile|"
+                    + "account-intelligence-custom)\\b",
             Pattern.CASE_INSENSITIVE);
 
     private final Map<String, TaskTypeDef> byFrontendType = new HashMap<String, TaskTypeDef>();
@@ -36,6 +37,8 @@ public class TaskTypeRegistry {
                 "report", "account_report", "account-intelligence-report", "画像写报"));
         byFrontendType.put("profile", new TaskTypeDef(
                 "profile", "account_report", "account-intelligence-report", "画像写报"));
+        byFrontendType.put("custom", new TaskTypeDef(
+                "custom", "account_custom", "account-intelligence-custom", "自定义"));
     }
 
     /**
@@ -85,6 +88,9 @@ public class TaskTypeRegistry {
         if ("account_report".equals(dbTaskType)) {
             return msg.matches("(?is).*(account-intelligence-report|account-intelligence-profile|画像写报|写报).*");
         }
+        if ("account_custom".equals(dbTaskType)) {
+            return msg.matches("(?is).*(account-intelligence-custom|自定义).*");
+        }
         return true;
     }
 
@@ -111,6 +117,9 @@ public class TaskTypeRegistry {
         }
         if ("account_report".equals(key)) {
             return byFrontendType.get("report");
+        }
+        if ("account_custom".equals(key)) {
+            return byFrontendType.get("custom");
         }
         return null;
     }
@@ -139,7 +148,7 @@ public class TaskTypeRegistry {
     }
 
     /**
-     * 四业务对外枚举（不含 profile 别名）。
+     * 对外业务枚举（不含 profile 别名；含第五类 custom）。
      */
     public List<TaskTypeDef> listPublicTypes() {
         List<TaskTypeDef> list = new ArrayList<TaskTypeDef>();
@@ -147,6 +156,7 @@ public class TaskTypeRegistry {
         list.add(byFrontendType.get("expand"));
         list.add(byFrontendType.get("verify"));
         list.add(byFrontendType.get("report"));
+        list.add(byFrontendType.get("custom"));
         return list;
     }
 

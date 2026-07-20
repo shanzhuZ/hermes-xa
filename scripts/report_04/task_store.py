@@ -579,11 +579,15 @@ class TaskStore:
         from report_04.step_reconcile import (
             close_collect_parent_if_ready,
             ensure_step4_parent_not_premature,
+            ensure_step5_not_premature,
             ensure_step7_parent_not_premature,
+            maybe_close_abandoned_step4,
             reconcile_step4_and_step7_children,
         )
 
-        updated = reconcile_step4_and_step7_children(self, task_id)
+        # 先尝试收口「已开干又被 Agent 扔下」的步骤四，避免父节点永久 running
+        updated = maybe_close_abandoned_step4(self, task_id)
+        updated += reconcile_step4_and_step7_children(self, task_id)
         updated += ensure_step4_parent_not_premature(self, task_id)
         updated += ensure_step7_parent_not_premature(self, task_id)
         for parent, msg_done in (
@@ -591,6 +595,8 @@ class TaskStore:
             (POST_PARENT_STEP_KEY, "发文采集已尝试完毕"),
         ):
             updated += close_collect_parent_if_ready(self, task_id, parent, msg_done)
+        # 步骤四仍未终态时，回滚 Java 粗同步误点的步骤五
+        updated += ensure_step5_not_premature(self, task_id)
         return updated
 
     def _seed_platform(self, task_id: str) -> str:
@@ -1079,21 +1085,14 @@ class TaskStore:
                 (detail, stream_id),
             )
             return True
+        # vision：成功→processed；失败→fail（含远程 URL 403）。
+        # 旧逻辑对远程失败只写 detail 保持 pending「等本地重试」，模型不重试则步骤5永卡。
         status = "processed" if success else "fail"
         detail = "vision 分析完成" if success else "vision 分析失败"
         if not success:
             source = _extract_image_source(tool_args)
             if source.startswith(("http://", "https://")):
-                # 远程 URL 失败通常还会本地下载重试，暂不标记终态
-                db.execute(
-                    """
-                    UPDATE collect_identity_streams
-                    SET validation_detail=%s, updated_at=NOW(3)
-                    WHERE stream_id=%s AND validation_status='pending'
-                    """,
-                    ("vision 远程 URL 失败，等待本地重试", stream_id),
-                )
-                return True
+                detail = "vision 远程 URL 失败（已终态，勿无限等待本地重试）"
         db.execute(
             """
             UPDATE collect_identity_streams
@@ -1346,82 +1345,111 @@ class TaskStore:
         return True
 
     def run_validated_accounts(self, task_id: str) -> None:
-        """步骤六：根据文本流 pass + 有 profile 的账号写入可信清单。"""
+        """步骤六：一次算完并写入可信清单（可重入；展示双写不挡收口）。"""
         if _step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
-            logger.info("run_validated_accounts 跳过 task=%s: step5_streams 未完成")
+            logger.info("run_validated_accounts 跳过 task=%s: step5_streams 未完成", task_id)
             return
         if _step_status(task_id, "step6_validated") == "completed":
             return
         self.set_step_status(task_id, "step6_validated", "running", message="收敛可信账号…")
-        profiles = db.fetch_all(
-            "SELECT platform, account_id, account_handle FROM collect_profiles WHERE task_id=%s",
-            (task_id,),
-        )
-        task = self.get_task(task_id) or {}
-        seed = {}
         try:
-            seed = json.loads(task.get("seed_json") or "{}")
-        except json.JSONDecodeError:
-            pass
-        seed_platform = seed.get("platform", "twitter")
-        platforms_for_posts: List[str] = []
-        count = 0
-        for p in profiles:
-            platform = p["platform"]
-            account_id = p["account_id"]
-            is_seed = int(platform == seed_platform)
-            streams = db.fetch_all(
-                """
-                SELECT stream_id, validation_status, source_field FROM collect_identity_streams
-                WHERE task_id=%s AND source_platform=%s AND source_account_id=%s
-                """,
-                (task_id, platform, account_id),
+            profiles = db.fetch_all(
+                "SELECT platform, account_id, account_handle FROM collect_profiles WHERE task_id=%s",
+                (task_id,),
             )
-            passes = [s for s in streams if s.get("validation_status") == "pass"]
-            substantive = [
-                s for s in passes if s.get("source_field") in ("display_name", "bio")
-            ]
-            if is_seed:
-                verdict = "validated"
-            elif substantive:
-                verdict = "validated"
-            else:
-                verdict = "insufficient"
-            if verdict == "validated":
-                platforms_for_posts.append(platform)
-                count += 1
-            db.execute(
-                """
-                INSERT INTO collect_validated_accounts
-                  (task_id, platform, account_id, account_handle, verdict, is_seed, stream_ids_json)
-                VALUES (%s,%s,%s,%s,%s,%s,%s)
-                ON DUPLICATE KEY UPDATE verdict=VALUES(verdict), stream_ids_json=VALUES(stream_ids_json)
-                """,
-                (
-                    task_id,
-                    platform,
-                    account_id,
-                    p.get("account_handle"),
-                    verdict,
-                    is_seed,
-                    db.json_dumps([s["stream_id"] for s in passes]),
-                ),
-            )
+            task = self.get_task(task_id) or {}
+            seed = {}
             try:
-                from collect_01.display_store import sync_validated_display
+                seed = json.loads(task.get("seed_json") or "{}")
+            except json.JSONDecodeError:
+                pass
+            seed_platform = seed.get("platform", "twitter")
+            platforms_for_posts: List[str] = []
+            count = 0
+            prepared: List[Dict[str, Any]] = []
+            for p in profiles:
+                platform = p["platform"]
+                account_id = p["account_id"]
+                is_seed = int(platform == seed_platform)
+                streams = db.fetch_all(
+                    """
+                    SELECT stream_id, validation_status, source_field FROM collect_identity_streams
+                    WHERE task_id=%s AND source_platform=%s AND source_account_id=%s
+                    """,
+                    (task_id, platform, account_id),
+                )
+                passes = [s for s in streams if s.get("validation_status") == "pass"]
+                substantive = [
+                    s for s in passes if s.get("source_field") in ("display_name", "bio")
+                ]
+                if is_seed:
+                    verdict = "validated"
+                elif substantive:
+                    verdict = "validated"
+                else:
+                    verdict = "insufficient"
+                if verdict == "validated":
+                    platforms_for_posts.append(platform)
+                    count += 1
+                prepared.append(
+                    {
+                        "platform": platform,
+                        "account_id": account_id,
+                        "account_handle": p.get("account_handle"),
+                        "verdict": verdict,
+                        "is_seed": is_seed,
+                        "stream_ids_json": db.json_dumps([s["stream_id"] for s in passes]),
+                    }
+                )
+            # 先整批写完 validated，再标 completed（避免半截 running）
+            for row in prepared:
+                db.execute(
+                    """
+                    INSERT INTO collect_validated_accounts
+                      (task_id, platform, account_id, account_handle, verdict, is_seed, stream_ids_json)
+                    VALUES (%s,%s,%s,%s,%s,%s,%s)
+                    ON DUPLICATE KEY UPDATE verdict=VALUES(verdict), stream_ids_json=VALUES(stream_ids_json)
+                    """,
+                    (
+                        task_id,
+                        row["platform"],
+                        row["account_id"],
+                        row["account_handle"],
+                        row["verdict"],
+                        row["is_seed"],
+                        row["stream_ids_json"],
+                    ),
+                )
+            self.set_step_status(
+                task_id,
+                "step6_validated",
+                "completed",
+                message=f"已收敛 {count} 个可信账号",
+                payload={"validated_count": count, "platforms": platforms_for_posts},
+            )
+            self.prepare_step7_children_pending(task_id)
+            # 展示双写放收口之后，失败不影响步骤6终态
+            for row in prepared:
+                try:
+                    from collect_01.display_store import sync_validated_display
 
-                sync_validated_display(task_id, platform, account_id, step_key="step6_validated")
-            except Exception as exc:
-                logger.warning("展示层双写 validated 失败: %s", exc)
-        self.set_step_status(
-            task_id,
-            "step6_validated",
-            "completed",
-            message=f"已收敛 {count} 个可信账号",
-            payload={"validated_count": count, "platforms": platforms_for_posts},
-        )
-        # 仅预建步骤七子节点为 pending，父节点等首个发文工具再 running
-        self.prepare_step7_children_pending(task_id)
+                    sync_validated_display(
+                        task_id,
+                        row["platform"],
+                        row["account_id"],
+                        step_key="step6_validated",
+                    )
+                except Exception as exc:
+                    logger.warning("展示层双写 validated 失败: %s", exc)
+        except Exception as exc:
+            logger.exception("run_validated_accounts 失败 task=%s: %s", task_id, exc)
+            # 保持 running 以便后续 post_llm/session_end 重试，勿半截 completed
+            self.set_step_status(
+                task_id,
+                "step6_validated",
+                "running",
+                message=f"收敛中断将重试：{str(exc)[:120]}",
+            )
 
     def prepare_step7_children_pending(self, task_id: str) -> List[str]:
         """步骤六完成后预建发文子节点，父步骤保持 pending。"""

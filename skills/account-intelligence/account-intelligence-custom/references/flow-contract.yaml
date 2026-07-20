@@ -1,0 +1,66 @@
+# 05 自定义 — 动态流程图契约（Agent / Java / Python 共用）
+
+version: "0.1"
+
+goal: |
+  前端 GET /api/tasks/{taskId}/tree 展示的步骤，必须覆盖实际执行动作。
+  计划可追加（merge）；一致性靠 begin/finish 闸门，不靠死锁禁令。
+
+bootstrap:
+  java_preinsert:
+    - step_key: step_plan
+      title: 制定执行计划
+      status: running
+  note: 模型生成计划后应 finish(step_plan)，再 begin 业务步骤。
+
+step_key_rules:
+  pattern: "^[a-zA-Z][a-zA-Z0-9_]{0,62}$"
+  examples: [step_plan, research, fetch_evidence, synthesize, write_report]
+  avoid: ["含空格或中文的 key", "过长无意义 hash"]
+
+modes:
+  merge: 只插入/更新传入 steps，不删已有节点（追加用这个）
+  replace: 删除不在本次列表中的步骤后，再 upsert（慎用，避免闪断树）
+
+lifecycle:
+  - pending → begin → running → finish(completed|failed|skipped)
+  - 允许 running ↔ 修订后再次 running（少用）
+  - 业务工具调用前必须 running；结束后必须终态
+
+python_cli:
+  cwd: scripts/
+  commands:
+    upsert: >
+      python -m custom_05.flow_cli upsert --task-id <TASK_ID> --mode merge
+      --steps-json '[{"stepKey":"research","title":"检索公开信息","stepOrder":20}]'
+    begin: >
+      python -m custom_05.flow_cli begin --task-id <TASK_ID>
+      --step-key research --message 开始检索
+    finish: >
+      python -m custom_05.flow_cli finish --task-id <TASK_ID>
+      --step-key research --status completed --message 完成
+
+http:
+  base: "http://127.0.0.1:4377"
+  upsert: "POST /api/tasks/{taskId}/flow/upsert"
+  begin: "POST /api/tasks/{taskId}/flow/begin"
+  finish: "POST /api/tasks/{taskId}/flow/finish"
+  upsert_body_example:
+    mode: merge
+    steps:
+      - stepKey: research
+        title: 检索公开信息
+        parentStepKey: null
+        stepOrder: 20
+        stepNode: "2"
+  begin_body_example:
+    stepKey: research
+    message: 开始检索
+  finish_body_example:
+    stepKey: research
+    status: completed
+    message: 已收集线索
+
+consistency_rule: |
+  没有节点，不准干活；要干活，先 upsert；干活前 begin；干完 finish。
+  中途加活：merge upsert 新节点后再 begin。

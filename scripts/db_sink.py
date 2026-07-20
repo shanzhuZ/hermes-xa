@@ -97,6 +97,10 @@ def _resolve_sink_module(payload: Dict[str, Any]):
                 from report_04 import sink as report_sink
 
                 return report_sink
+            if ttype == "account_custom":
+                from custom_05 import sink as custom_sink
+
+                return custom_sink
             break
 
     ttype = _task_type_from_session(session_id)
@@ -112,8 +116,18 @@ def _resolve_sink_module(payload: Dict[str, Any]):
         from report_04 import sink as report_sink
 
         return report_sink
+    if ttype == "account_custom":
+        from custom_05 import sink as custom_sink
+
+        return custom_sink
 
     user_message = str(ex.get("user_message") or "").strip()
+    from custom_05.flow_store import is_custom_intent
+
+    if is_custom_intent(user_message):
+        from custom_05 import sink as custom_sink
+
+        return custom_sink
     if is_report_intent(user_message):
         from report_04 import sink as report_sink
 
