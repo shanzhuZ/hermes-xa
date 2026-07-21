@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-verification
 description: "账号核查，支持多平台多个种子账号，主页+发文→3.5图片入库→文字流与图片流比对，输出三节核验报告。"
-version: 1.17.0
+version: 1.19.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -24,11 +24,20 @@ metadata:
 
 **步骤3**：对所有账号采集对应平台的发文信息（**仅**使用 MCP 或 Apify）。必须采集执行北京时间当前向前31天内的全部发文内容。失败直接跳过，**禁止**换用 web/浏览器。每个账号必须返回输出呈现结果。
 
-**步骤3.5（硬门槛）**：步骤3发文全部结束后、步骤4之前，必须跑图片资产入库+分析回填：
+**步骤3.5（图片入库，对齐 01 的 6.5）**：步骤3发文全部结束后、步骤4之前，用 `terminal` 跑图片资产入库（终稿前入库；系统 Hook 写 summary 前再兜底）：
+
+1. 取当前 `task_id`（Gateway `X-Hermes-Session-Key: task:{uuid}`，或会话活跃核查任务）。
+2. **禁止**用 `search_files` / `web_search`「探测是否部署」；管线在仓库 `scripts/image_pipeline/`，**视为已部署**。
+3. 工作目录切到仓库 `scripts/`（Windows 示例：`cd /d D:\hermes-xa\scripts`），执行：
+
 ```bash
 python -m image_pipeline.run --task-id <taskId> --force-analyze
 ```
-禁止 search_files/web_search 探测「是否部署」；`scripts/image_pipeline` 视为已部署。失败只记日志，**禁止**因此判失败，**禁止**跳过直接进步骤4～7。步骤树不新增节点。禁止把管线元叙述写进终稿。
+
+4. 对用户最多 1 句进度（禁止写进三节终稿）。命令失败也继续步骤4，不要编造「未部署 / 未注册」。
+5. **task_id**：只用 Gateway `task:{uuid}` 里的 uuid；**查不到就跳过 3.5 直接步骤4**，**禁止**在对用户可见回复里解释原因。
+6. **禁止编造**任何假 id（尤其禁止 `verify-xxx`、`verify-{handle}`、账号名当 task_id）。
+7. 终稿必须以 `一、账号基础信息` 开头，禁止管线元叙述。
 
 **步骤4**：结合每个账号的发文内容，分析归纳出盖章好的发文风格 及 涉及领域。并配有相应发文作为作证。每个账号必须返回输出呈现结果。
 
@@ -92,7 +101,7 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 支持平台：twitter/weibo/youtube/bilibili（MCP）与 instagram/tiktok/telegram/facebook/github（Apify）。
 **步骤2**：对多个种子账号采集主页信息（有 MCP 用 MCP；无 MCP 必须 Apify 三轮：Actor → get_actor_run → get_dataset_items）。
 **步骤3**：对多个种子账号采集对应平台近一个月发文（MCP 或 Apify 三轮）。
-**步骤3.5**：图片资产入库（见上硬门槛）。
+**步骤3.5**：图片资产入库（见上；无 uuid 则跳过，禁止编造 id）。
 **步骤4**：归纳发文风格与领域。
 **步骤5**：同步执行文字流分析（账户名/简介/发文风格相似度）和图片流分析（OCR头像 + 多模态vision图片内容）。
 **步骤6**：结合文字流与图片流分析的所有候选账号匹配结果并说明原因。
@@ -103,4 +112,5 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 - ❌ 额外工具调用超出硬顺序步骤。
 - ❌ 在步骤 1-6 中输出报告格式「一、」「二、」「三、」。
 - ❌ 任何收尾引导语、扩展建议或无关内容。
-- ❌ 步骤 3.5 / 图片管线 / image_pipeline / task_id / force-analyze 写进三节终稿。
+- ❌ 步骤 3.5 / 图片管线 / image_pipeline / task_id / force-analyze /「任务不存在」写进对用户可见回复或三节终稿。
+- ❌ 编造 `verify-xxx` 等假 task_id。

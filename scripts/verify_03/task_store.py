@@ -358,6 +358,13 @@ class TaskStore:
                 message="各平台主页与发文采集已尝试完毕",
             )
             updated = 1
+            # 步骤二刚收口：仅后台 kickoff，禁止同步等待（否则 post_tool Hook 120s 超时）
+            try:
+                from verify_03.image_assets import kickoff_images_background
+
+                kickoff_images_background(task_id, reason="step3_profiles_completed")
+            except Exception as exc:
+                logger.warning("step3 收口后图片入库 kickoff 失败 task=%s: %s", task_id, exc)
         # 仅当步骤二已完成后才点亮步骤三，禁止抢跑
         if (
             _step_status(task_id, "step3_profiles") == "completed"
@@ -968,6 +975,13 @@ class TaskStore:
             return False
         clipped = text[:65535]
         if is_three_section_report(text):
+            # 闸门：终稿入库前必须先尝试图片资产（禁止报告后再补跑）
+            try:
+                from verify_03.image_assets import ensure_images_before_report
+
+                ensure_images_before_report(task_id, reason="before_summary")
+            except Exception as exc:
+                logger.warning("终稿前图片入库失败 task=%s: %s", task_id, exc)
             existing = db.fetch_one(
                 """
                 SELECT id FROM hermes_user_dialogues
@@ -1008,32 +1022,31 @@ class TaskStore:
 
         reconcile_stuck_pipeline(self, task_id)
 
-        # 图片资产兜底：步骤3（主页+发文）已收口或有入库数据时补跑
-        try:
-            step3 = _step_status(task_id, "step3_profiles")
-            pc = int(
-                (db.fetch_one("SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)) or {}).get("c")
-                or 0
-            )
-            poc = int(
-                (db.fetch_one("SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s", (task_id,)) or {}).get("c")
-                or 0
-            )
-            if step3 in {"completed", "skipped"} or pc > 0 or poc > 0:
-                from verify_03.image_assets import run_image_pipeline_for_verify
-
-                run_image_pipeline_for_verify(
-                    task_id,
-                    force_analyze=True,
-                    skip_if_stored=True,
-                )
-        except Exception as exc:
-            logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
-
+        # 仅当尚无终稿时兜底：已有 summary 说明报告已出，禁止再「报告后补图」
         summary = db.fetch_one(
             "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
             (task_id,),
         )
+        if not summary:
+            try:
+                step3 = _step_status(task_id, "step3_profiles")
+                pc = int(
+                    (db.fetch_one("SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)) or {}).get(
+                        "c"
+                    )
+                    or 0
+                )
+                poc = int(
+                    (db.fetch_one("SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s", (task_id,)) or {}).get("c")
+                    or 0
+                )
+                if step3 in {"completed", "skipped"} or pc > 0 or poc > 0:
+                    from verify_03.image_assets import ensure_images_before_report
+
+                    ensure_images_before_report(task_id, reason="finalize_before_summary")
+            except Exception as exc:
+                logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
+
         step5 = _step_status(task_id, "step5_validated")
         ready_done = bool(summary) and step5 == "completed"
         if ready_done:

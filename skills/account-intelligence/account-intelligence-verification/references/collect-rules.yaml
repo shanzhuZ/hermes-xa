@@ -1,13 +1,13 @@
 # 03 账号核查 — 唯一参考（Skill 只加载本文件）
-version: "1.14.0"
+version: "1.15.0"
 
 identity: 用户指定的多个 @种子账号 作为目标；禁止把 Maigret/简介里其他 handle 当种子。
 
 forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
-  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 图片资产管线系统未部署, 跳过步骤 3.5, image_pipeline未部署]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 图片资产管线系统未部署, 跳过步骤 3.5, image_pipeline未部署, 任务不存在, verify-]
 
-# 硬顺序：3_contents 结束后必须 3_5_image_assets，再进 4/5
+# 硬顺序：3_contents 后尽量 3_5（无 uuid 可跳过），再进 4/5；终稿前 Hook 兜底入库
 mandatory_auto_steps: [2_profiles, 3_contents, 3_5_image_assets, 4_analysis_content, 5_streams, 6_validated, 7_output]
 
 steps:
@@ -53,23 +53,24 @@ steps:
       - bilibili → 平台发文/视频 MCP（若有）
       【Apify】同步骤二 Actor，三轮 resultsLimit 按平台；已有 dataset 可复用，不足则再拉一轮
       失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
-      全部发文采集结束后必须进入 3_5_image_assets，禁止直接进入步骤4/5
+      全部发文采集结束后进入 3_5_image_assets（无 uuid 可跳过）；再进步骤4/5（Hook 写终稿前兜底入库）
     forbid: [maigret, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, youtube search, vision, ocr, 任何报告文字]
 
   "3_5_image_assets":
     require_before: [3_contents]
     do: |
-      图片资产入库 + 分析回填（硬门槛，步骤树无独立节点）：
-      1) 取得 task_id（Gateway task:{uuid} 或会话活跃任务）
-      2) 禁止 search_files / web_search 探测「是否部署」；scripts/image_pipeline 视为已部署
-      3) 在 scripts/ 下执行：
+      图片资产入库 + 分析回填（对齐 01 步骤 6.5；步骤树无独立节点；早于三节终稿）：
+      1) 取得 task_id：Gateway X-Hermes-Session-Key 的 task:{uuid}，或会话活跃核查任务
+      2) 查不到 uuid → 跳过 3.5 直接步骤4；禁止解释原因；禁止编造假 id（尤其禁止 verify-xxx / handle 当 task_id）
+      3) 禁止 search_files / web_search 探测「是否部署」；scripts/image_pipeline 视为已部署
+      4) 工作目录 scripts/ 执行：
          python -m image_pipeline.run --task-id <taskId> --force-analyze
-      4) 返回 JSON 摘要最多 1 句进度；失败只记日志，禁止把整任务判 failed
-      5) 完成后进入步骤4/5；禁止跳过直接写核查或三节终稿
-    forbid: [写最终报告, web_search, web_extract, browser_*, clarify]
+      5) 对用户最多 1 句进度；失败继续步骤4；禁止把「任务不存在/3.5失败」写进对用户可见回复
+      6) 禁止跳过直接写三节终稿（终稿闸门由 Hook 保证入库）
+    forbid: [写最终报告, web_search, web_extract, browser_*, clarify, search_files, 因3.5失败停住, 编造task_id, verify-]
 
   "4_analysis_content":
-    require_before: [3_5_image_assets]
+    require_before: [3_contents]
     do: |
       结合账号对应平台发言：
         - 分析账号发言观点
@@ -77,7 +78,7 @@ steps:
     forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
 
   "5_streams":
-    require_before: [3_5_image_assets]
+    require_before: [3_contents]
     do: |
       结合对步骤2采集账号主页信息 与 步骤4账号发言观点与发言风格，同时展开一下分析：
         - 文本流：昵称/handle/简介/互链/邮箱/码值/电话 → 使用账号主页信息做多组合对比
@@ -87,13 +88,13 @@ steps:
     forbid: [发文工具, 写最终报告]
 
   "6_validated":
-    require_before: [3_5_image_assets]
+    require_before: [3_contents]
     do: validated_accounts = 账号的文本/图片流相似的候选（high/medium）；其余进 excluded
     forbid: [一切发文工具]
 
   "7_output":
     once: true
-    require_before: [3_5_image_assets]
+    require_before: [3_contents]
     must_start_with: "一、账号基础信息"
     sections: [一、账号基础信息, 二、各个平台账号发言及发言观点, 三、账号核验结果及依据]
     section2: [3.1文本流表, 3.2图片流表, 3.3高匹配度的同一人账号, 3.4低匹配度的账号]
