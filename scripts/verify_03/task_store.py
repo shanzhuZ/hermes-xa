@@ -62,6 +62,22 @@ def is_three_section_report(content: str) -> bool:
     return sum(1 for m in markers if m in text) >= 2
 
 
+def extract_three_section_body(content: str) -> Optional[str]:
+    """从混杂进度文中截取三节终稿正文（从「一、账号基础信息」起）。"""
+    text = (content or "").strip()
+    if not is_three_section_report(text):
+        return None
+    for marker in (
+        "一、账号基础信息",
+        "## 一、账号基础信息",
+        "**一、账号基础信息**",
+    ):
+        idx = text.find(marker)
+        if idx >= 0:
+            return text[idx:].strip()
+    return text
+
+
 def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
     digest = hashlib.md5(f"{task_id}:{platform}:{account_id}".encode("utf-8")).hexdigest()[:16]
     return f"{task_id[:8]}:{platform[:8]}:{digest}"
@@ -973,8 +989,9 @@ class TaskStore:
         text = (content or "").strip()
         if not text or not task_id or text == "(empty)":
             return False
-        clipped = text[:65535]
         if is_three_section_report(text):
+            body = extract_three_section_body(text) or text
+            clipped = body[:65535]
             # 闸门：终稿入库前必须先尝试图片资产（禁止报告后再补跑）
             try:
                 from verify_03.image_assets import ensure_images_before_report
@@ -999,11 +1016,17 @@ class TaskStore:
                     """,
                     (session_id, clipped, existing["id"]),
                 )
-                logger.info("已更新核查终稿 summary task=%s len=%d", task_id, len(text))
-                return True
-            self.save_dialogue(task_id, session_id, "assistant", text, "summary")
-            logger.info("已保存核查终稿 summary task=%s len=%d", task_id, len(text))
+                logger.info("已更新核查终稿 summary task=%s len=%d", task_id, len(body))
+            else:
+                self.save_dialogue(task_id, session_id, "assistant", body, "summary")
+                logger.info("已保存核查终稿 summary task=%s len=%d", task_id, len(body))
+            # 终稿已出：立即收口步骤树，避免前端卡在 step3_streams
+            try:
+                self.close_analysis_after_report(task_id)
+            except Exception as exc:
+                logger.warning("终稿后步骤收口失败 task=%s: %s", task_id, exc)
             return True
+        clipped = text[:65535]
         dup = db.fetch_one(
             """
             SELECT id FROM hermes_user_dialogues
@@ -1016,6 +1039,80 @@ class TaskStore:
             return False
         self.save_dialogue(task_id, session_id, "assistant", text, "assistant_reply")
         return True
+
+    def close_analysis_after_report(self, task_id: str) -> None:
+        """终稿已出时收口 step3_streams / step4 / step5，并把任务标 completed。"""
+        from verify_03.gates import count_image_streams, is_image_compare_ready
+
+        if _step_status(task_id, "step3_profiles") in {"completed", "skipped"}:
+            if _step_status(task_id, "step3_streams") in {"pending", "running"}:
+                self.set_step_status(
+                    task_id,
+                    "step3_streams",
+                    "completed",
+                    message="终稿已出，风格归纳收口",
+                )
+
+        if _step_status(task_id, "step3_streams") == "completed":
+            if _step_status(task_id, "step4_text_compare") in {"pending", "running"}:
+                try:
+                    self.run_text_compare(task_id)
+                except Exception as exc:
+                    logger.warning("终稿收口 text_compare 失败 task=%s: %s", task_id, exc)
+                if _step_status(task_id, "step4_text_compare") in {"pending", "running"}:
+                    self.set_step_status(
+                        task_id,
+                        "step4_text_compare",
+                        "completed",
+                        message="终稿已出，文本比对收口",
+                    )
+
+            if _step_status(task_id, "step4_image_compare") in {"pending", "running"}:
+                if not is_image_compare_ready(task_id) and hasattr(self, "mark_remaining_image_streams_failed"):
+                    try:
+                        self.mark_remaining_image_streams_failed(task_id, "终稿已出：未完成 vision 兜底")
+                    except Exception as exc:
+                        logger.warning("终稿收口图片流兜底失败 task=%s: %s", task_id, exc)
+                n_img = count_image_streams(task_id)
+                msg = "无头像图片流，跳过图片比对" if n_img == 0 else "终稿已出，图片比对收口"
+                self.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+
+            if (
+                _step_status(task_id, "step4_text_compare") == "completed"
+                and _step_status(task_id, "step4_image_compare") == "completed"
+                and _step_status(task_id, "step5_validated") in {"pending", "running"}
+            ):
+                try:
+                    self.run_validated_accounts(task_id)
+                except Exception as exc:
+                    logger.warning("终稿收口 validated 失败 task=%s: %s", task_id, exc)
+                if _step_status(task_id, "step5_validated") in {"pending", "running"}:
+                    self.set_step_status(
+                        task_id,
+                        "step5_validated",
+                        "completed",
+                        message="终稿已出，核验收口",
+                    )
+
+        # 仍有未终态分析节点则强制收口
+        for step_key, message in (
+            ("step3_streams", "终稿已出，风格归纳收口"),
+            ("step4_text_compare", "终稿已出，文本比对收口"),
+            ("step4_image_compare", "终稿已出，图片比对收口"),
+            ("step5_validated", "终稿已出，核验收口"),
+        ):
+            if _step_status(task_id, step_key) in {"pending", "running"}:
+                self.set_step_status(task_id, step_key, "completed", message=message)
+
+        if _step_status(task_id, "step5_validated") == "completed":
+            db.execute(
+                """
+                UPDATE hermes_tasks
+                SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)), updated_at=NOW(3)
+                WHERE task_id=%s AND status IN ('pending', 'running')
+                """,
+                (PHASE_DONE, task_id),
+            )
 
     def finalize_task(self, task_id: str) -> None:
         from verify_03.step_reconcile import reconcile_stuck_pipeline
@@ -1046,6 +1143,13 @@ class TaskStore:
                     ensure_images_before_report(task_id, reason="finalize_before_summary")
             except Exception as exc:
                 logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
+
+        # 有终稿则强制收口步骤树（解决「报告已出但卡在步骤3」）
+        if summary:
+            try:
+                self.close_analysis_after_report(task_id)
+            except Exception as exc:
+                logger.warning("finalize 终稿收口失败 task=%s: %s", task_id, exc)
 
         step5 = _step_status(task_id, "step5_validated")
         ready_done = bool(summary) and step5 == "completed"

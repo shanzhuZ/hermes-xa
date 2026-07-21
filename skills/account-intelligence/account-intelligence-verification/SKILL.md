@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-verification
 description: "账号核查，支持多平台多个种子账号，主页+发文→3.5图片入库→文字流与图片流比对，输出三节核验报告。"
-version: 1.19.0
+version: 1.21.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -24,20 +24,12 @@ metadata:
 
 **步骤3**：对所有账号采集对应平台的发文信息（**仅**使用 MCP 或 Apify）。必须采集执行北京时间当前向前31天内的全部发文内容。失败直接跳过，**禁止**换用 web/浏览器。每个账号必须返回输出呈现结果。
 
-**步骤3.5（图片入库，对齐 01 的 6.5）**：步骤3发文全部结束后、步骤4之前，用 `terminal` 跑图片资产入库（终稿前入库；系统 Hook 写 summary 前再兜底）：
-
-1. 取当前 `task_id`（Gateway `X-Hermes-Session-Key: task:{uuid}`，或会话活跃核查任务）。
-2. **禁止**用 `search_files` / `web_search`「探测是否部署」；管线在仓库 `scripts/image_pipeline/`，**视为已部署**。
-3. 工作目录切到仓库 `scripts/`（Windows 示例：`cd /d D:\hermes-xa\scripts`），执行：
-
-```bash
-python -m image_pipeline.run --task-id <taskId> --force-analyze
-```
-
-4. 对用户最多 1 句进度（禁止写进三节终稿）。命令失败也继续步骤4，不要编造「未部署 / 未注册」。
-5. **task_id**：只用 Gateway `task:{uuid}` 里的 uuid；**查不到就跳过 3.5 直接步骤4**，**禁止**在对用户可见回复里解释原因。
-6. **禁止编造**任何假 id（尤其禁止 `verify-xxx`、`verify-{handle}`、账号名当 task_id）。
-7. 终稿必须以 `一、账号基础信息` 开头，禁止管线元叙述。
+**步骤3.5（图片入库，系统自动，Agent 勿对外提及）**：
+- 图片资产由 **Hook 在发文收口 / 写终稿前自动入库**，Agent **不必**、也 **不要** 为查不到 task_id 而在 stream/终稿里写「跳过 3.5」。
+- 若对话上下文里已有 Gateway `task:{uuid}`，可用 `terminal` 在 `scripts/` 下补跑一次（可选）：
+  `python -m image_pipeline.run --task-id <taskId> --force-analyze`
+- **禁止编造**假 task_id；**查不到 uuid 时静默继续步骤4**，一句都不要提 3.5 / Gateway / 图片管线。
+- 终稿必须以 `一、账号基础信息` 开头，禁止管线元叙述。
 
 **步骤4**：结合每个账号的发文内容，分析归纳出盖章好的发文风格 及 涉及领域。并配有相应发文作为作证。每个账号必须返回输出呈现结果。
 
@@ -54,7 +46,7 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 |------|------------|------------|
 | twitter | `mcp_twitter_get_user_info` | `mcp_twitter_get_user_tweets` |
 | weibo | `mcp_weibo_get_profile` | `mcp_weibo_get_feeds` / `mcp_weibo_get_user_feeds` |
-| youtube | `mcp_youtube_get_channel_stats`（**channelId 须 UC 开头**，禁止 @handle） | `mcp_youtube_analyze_channel_videos` |
+| youtube | `mcp_youtube_get_channel_stats`（`channelId` 可传用户账号名 / `@handle` / `UC…`，MCP 自动解析） | `mcp_youtube_analyze_channel_videos`（同上） |
 | bilibili | `mcp_bilibili_get_user_info` | （无 MCP 发文则 Apify 或跳过） |
 | instagram / tiktok / telegram / facebook / github | Apify Actor → `mcp_apify_get_actor_run` → `mcp_apify_get_dataset_items` | 同上 Apify 三轮 |
 
@@ -66,7 +58,7 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 - ❌ `vision_analyze` / `mcp_vision_analyze` / `mcp_ocr_*`（仅步骤5 可用）
 - ❌ 用 Twitter 工具去「顺便查 YouTube」——YouTube 必须单独调用 `mcp_youtube_*`
 
-**YouTube 特别规则**：不得用 `web_search site:youtube.com` 或 `web_extract https://youtube.com/@xxx` 代替 MCP。无 channelId 时先 `mcp_youtube_get_channel_stats` 用正确参数重试一次；仍失败则**跳过 YouTube**，进入下一平台，禁止绕行。
+**YouTube 特别规则**：用户通常只给账号名（如 `BillGates`）。调用 MCP 时 **直接把账号名或 `@handle` 传给 `channelId`**，由 YouTube MCP 自动解析为 `UC…`；**禁止**编造伪 UC（如 `UCBillGates`）。解析失败则**跳过 YouTube**，进入下一平台。**禁止**用 `web_search` / `web_extract` 代替 MCP 采集主页或发文。
 
 ## 强制要求
 - 坚决按步骤顺序执行，不可跳跃!
@@ -101,7 +93,7 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 支持平台：twitter/weibo/youtube/bilibili（MCP）与 instagram/tiktok/telegram/facebook/github（Apify）。
 **步骤2**：对多个种子账号采集主页信息（有 MCP 用 MCP；无 MCP 必须 Apify 三轮：Actor → get_actor_run → get_dataset_items）。
 **步骤3**：对多个种子账号采集对应平台近一个月发文（MCP 或 Apify 三轮）。
-**步骤3.5**：图片资产入库（见上；无 uuid 则跳过，禁止编造 id）。
+**步骤3.5**：图片由 Hook 自动入库；Agent 对用户可见内容中禁止提及 3.5 / 跳过 / task_id。
 **步骤4**：归纳发文风格与领域。
 **步骤5**：同步执行文字流分析（账户名/简介/发文风格相似度）和图片流分析（OCR头像 + 多模态vision图片内容）。
 **步骤6**：结合文字流与图片流分析的所有候选账号匹配结果并说明原因。
@@ -112,5 +104,5 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 - ❌ 额外工具调用超出硬顺序步骤。
 - ❌ 在步骤 1-6 中输出报告格式「一、」「二、」「三、」。
 - ❌ 任何收尾引导语、扩展建议或无关内容。
-- ❌ 步骤 3.5 / 图片管线 / image_pipeline / task_id / force-analyze /「任务不存在」写进对用户可见回复或三节终稿。
+- ❌ 步骤 3.5 / 跳过 3.5 / 图片管线 / image_pipeline / task_id / Gateway / force-analyze /「任务不存在」写进 stream、对用户可见回复或三节终稿。
 - ❌ 编造 `verify-xxx` 等假 task_id。

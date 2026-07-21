@@ -687,10 +687,12 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
         if not assistant or assistant == "(empty)":
             return
         _try_parse_step1(store, task_id, assistant, user_message)
-        _try_style_analysis(store, task_id, assistant)
+        # 先收口采集父步骤，再风格归纳（否则风格会因 step3_profiles 未完成而暂缓）
         _try_complete_profiles(store, task_id)
+        _try_style_analysis(store, task_id, assistant)
         if is_three_section_report(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
+            # save_assistant_output 内已 close_analysis_after_report；此处再兜底推进一次
             if get_step_status(task_id, "step5_validated") != "completed":
                 _maybe_advance_step45(store, task_id)
         else:
@@ -744,6 +746,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         if assistant:
             user_message = str(_extra(payload).get("user_message") or "")
             _try_parse_step1(store, task_id, assistant, user_message)
+            _try_complete_profiles(store, task_id)
             _try_style_analysis(store, task_id, assistant)
             if is_three_section_report(assistant):
                 store.save_assistant_output(task_id, session_id, assistant)

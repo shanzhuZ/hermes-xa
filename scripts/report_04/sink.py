@@ -258,7 +258,7 @@ def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
 
 
 def _is_invalid_youtube_channel_id(tool_name: str, tool_args: Dict[str, Any]) -> Optional[str]:
-    """YouTube MCP 必须合法 UC…；@handle / 伪 UC 直接拦截并提示解析路径。"""
+    """YouTube MCP：允许 UC… 或账号名/@handle/URL（由 MCP 自动解析）；仅拦空值与伪短 UC。"""
     if tool_name not in {
         "mcp_youtube_get_channel_stats",
         "mcp_youtube_analyze_channel_videos",
@@ -267,13 +267,17 @@ def _is_invalid_youtube_channel_id(tool_name: str, tool_args: Dict[str, Any]) ->
     from collect_01.normalizers.youtube import youtube_channel_id_ok
 
     cid = str(tool_args.get("channelId") or tool_args.get("channel_id") or "").strip()
+    if not cid:
+        return "YouTube 缺少 channelId：请传 UC… 或用户账号名/@handle。"
     if youtube_channel_id_ok(cid):
         return None
-    return (
-        f"YouTube 参数非法 channelId={cid!r}。必须是 UC 开头且足够长的正式 channelId。"
-        "禁止传 @handle / youtube.com/@xxx。"
-        "请先 web_search/web_extract 解析出 UC… 再调 MCP；解析不到则 skip YouTube 子步骤，继续其它平台。"
-    )
+    # 伪 UC（UC + 过短）：拦截；纯 handle / @xxx / URL 放行给 MCP 解析
+    if cid.upper().startswith("UC") and len(cid) < 22:
+        return (
+            f"YouTube 伪 channelId={cid!r}（UC 过短）。"
+            "请传正式 UC… 或账号名/@handle，禁止编造伪 UC。"
+        )
+    return None
 
 
 def _step5_guidance_context(task_id: str) -> Optional[str]:

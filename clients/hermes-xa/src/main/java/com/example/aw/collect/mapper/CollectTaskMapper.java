@@ -174,6 +174,10 @@ public interface CollectTaskMapper {
     List<Map<String, Object>> selectDisplayRecordsByStepKey(
             @Param("taskId") String taskId, @Param("stepKey") String stepKey);
 
+    /** step_key 前缀匹配（如 step3_profile_ / step3_post_），用于 03 核查等无父汇总节点的任务 */
+    List<Map<String, Object>> selectDisplayRecordsByStepKeyPrefix(
+            @Param("taskId") String taskId, @Param("stepKeyPrefix") String stepKeyPrefix);
+
     Map<String, Object> selectLatestAssistantReply(@Param("taskId") String taskId);
 
     // ---------- 按 taskId 级联删除（须先删子表，最后删 hermes_tasks） ----------

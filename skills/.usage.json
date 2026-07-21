@@ -69,13 +69,13 @@
     "created_at": "2026-07-09T13:16:55.372354+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-21T11:19:39.840870+00:00",
-    "last_viewed_at": "2026-07-21T11:19:39.823782+00:00",
+    "last_used_at": "2026-07-21T12:26:00.511423+00:00",
+    "last_viewed_at": "2026-07-21T12:26:00.491248+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 27,
-    "view_count": 27
+    "use_count": 29,
+    "view_count": 29
   },
   "account-intelligence/account-expansion": {
     "archived_at": null,

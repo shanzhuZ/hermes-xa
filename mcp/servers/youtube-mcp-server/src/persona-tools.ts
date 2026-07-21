@@ -35,12 +35,6 @@ const FORMAL_H2 = [
   '## 六、人物深度报告画像',
 ];
 
-function resolveChannelIdFromUrl(url: string): string | null {
-  const ch = url.match(/youtube\.com\/channel\/(UC[\w-]+)/i);
-  if (ch) return ch[1];
-  return null;
-}
-
 function citationLine(v: VideoRow): string {
   const date = (v.publishedAt || '').slice(0, 10) || '未知日期';
   const body = v.transcriptExcerpt
@@ -167,41 +161,22 @@ async function resolveChannel(
   yt: YouTubeService,
   params: { query?: string; channel_id?: string; channel_url?: string },
 ): Promise<{ channelId: string; title: string; resolve: Record<string, unknown> }> {
-  if (params.channel_id?.trim().startsWith('UC')) {
-    const id = params.channel_id.trim();
-    const ch = await yt.getChannelDetails(id);
-    const item = ch.items?.[0];
-    return {
-      channelId: id,
-      title: item?.snippet?.title || id,
-      resolve: { source: 'channel_id' },
-    };
-  }
-  if (params.channel_url?.trim()) {
-    const fromUrl = resolveChannelIdFromUrl(params.channel_url.trim());
-    if (fromUrl) {
-      const ch = await yt.getChannelDetails(fromUrl);
-      const item = ch.items?.[0];
-      return {
-        channelId: fromUrl,
-        title: item?.snippet?.title || fromUrl,
-        resolve: { source: 'channel_url', url: params.channel_url },
-      };
-    }
-  }
-  const q = (params.query || '').trim();
-  if (!q) {
+  // 统一走服务层：UC / @handle / URL / 搜索
+  const raw = (params.channel_id || params.channel_url || params.query || '').trim();
+  if (!raw) {
     throw new Error('请提供 query（频道名）、channel_id 或 channel_url');
   }
-  const search = await yt.searchVideos(q, 8, { type: 'channel' });
-  const hit = search.items?.find((i) => i.id?.channelId);
-  if (!hit?.id?.channelId) {
-    throw new Error(`未找到 YouTube 频道: ${q}`);
-  }
+  const resolved = await yt.resolveChannelId(raw);
+  const ch = await yt.getChannelDetails(resolved.channelId);
+  const item = ch.items?.[0];
   return {
-    channelId: hit.id.channelId,
-    title: hit.snippet?.title || q,
-    resolve: { source: 'search', query: q },
+    channelId: resolved.channelId,
+    title: item?.snippet?.title || resolved.channelId,
+    resolve: {
+      source: resolved.source,
+      resolvedFrom: resolved.resolvedFrom,
+      input: raw,
+    },
   };
 }
 

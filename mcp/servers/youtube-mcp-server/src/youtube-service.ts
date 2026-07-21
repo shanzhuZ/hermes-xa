@@ -78,8 +78,109 @@ export class YouTubeService {
     }
   }
 
-  async getChannelDetails(channelId: string): Promise<youtube_v3.Schema$ChannelListResponse> {
+  /**
+   * 判断是否为正式 channelId（UC…，通常 24 字符）。
+   * 拒伪 UC+短 handle（如 UCBillGates）。
+   */
+  isOfficialChannelId(channelId: string): boolean {
+    const cid = (channelId || '').trim();
+    if (!/^UC[\w-]{20,}$/i.test(cid)) {
+      return false;
+    }
+    return cid.length >= 22;
+  }
+
+  /**
+   * 从用户输入抽出可用查询串：支持 UC…、@handle、纯 handle、youtube.com/@xxx /channel/UC…。
+   */
+  normalizeChannelInput(raw: string): { kind: 'channelId' | 'handle' | 'urlHandle' | 'empty'; value: string } {
+    const text = (raw || '').trim();
+    if (!text) {
+      return { kind: 'empty', value: '' };
+    }
+    const channelMatch = text.match(/youtube\.com\/channel\/(UC[\w-]+)/i);
+    if (channelMatch?.[1]) {
+      return { kind: 'channelId', value: channelMatch[1] };
+    }
+    const atUrl = text.match(/youtube\.com\/@([A-Za-z0-9._-]+)/i);
+    if (atUrl?.[1]) {
+      return { kind: 'urlHandle', value: atUrl[1] };
+    }
+    const bare = text.replace(/^@+/, '').trim();
+    if (this.isOfficialChannelId(bare)) {
+      return { kind: 'channelId', value: bare };
+    }
+    if (bare) {
+      return { kind: 'handle', value: bare };
+    }
+    return { kind: 'empty', value: '' };
+  }
+
+  /**
+   * 将 channelId / @handle / 频道 URL 解析为正式 UC…。
+   * 顺序：已是 UC → forHandle → forUsername → search(type=channel)。
+   */
+  async resolveChannelId(
+    input: string
+  ): Promise<{ channelId: string; resolvedFrom: string; source: string }> {
+    const norm = this.normalizeChannelInput(input);
+    if (norm.kind === 'empty') {
+      throw new Error('channelId 为空：请提供 UC… channelId、@handle 或 youtube 频道 URL');
+    }
+    if (norm.kind === 'channelId') {
+      return { channelId: norm.value, resolvedFrom: input, source: 'channel_id' };
+    }
+
+    const handle = norm.value;
+
+    // 1) 正式 handle（YouTube Data API forHandle，不含 @）
     try {
+      const byHandle = await this.youtube.channels.list({
+        part: ['id', 'snippet'],
+        forHandle: handle,
+      });
+      const id = byHandle.data.items?.[0]?.id;
+      if (id && this.isOfficialChannelId(id)) {
+        return { channelId: id, resolvedFrom: handle, source: 'forHandle' };
+      }
+    } catch (error) {
+      console.error('forHandle resolve failed:', handle, error);
+    }
+
+    // 2) 老用户名 forUsername
+    try {
+      const byUser = await this.youtube.channels.list({
+        part: ['id', 'snippet'],
+        forUsername: handle,
+      });
+      const id = byUser.data.items?.[0]?.id;
+      if (id && this.isOfficialChannelId(id)) {
+        return { channelId: id, resolvedFrom: handle, source: 'forUsername' };
+      }
+    } catch (error) {
+      console.error('forUsername resolve failed:', handle, error);
+    }
+
+    // 3) 搜索兜底（取第一个 channel 结果）
+    try {
+      const search = await this.searchVideos(handle, 8, { type: 'channel' });
+      const hit = search.items?.find((i) => i.id?.channelId);
+      const id = hit?.id?.channelId;
+      if (id && this.isOfficialChannelId(id)) {
+        return { channelId: id, resolvedFrom: handle, source: 'search' };
+      }
+    } catch (error) {
+      console.error('search resolve failed:', handle, error);
+    }
+
+    throw new Error(
+      `无法将 YouTube 输入解析为 channelId: ${input}（已尝试 forHandle/forUsername/search）`
+    );
+  }
+
+  async getChannelDetails(channelIdOrHandle: string): Promise<youtube_v3.Schema$ChannelListResponse> {
+    try {
+      const { channelId } = await this.resolveChannelId(channelIdOrHandle);
       const response = await this.youtube.channels.list({
         part: ['snippet', 'statistics'],
         id: [channelId]

@@ -33,7 +33,9 @@ npm run build
 
 - `search-videos` — 搜索视频
 - `get-video-transcript` / `enhanced-transcript` — 字幕
-- `get-video-stats` / `get-channel-stats` — 统计
-- `analyze-channel-videos` — 频道近期视频分析
+- `get-video-stats` / `get-channel-stats` — 统计；**`channelId` 可传 UC… 或账号名/@handle/频道 URL（服务端自动解析）**
+- `analyze-channel-videos` — 频道近期视频；**同样支持 handle 自动解析**
 - `get-trending-videos` — 趋势
 - 等（见上游 README）
+
+改代码后请 `npm run build`，并 **重启 Hermes / `/reload-mcp`** 使新 dist 生效。

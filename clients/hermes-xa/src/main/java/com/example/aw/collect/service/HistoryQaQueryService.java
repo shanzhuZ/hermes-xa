@@ -30,8 +30,8 @@ import java.util.Map;
  *   <li>任务主表 —— hermes_tasks（状态、类型、时间）</li>
  *   <li>用户提问 —— hermes_user_dialogues（msg_type=user_input，含 payload_json）</li>
  *   <li>终稿报告 —— hermes_user_dialogues（msg_type=summary 优先）via {@link TaskFinalAnswerQueryService}</li>
- *   <li>账号 —— 优先 collect_display_records（step3_profiles）的 display_fields</li>
- *   <li>发文 —— 优先 collect_display_records（step6_posts）的 display_fields</li>
+ *   <li>账号 —— 优先 collect_display_records（01: step3_profiles；03: step3_profile_*）</li>
+ *   <li>发文 —— 优先 collect_display_records（01: step6_posts；03: step3_post_*；04: step7_post_*）</li>
  *   <li>图片 —— collect_images；能读到 HBase/本地则附 dataUrl，读不到则仅 imageUrl</li>
  * </ul>
  * <p>
@@ -310,13 +310,27 @@ public class HistoryQaQueryService {
     }
 
     /**
-     * 历史详情账号：优先 collect_display_records.step3_profiles 的 display_fields。
-     * 无展示层时回退 collect_profiles 原字段（兼容旧任务）。
+     * 历史详情账号：优先展示层。
+     * 01 父节点 step3_profiles；03/02 子节点 step3_profile_*；04 子节点 step4_profile_*。
      */
     private List<Map<String, Object>> loadProfileDisplayItems(String taskId) {
         List<Map<String, Object>> display = mapDisplayRecords(
                 collectTaskMapper.selectDisplayRecordsByStepKey(taskId, "step3_profiles"),
                 "step3_profiles",
+                "collect_profiles");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKeyPrefix(taskId, "step3_profile_"),
+                "step3_profile_*",
+                "collect_profiles");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKeyPrefix(taskId, "step4_profile_"),
+                "step4_profile_*",
                 "collect_profiles");
         if (!display.isEmpty()) {
             return display;
@@ -332,13 +346,34 @@ public class HistoryQaQueryService {
     }
 
     /**
-     * 历史详情发文：优先 collect_display_records.step6_posts 的 display_fields（父汇总，不重复子平台节点）。
-     * 无展示层时回退 collect_posts 原字段（兼容旧任务）。
+     * 历史详情发文：优先展示层。
+     * 01 父节点 step6_posts；03 step3_post_*；02 step6_post_*；04 step7_post_*。
      */
     private List<Map<String, Object>> loadPostDisplayItems(String taskId) {
         List<Map<String, Object>> display = mapDisplayRecords(
                 collectTaskMapper.selectDisplayRecordsByStepKey(taskId, "step6_posts"),
                 "step6_posts",
+                "collect_posts");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKeyPrefix(taskId, "step3_post_"),
+                "step3_post_*",
+                "collect_posts");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKeyPrefix(taskId, "step6_post_"),
+                "step6_post_*",
+                "collect_posts");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKeyPrefix(taskId, "step7_post_"),
+                "step7_post_*",
                 "collect_posts");
         if (!display.isEmpty()) {
             return display;
@@ -357,7 +392,7 @@ public class HistoryQaQueryService {
      * 与步骤详情接口一致：[{ id, recordTitle, platform, accountId, fields:[{label,value}], stepKey, dataType }]
      */
     private List<Map<String, Object>> mapDisplayRecords(List<Map<String, Object>> rows,
-                                                        String stepKey,
+                                                        String stepKeyFallback,
                                                         String dataType) {
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         if (rows == null || rows.isEmpty()) {
@@ -369,7 +404,9 @@ public class HistoryQaQueryService {
             item.put("recordTitle", row.get("record_title"));
             item.put("platform", row.get("platform"));
             item.put("accountId", row.get("account_id"));
-            item.put("stepKey", stepKey);
+            Object sk = row.get("step_key");
+            item.put("stepKey", sk != null && String.valueOf(sk).trim().length() > 0
+                    ? String.valueOf(sk).trim() : stepKeyFallback);
             item.put("dataType", dataType);
             item.put("fields", parseDisplayFields(row.get("display_fields")));
             out.add(item);

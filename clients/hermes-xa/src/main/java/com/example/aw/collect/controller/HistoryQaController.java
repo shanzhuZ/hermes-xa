@@ -110,8 +110,8 @@ public class HistoryQaController {
      * <b>业务含义：</b>前端从列表点进某一条任务后，一次拉取本次任务的完整回顾数据：
      * <ol>
      *   <li>用户提问（content + payload）</li>
-     *   <li>采集到的账号列表（优先 collect_display_records.display_fields）</li>
-     *   <li>采集到的发文列表（优先 collect_display_records.display_fields）</li>
+     *   <li>采集到的账号列表（优先 collect_display_records；01 用 step3_profiles，03 用 step3_profile_*）</li>
+     *   <li>采集到的发文列表（优先 collect_display_records；01 用 step6_posts，03 用 step3_post_*）</li>
      *   <li>图片资产列表（collect_images；有存储则尽量带 dataUrl，失败不阻塞）</li>
      *   <li>模型终稿报告（优先 summary）</li>
      * </ol>

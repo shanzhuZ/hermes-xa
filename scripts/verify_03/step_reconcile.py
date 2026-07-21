@@ -702,13 +702,27 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     # vision 回写不依赖 step3 完成
     _reconcile_vision_streams_from_tools(store, task_id)
 
+    # 先收口风格步骤，再查 step4 门禁（避免 step3_streams=running 时永远 return）
+    s3p_now = get_step_status(task_id, "step3_profiles")
+    s_stream = get_step_status(task_id, "step3_streams")
+    if s3p_now in {"completed", "skipped"} and s_stream in {"pending", "running"}:
+        store.set_step_status(task_id, "step3_streams", "completed", message="发文风格归纳完成")
+
+    # 若已有终稿，直接走终稿收口（含 step4/5 + task completed）
+    summary = db.fetch_one(
+        "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
+        (task_id,),
+    )
+    if summary and hasattr(store, "close_analysis_after_report"):
+        try:
+            store.close_analysis_after_report(task_id)
+            return
+        except Exception as exc:
+            logger.warning("reconcile 终稿收口失败 task=%s: %s", task_id, exc)
+
     gate = can_advance_to_step45(task_id)
     if not gate.get("ok"):
         return
-
-    s_stream = get_step_status(task_id, "step3_streams")
-    if s_stream in {"pending", "running"}:
-        store.set_step_status(task_id, "step3_streams", "completed", message="发文风格归纳完成")
 
     if get_step_status(task_id, "step4_text_compare") in {"pending", "running"}:
         try:

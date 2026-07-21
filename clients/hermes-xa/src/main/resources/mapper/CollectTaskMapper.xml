@@ -414,9 +414,17 @@
     </select>
 
     <select id="selectDisplayRecordsByStepKey" resultType="java.util.HashMap">
-        SELECT id, record_title, platform, account_id, display_fields
+        SELECT id, step_key, record_title, platform, account_id, display_fields
         FROM collect_display_records
         WHERE task_id = #{taskId} AND step_key = #{stepKey}
+        ORDER BY id ASC
+    </select>
+
+    <!-- 03/04 等：展示层写在子步骤 step3_profile_* / step3_post_* / step7_post_* -->
+    <select id="selectDisplayRecordsByStepKeyPrefix" resultType="java.util.HashMap">
+        SELECT id, step_key, record_title, platform, account_id, display_fields
+        FROM collect_display_records
+        WHERE task_id = #{taskId} AND step_key LIKE CONCAT(#{stepKeyPrefix}, '%')
         ORDER BY id ASC
     </select>
 

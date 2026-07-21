@@ -391,21 +391,25 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
   server.tool(
     'get-channel-stats',
     youtubeCollectMode
-      ? '获取 YouTube 频道主页信息，包括标题、订阅数、视频数、总播放量、创建时间、头像 URL 等基础资料。'
-      : 'Get statistical information for a specific YouTube channel (subscriber count, total views, video count, etc.)',
+      ? '获取 YouTube 频道主页信息。channelId 可传正式 UC…，也可传用户给的账号名/@handle/频道 URL（服务端自动解析为 UC）。返回标题、订阅数、视频数、总播放量、创建时间、头像 URL 等。'
+      : 'Get channel stats. channelId accepts official UC… or @handle / custom URL (auto-resolved to UC).',
     {
-      channelId: z.string().min(1)
+      channelId: z
+        .string()
+        .min(1)
+        .describe('UC… channelId，或 @handle / BillGates / youtube.com/@xxx（自动解析）')
     },
     async ({ channelId }) => {
       try {
-        const channelData = await youtubeService.getChannelDetails(channelId);
+        const resolved = await youtubeService.resolveChannelId(channelId);
+        const channelData = await youtubeService.getChannelDetails(resolved.channelId);
         const channel = channelData.items?.[0];
 
         if (!channel) {
           return {
             content: [{
               type: 'text',
-              text: `Channel with ID ${channelId} not found.`
+              text: `Channel with ID ${resolved.channelId} not found (input=${channelId}).`
             }],
             isError: true
           };
@@ -418,7 +422,11 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
           subscriberCount: channel.statistics?.subscriberCount,
           videoCount: channel.statistics?.videoCount,
           viewCount: channel.statistics?.viewCount,
-          thumbnailUrl: channel.snippet?.thumbnails?.default?.url
+          thumbnailUrl: channel.snippet?.thumbnails?.default?.url,
+          // 便于 Agent/入库：记录由 handle 解析而来
+          resolvedFrom: resolved.resolvedFrom,
+          resolveSource: resolved.source,
+          customUrl: channel.snippet?.customUrl || null
         };
 
         return {
@@ -568,19 +576,25 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
   server.tool(
     'analyze-channel-videos',
     youtubeCollectMode
-      ? '获取 YouTube 频道近期视频列表及其统计信息，可用于发文采集、内容分析和活跃度观察。'
-      : 'Analyze recent videos from a specific channel to identify performance trends',
+      ? '获取 YouTube 频道近期视频列表。channelId 可传 UC… 或账号名/@handle/频道 URL（自动解析）。'
+      : 'Analyze recent videos. channelId accepts UC… or @handle / URL (auto-resolved).',
     {
-      channelId: z.string().min(1),
+      channelId: z
+        .string()
+        .min(1)
+        .describe('UC… channelId，或 @handle / BillGates / youtube.com/@xxx（自动解析）'),
       maxResults: z.number().min(1).max(50).optional(),
       sortBy: z.enum(['date', 'viewCount', 'rating']).optional()
     },
     async ({ channelId, maxResults = 10, sortBy = 'date' }) => {
       try {
+        const resolved = await youtubeService.resolveChannelId(channelId);
+        const resolvedId = resolved.channelId;
+
         // First get all videos from the channel
         const searchResponse = await youtubeService.youtube.search.list({
           part: ['snippet'],
-          channelId,
+          channelId: resolvedId,
           maxResults,
           order: sortBy,
           type: ['video']
@@ -595,7 +609,7 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
           return {
             content: [{
               type: 'text',
-              text: `No videos found for channel ${channelId}`
+              text: `No videos found for channel ${resolvedId} (input=${channelId})`
             }]
           };
         }
@@ -633,7 +647,9 @@ export default function ({ config }: { config: z.infer<typeof configSchema> }) {
           const avgComments = videoAnalysis.reduce((sum: number, video: VideoAnalysisItem) => sum + video.commentCount, 0) / videoAnalysis.length;
 
           const result = {
-            channelId,
+            channelId: resolvedId,
+            resolvedFrom: resolved.resolvedFrom,
+            resolveSource: resolved.source,
             videoCount: videoAnalysis.length,
             averages: {
               viewCount: avgViews,
