@@ -43,6 +43,12 @@ public class CoarseStepSync {
             }
             Object typeObj = task.get("task_type");
             String taskType = typeObj == null ? "" : String.valueOf(typeObj);
+            // 04 写报：步骤真相由 Python Hook 维护，SSE 粗写库会与门禁/子步冲突
+            if ("account_report".equals(taskType)) {
+                log.trace("account_report 跳过粗同步 taskId={} event={} tool={}",
+                        taskId, et, toolName);
+                return;
+            }
             CoarseToolStepMapping.Target target = CoarseToolStepMapping.resolve(taskType, toolName);
             if (target == null || target.stepKey == null) {
                 return;

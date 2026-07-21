@@ -17,13 +17,13 @@
     "created_at": "2026-07-06T05:05:49.631065+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-21T02:16:48.107611+00:00",
-    "last_viewed_at": "2026-07-21T02:16:48.086680+00:00",
+    "last_used_at": "2026-07-21T07:40:29.714772+00:00",
+    "last_viewed_at": "2026-07-21T07:40:29.697732+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 336,
-    "view_count": 336
+    "use_count": 342,
+    "view_count": 342
   },
   "account-intelligence-custom": {
     "archived_at": null,
@@ -56,13 +56,13 @@
     "created_at": "2026-07-10T05:52:21.769624+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-21T06:00:55.780240+00:00",
-    "last_viewed_at": "2026-07-21T06:00:55.741373+00:00",
+    "last_used_at": "2026-07-21T07:05:53.499954+00:00",
+    "last_viewed_at": "2026-07-21T07:05:53.479024+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 85,
-    "view_count": 85
+    "use_count": 86,
+    "view_count": 86
   },
   "account-intelligence-verification": {
     "archived_at": null,

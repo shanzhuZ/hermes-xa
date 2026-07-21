@@ -1539,22 +1539,25 @@ class TaskStore:
         )
 
     def finalize_task(self, task_id: str) -> None:
-        from report_04.step_reconcile import reconcile_stuck_pipeline
+        from report_04.engine import full_reconcile_enabled, run_session_finalize_light
 
         task = self.get_task(task_id) or {}
         if str(task.get("status") or "") == "failed":
             # 种子失败等硬失败终态：不再 reconcile 改回 running
             return
 
-        reconcile_stuck_pipeline(self, task_id)
-        _reconcile_report_post_child_steps(self, task_id)
-        # 子步骤 skip/完成后必须再收口父节点 step7_posts（否则任务已 completed 父仍 running）
-        self.reconcile_collect_child_steps(task_id)
-        # 再强制一次：防止 reconcile 中间态遗漏导致父节点卡在 running（文案「子步骤执行中」）
-        from report_04.step_reconcile import close_collect_parent_if_ready, ensure_step7_parent_active
+        if full_reconcile_enabled():
+            from report_04.step_reconcile import reconcile_stuck_pipeline
 
-        ensure_step7_parent_active(self, task_id)
-        close_collect_parent_if_ready(self, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+            reconcile_stuck_pipeline(self, task_id)
+            _reconcile_report_post_child_steps(self, task_id)
+            self.reconcile_collect_child_steps(task_id)
+            from report_04.step_reconcile import close_collect_parent_if_ready, ensure_step7_parent_active
+
+            ensure_step7_parent_active(self, task_id)
+            close_collect_parent_if_ready(self, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+        else:
+            run_session_finalize_light(self, task_id)
 
         profiles = db.fetch_one(
             "SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)
@@ -1593,8 +1596,19 @@ class TaskStore:
                 )
         step7_st = _step_status(task_id, "step7_posts")
         step7_ok = step7_st in {"completed", "skipped"}
-        # 禁止：已有部分发文就标任务 completed，却留下 step7_posts=running
-        ready_done = step2_ok and step5_ok and step7_ok and (poc > 0 or post_children_ok or not post_children)
+        step11 = _step_status(task_id, "step11_report")
+        has_dialogue_summary = db.fetch_one(
+            "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
+            (task_id,),
+        )
+        # 终稿已落库则任务可 completed（避免 step11 完成却 ready_done=false 永久 running）
+        if step11 in {"completed", "skipped"} and has_dialogue_summary:
+            ready_done = True
+        else:
+            # 禁止：已有部分发文就标任务 completed，却留下 step7_posts=running
+            ready_done = step2_ok and step5_ok and step7_ok and (
+                poc > 0 or post_children_ok or not post_children
+            )
         db.execute(
             """
             INSERT INTO collect_task_summaries

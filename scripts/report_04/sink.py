@@ -555,6 +555,12 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not reason:
             return None
         try:
+            from report_04.engine import enrich_block_reason
+
+            reason = enrich_block_reason(task_id, reason)
+        except Exception:
+            pass
+        try:
             from report_04.step_reconcile import ensure_step7_parent_not_premature
 
             ensure_step7_parent_not_premature(_store(), task_id)
@@ -583,6 +589,12 @@ def _on_pre_llm(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _try_complete_step3_if_quiet(store, task_id)
         _try_complete_step5_if_settled(store, task_id)
         try:
+            from report_04.engine import build_agent_context, run_pre_llm_auto
+
+            run_pre_llm_auto(store, task_id)
+        except Exception as exc:
+            logger.warning("engine pre_llm 失败 task=%s: %s", task_id, exc)
+        try:
             from report_04.step_reconcile import ensure_step7_parent_not_premature
 
             ensure_step7_parent_not_premature(store, task_id)
@@ -595,6 +607,14 @@ def _on_pre_llm(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
                 store.save_dialogue(task_id, session_id, "user", user_message, "user_input")
         context = _step5_guidance_context(task_id)
+        try:
+            from report_04.engine import build_agent_context
+
+            engine_ctx = build_agent_context(task_id)
+            if engine_ctx:
+                context = (context + "\n\n" + engine_ctx) if context else engine_ctx
+        except Exception:
+            pass
     except DbError as exc:
         logger.warning("%s", exc)
     if context:
@@ -1071,6 +1091,12 @@ def _complete_step11_from_report(
         close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     except Exception as exc:
         logger.warning("终稿后步骤七收口失败 task=%s: %s", task_id, exc)
+    try:
+        from report_04.engine import _try_finalize_report
+
+        _try_finalize_report(store, task_id, light_only=True)
+    except Exception as exc:
+        logger.warning("终稿后任务 completed 标记失败 task=%s: %s", task_id, exc)
 
 
 def _infer_platform(
@@ -1594,7 +1620,13 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         _sync_platform_collect_steps(
             store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
         )
-    _try_complete_profiles(store, task_id)
+    try:
+        from report_04.engine import run_post_tool_light
+
+        run_post_tool_light(store, task_id)
+    except Exception as exc:
+        logger.warning("engine post_tool 失败 task=%s: %s", task_id, exc)
+        _try_complete_profiles(store, task_id)
     _maybe_stale_step5(store, task_id)
 
 
@@ -1768,6 +1800,9 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
     try:
+        from report_04.orchestrator import run_full_reconcile_if_requested
+
+        run_full_reconcile_if_requested(store, task_id)
         store.finalize_task(task_id)
     except DbError as exc:
         logger.warning("%s", exc)
