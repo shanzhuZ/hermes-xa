@@ -1008,6 +1008,28 @@ class TaskStore:
 
         reconcile_stuck_pipeline(self, task_id)
 
+        # 图片资产兜底：步骤3（主页+发文）已收口或有入库数据时补跑
+        try:
+            step3 = _step_status(task_id, "step3_profiles")
+            pc = int(
+                (db.fetch_one("SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)) or {}).get("c")
+                or 0
+            )
+            poc = int(
+                (db.fetch_one("SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s", (task_id,)) or {}).get("c")
+                or 0
+            )
+            if step3 in {"completed", "skipped"} or pc > 0 or poc > 0:
+                from verify_03.image_assets import run_image_pipeline_for_verify
+
+                run_image_pipeline_for_verify(
+                    task_id,
+                    force_analyze=True,
+                    skip_if_stored=True,
+                )
+        except Exception as exc:
+            logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
+
         summary = db.fetch_one(
             "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
             (task_id,),

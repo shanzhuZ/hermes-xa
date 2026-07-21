@@ -133,9 +133,11 @@ steps:
     once: true
     require_before: [3_5_image_assets]
     sections: [一、账号扩建收集, 二、多平台信息采集, 三、账号核查, 四、账号]
+    must_start_with: "一、账号扩建收集"
     section1: |
       每条原始候选一行，格式：平台：xxxx | URL：xxxx
       禁止输出：发现来源、是否有 MCP、序号、分隔线、任何其他字段
+      终稿正文必须以「一、账号扩建收集」或「## 一、账号扩建收集」开头，禁止前置进度句/管线摘要
       示例：
       Instagram：https://www.instagram.com/whyyoutouzhele/
       Twitter：https://twitter.com/whyyoutouzhele
@@ -166,7 +168,7 @@ steps:
       - Twitter·@whyyoutouzhele 种子
       - YouTube·@whyyoutouzhele HIGH — 判断依据：昵称与 handle 完全一致，头像为同一张图，发文主题与种子推文同调
       纯列表，禁止出现 profile 字段、禁止出现任何发文原文、禁止展示 MEDIUM/LOW 账号。
-    forbid_in_body: [步骤 3.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, ---]
+    forbid_in_body: [步骤 3.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

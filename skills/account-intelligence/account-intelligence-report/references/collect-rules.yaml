@@ -149,13 +149,15 @@ steps:
     once: true
     require_before: [7_5_image_assets]
     sections: [一、账号基本信息, 二、账号全网关联账号, 三、账号网络活动情况, 四、核查思路]
+    must_start_with: "一、账号基本信息"
     section1: |
       一、账号基本信息 含两个子节：
       - 1.1 profile 信息：昵称、简介、粉丝数、认证状态、头衔、外链（账号层面信息）
       - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
+      终稿正文必须以「一、账号基本信息」或「## 一、账号基本信息」开头，禁止前置进度句/管线摘要
     section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
     section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式
-    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, ---]
+    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

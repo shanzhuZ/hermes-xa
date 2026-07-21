@@ -135,9 +135,9 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 
 ## 步骤 11 输出骨架
 
-```
-（可选1句：已为 @种子 完成采集，纳入 N 个账号。）
+**硬约束**：终稿正文**必须以** `## 一、账号基本信息` 或 `一、账号基本信息` 开头（前导空白除外）；**禁止**在第一节之前写进度句、步骤号、图片管线、task_id 等任何元叙述。
 
+```
 ## 一、账号基本信息
 【平台·@handle】MCP/Apify 原文字段…
 ### 1.1 profile信息:昵称、简介、粉丝数、认证状态、头衔、外链。
@@ -162,3 +162,5 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 - ❌ 「如果你想进一步了解…」
 - ❌ 结尾不要输出类似报告完毕... 执行完毕... 数据来源等相关描述
 - ❌ 步骤 7.5 / 图片管线 / 未部署 / 继续步骤 8（任何元叙述写进终稿）
+- ❌ 终稿不以「一、账号基本信息」开头（前缀进度句、管线摘要一律禁止）
+- ❌ 终稿内出现 `image_pipeline` / `task_id` / `force-analyze` / ModuleNotFoundError

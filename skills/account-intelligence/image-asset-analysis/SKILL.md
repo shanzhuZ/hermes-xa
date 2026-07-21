@@ -1,14 +1,20 @@
 ---
 name: image-asset-analysis
-description: "图片资产：发现头像/封面/发文配图→下载写HBase→MySQL索引→OCR/Vision回填。01步骤6后、02步骤3后、04步骤7后必须执行；也可单独对某task重跑。"
-version: 0.4.0
+description: "图片资产：发现头像/封面/发文配图→下载写HBase→MySQL索引→OCR/Vision回填。01步骤6后、02/03步骤3后、04步骤7后必须执行；也可单独对某task重跑。"
+version: 0.5.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [account-intelligence, image, asset]
-    related_skills: [account-intelligence-collect, account-expansion, account-intelligence-report]
+    related_skills:
+      [
+        account-intelligence-collect,
+        account-expansion,
+        account-intelligence-verification,
+        account-intelligence-report,
+      ]
 ---
 
 # 图片资产入库与分析
@@ -17,8 +23,9 @@ metadata:
 
 **01 接入**：`account-intelligence-collect` 在步骤 6 发文结束后、步骤 7 三节报告前，必须执行本管线（见 collect Skill 步骤 6.5）。  
 **02 接入**：`account-expansion` 在步骤 3 主页+发文结束后、步骤 4 核查前，必须执行本管线（见 expansion Skill 步骤 3.5）。  
+**03 接入**：`account-intelligence-verification` 在步骤 3 发文结束后、步骤 4/5 前，必须执行本管线（见 verification Skill 步骤 3.5）。  
 **04 接入**：`account-intelligence-report` 在步骤 7 发文结束后、步骤 8～10 分析前，必须执行本管线（见 report Skill 步骤 7.5）。  
-本 Skill 仍可单独对某 `task_id` 重跑/补跑；**不要**改 01/02/04 步骤树完成条件；管线失败**禁止**把整任务标 `failed`。
+本 Skill 仍可单独对某 `task_id` 重跑/补跑；**不要**改 01～04 步骤树完成条件；管线失败**禁止**把整任务标 `failed`。
 
 ## 目标
 

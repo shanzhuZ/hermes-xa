@@ -68,13 +68,53 @@ def is_expand_intent(user_message: str) -> bool:
     return bool(_EXPAND_INTENT.search(user_message or ""))
 
 
-def is_four_section_report(content: str) -> bool:
-    """判断是否为扩建四节终稿。"""
-    text = (content or "").replace(" ", "").replace("\u3000", "")
-    if len(text) < 30:
+_EXPAND_SECTION1 = "一、账号扩建收集"
+_EXPAND_MARKERS = (
+    "一、账号扩建收集",
+    "二、多平台信息采集",
+    "三、账号核查",
+    "四、账号",
+)
+_EXPAND_DIRTY_META = (
+    re.compile(r"步骤\s*3\.5", re.I),
+    re.compile(r"图片资产管线|图片管线", re.I),
+    re.compile(r"image_pipeline", re.I),
+    re.compile(r"force-?analyze", re.I),
+    re.compile(r"ModuleNotFoundError|PYTHONPATH|db_sink", re.I),
+    re.compile(r"未部署|未注册|跳过步骤\s*3\.5", re.I),
+    re.compile(r"\btask_id\b|任务\s*ID\s*[：:]", re.I),
+    re.compile(r"collect_images|skip_if_stored", re.I),
+    re.compile(r"shell\s+hook|Hook\s*超时|120s", re.I),
+)
+
+
+def has_expand_report_dirty_meta(content: str) -> bool:
+    """扩建终稿是否夹带管线/运维元叙述。"""
+    t = content or ""
+    return any(p.search(t) for p in _EXPAND_DIRTY_META)
+
+
+def starts_with_expand_section1(content: str) -> bool:
+    """终稿必须以「一、账号扩建收集」开头（允许前导空白与可选 ##）。"""
+    t = (content or "").lstrip()
+    if not t:
         return False
-    markers = ("一、账号扩建收集", "二、多平台信息采集", "三、账号核查", "四、账号")
-    return sum(1 for m in markers if m in text) >= 2
+    if t.startswith("##"):
+        t = t[2:].lstrip()
+    return t.startswith(_EXPAND_SECTION1)
+
+
+def is_four_section_report(content: str) -> bool:
+    """合法扩建四节终稿：够长、含≥2节、以第一节开头、无管线脏数据。"""
+    raw = (content or "").strip()
+    if len(raw) < 30:
+        return False
+    if not starts_with_expand_section1(raw):
+        return False
+    if has_expand_report_dirty_meta(raw):
+        return False
+    text = raw.replace(" ", "").replace("\u3000", "")
+    return sum(1 for m in _EXPAND_MARKERS if m in text) >= 2
 
 
 def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:

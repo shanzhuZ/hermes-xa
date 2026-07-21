@@ -1,11 +1,14 @@
 # 03 账号核查 — 唯一参考（Skill 只加载本文件）
-version: "1.13.0"
+version: "1.14.0"
 
 identity: 用户指定的多个 @种子账号 作为目标；禁止把 Maigret/简介里其他 handle 当种子。
 
 forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
-  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 图片资产管线系统未部署, 跳过步骤 3.5, image_pipeline未部署]
+
+# 硬顺序：3_contents 结束后必须 3_5_image_assets，再进 4/5
+mandatory_auto_steps: [2_profiles, 3_contents, 3_5_image_assets, 4_analysis_content, 5_streams, 6_validated, 7_output]
 
 steps:
   "1_seed":
@@ -50,9 +53,23 @@ steps:
       - bilibili → 平台发文/视频 MCP（若有）
       【Apify】同步骤二 Actor，三轮 resultsLimit 按平台；已有 dataset 可复用，不足则再拉一轮
       失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
+      全部发文采集结束后必须进入 3_5_image_assets，禁止直接进入步骤4/5
     forbid: [maigret, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, youtube search, vision, ocr, 任何报告文字]
 
+  "3_5_image_assets":
+    require_before: [3_contents]
+    do: |
+      图片资产入库 + 分析回填（硬门槛，步骤树无独立节点）：
+      1) 取得 task_id（Gateway task:{uuid} 或会话活跃任务）
+      2) 禁止 search_files / web_search 探测「是否部署」；scripts/image_pipeline 视为已部署
+      3) 在 scripts/ 下执行：
+         python -m image_pipeline.run --task-id <taskId> --force-analyze
+      4) 返回 JSON 摘要最多 1 句进度；失败只记日志，禁止把整任务判 failed
+      5) 完成后进入步骤4/5；禁止跳过直接写核查或三节终稿
+    forbid: [写最终报告, web_search, web_extract, browser_*, clarify]
+
   "4_analysis_content":
+    require_before: [3_5_image_assets]
     do: |
       结合账号对应平台发言：
         - 分析账号发言观点
@@ -60,22 +77,28 @@ steps:
     forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
 
   "5_streams":
+    require_before: [3_5_image_assets]
     do: |
       结合对步骤2采集账号主页信息 与 步骤4账号发言观点与发言风格，同时展开一下分析：
         - 文本流：昵称/handle/简介/互链/邮箱/码值/电话 → 使用账号主页信息做多组合对比
         - 图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr(language=chi_sim) + vision_analyze
           （language 只能 chi_sim 或 eng；禁止 eng+chi_sim）
+        - 可优先结合 collect_images / GET /api/tasks/{taskId}/images 已入库结果
     forbid: [发文工具, 写最终报告]
 
   "6_validated":
+    require_before: [3_5_image_assets]
     do: validated_accounts = 账号的文本/图片流相似的候选（high/medium）；其余进 excluded
     forbid: [一切发文工具]
 
   "7_output":
     once: true
-    sections: [一、个人信息, 二、各个平台账号发言及发言观点, 三、账号核验结果及依据]
+    require_before: [3_5_image_assets]
+    must_start_with: "一、账号基础信息"
+    sections: [一、账号基础信息, 二、各个平台账号发言及发言观点, 三、账号核验结果及依据]
     section2: [3.1文本流表, 3.2图片流表, 3.3高匹配度的同一人账号, 3.4低匹配度的账号]
     section3: 每平台一块，MCP/Apify 原文逐条，禁止主题归纳
+    forbid_in_body: [步骤 3.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

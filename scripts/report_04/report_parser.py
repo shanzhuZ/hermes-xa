@@ -28,6 +28,22 @@ _FINAL_MARKERS = (
     "四、核查思路",
 )
 
+_SECTION1_HEAD = "一、账号基本信息"
+
+# 终稿正文禁止出现的管线/运维脏数据（命中则不算合法终稿，也不做 8～10 回填）
+_DIRTY_META_PATTERNS = (
+    re.compile(r"步骤\s*7\.5", re.I),
+    re.compile(r"步骤\s*3\.5", re.I),
+    re.compile(r"图片资产管线|图片管线", re.I),
+    re.compile(r"image_pipeline", re.I),
+    re.compile(r"force-?analyze", re.I),
+    re.compile(r"ModuleNotFoundError|PYTHONPATH|db_sink", re.I),
+    re.compile(r"未部署|未注册|跳过步骤\s*7\.5|跳过步骤\s*3\.5", re.I),
+    re.compile(r"\btask_id\b|任务\s*ID\s*[：:]", re.I),
+    re.compile(r"collect_images|skip_if_stored|HERMES_REPORT_", re.I),
+    re.compile(r"shell\s+hook|Hook\s*超时|120s", re.I),
+)
+
 
 def is_progress_only(text: str) -> bool:
     """进度播报，不应完成分析步骤。"""
@@ -50,15 +66,40 @@ def detect_skip_steps(text: str) -> List[str]:
     return skipped
 
 
-def is_final_report(content: str) -> bool:
-    text = (content or "").replace(" ", "").replace("\u3000", "")
-    if len(text) < 200:
+def has_report_dirty_meta(content: str) -> bool:
+    """终稿是否夹带管线/运维元叙述。"""
+    t = content or ""
+    return any(p.search(t) for p in _DIRTY_META_PATTERNS)
+
+
+def starts_with_report_section1(content: str) -> bool:
+    """终稿必须以「一、账号基本信息」开头（允许前导空白与可选 ##）。"""
+    t = (content or "").lstrip()
+    if not t:
         return False
+    if t.startswith("##"):
+        t = t[2:].lstrip()
+    return t.startswith(_SECTION1_HEAD)
+
+
+def is_final_report(content: str) -> bool:
+    """合法步骤11终稿：够长、含≥2个章节、以第一节开头、无管线脏数据。
+
+    注意：步骤8/9/10 的独立块走 parse_standalone_analysis_blocks，不经过本函数。
+    """
+    raw = (content or "").strip()
+    if len(raw) < 200:
+        return False
+    if not starts_with_report_section1(raw):
+        return False
+    if has_report_dirty_meta(raw):
+        return False
+    text = raw.replace(" ", "").replace("\u3000", "")
     return sum(1 for m in _FINAL_MARKERS if m in text) >= 2
 
 
 def parse_standalone_analysis_blocks(text: str) -> Dict[str, str]:
-    """解析独立步骤 8/9/10 正文块。"""
+    """解析独立步骤 8/9/10 正文块（不依赖 is_final_report，不受终稿门禁影响）。"""
     out: Dict[str, str] = {}
     mapping = {"8": "step8_img_analysis", "9": "step9_context_views", "10": "step10_context_pii"}
     for m in _STEP_BLOCK.finditer(text or ""):
@@ -84,7 +125,11 @@ def _extract_section(text: str, start_marker: str, end_markers: Tuple[str, ...])
 
 
 def backfill_analysis_from_report(text: str) -> Dict[str, str]:
-    """从步骤十一终稿切片回填 8～10。"""
+    """从步骤十一终稿切片回填 8～10。
+
+    仅对 is_final_report 通过的干净终稿切片；脏数据/非第一节开头的正文不回填，
+    避免污染 display。步骤8/9/10 若已由 standalone 块写入则不受影响。
+    """
     if not is_final_report(text):
         return {}
     s8_parts: List[str] = []

@@ -79,9 +79,9 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 
 ## 步骤 6 输出骨架
 
-```
-（可选1句：已为 @种子 完成账号扩建，发现 M 个候选，核查通过 N 个。）
+**硬约束**：四节终稿**必须以** `## 一、账号扩建收集` 或 `一、账号扩建收集` 开头（前导空白除外）；**禁止**在第一节之前写进度句、步骤 3.5、图片管线、task_id 等任何元叙述。
 
+```
 ## 一、账号扩建收集
 （Maigret MCP 发现的原始候选，未核查）
 每行格式：平台：xxxx | URL：xxxx
@@ -129,3 +129,5 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 - ❌ 近期推文主题归纳（无原文）
 - ❌ 「如果你想进一步了解…」
 - ❌ 步骤 3.5 / 图片管线 / 未部署 / 继续步骤 4（任何元叙述写进四节正文）
+- ❌ 终稿不以「一、账号扩建收集」开头
+- ❌ 终稿内出现 `image_pipeline` / `task_id` / `force-analyze` / ModuleNotFoundError
