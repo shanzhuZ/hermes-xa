@@ -1067,6 +1067,19 @@ class TaskStore:
                 (task_id,),
             )
         ready_done = step2_ok and step5_ok and (poc > 0 or post_children_ok or not post_children)
+        # 图片资产兜底：步骤3已有主页/发文时补跑；Agent 已跑则 skip_if_stored
+        step3 = _step_status(task_id, "step3_profiles")
+        if ready_done or (step3 in {"completed", "skipped"} and (pc > 0 or poc > 0)):
+            try:
+                from expand_02.image_assets import run_image_pipeline_for_expand
+
+                run_image_pipeline_for_expand(
+                    task_id,
+                    force_analyze=True,
+                    skip_if_stored=True,
+                )
+            except Exception as exc:
+                logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
         db.execute(
             """
             INSERT INTO collect_task_summaries

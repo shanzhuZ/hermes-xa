@@ -1,12 +1,15 @@
-# 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.16.0"
+# 04 账号画像写报 — 唯一参考（Skill 只加载本文件）
+version: "1.21.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
 # 注意：web_search/web_extract/browser_* 仅步骤3允许，其余步骤各自在 forbid 里禁用（不放全局，避免与步骤3冲突）
 forbidden_always:
   tools: [clarify, mcp_firecrawl_*]
-  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 五、]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 五、, 图片资产管线系统未部署, 跳过步骤 7.5, image_pipeline未部署]
+
+# 硬顺序：7_posts 结束后必须 7_5_image_assets，再进 8/9/10
+mandatory_auto_steps: [5_streams, 6_validated, 7_posts, 7_5_image_assets, 8_img_analysis, 9_context_analysis, 10_context_analysis, 11_output]
 
 steps:
   "1_seed":
@@ -97,15 +100,31 @@ steps:
       - YouTube→analyze_channel_videos(channelId)
       - 微博→get_user_feeds
       - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
-    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
+      全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11
+    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告]
+
+  "7_5_image_assets":
+    require_before: [7_posts]
+    do: |
+      图片资产入库 + 分析回填（硬门槛，步骤树无独立节点）：
+      1) 取得 task_id（Gateway task:{uuid} 或会话活跃任务）
+      2) 禁止 search_files / web_search 探测「是否部署」；scripts/image_pipeline 视为已部署
+      3) 在 scripts/ 下执行：
+         python -m image_pipeline.run --task-id <taskId> --force-analyze
+      4) 返回 JSON 摘要最多 1 句进度；失败只记日志，禁止把整任务判 failed
+      5) 完成后进入步骤8/9/10；禁止跳过直接写分析或终稿
+    forbid: [写最终报告, web_search, web_extract, browser_*, clarify]
 
   "8_img_analysis":
+    require_before: [7_5_image_assets]
     do: |
       图片分析： 头像、背景图片、发文配图 的内容构成。分析点位：地点、人物、喜好、习惯；
-      - vision_analyze 处理 所有图片
+      - 优先结合 collect_images / GET /api/tasks/{taskId}/images 已入库结果
+      - 缺图时可用 vision_analyze，禁止对未入库临时 CDN 空跑全量
     forbid: [ web_search, web_extract, browser_*, clarify, mcp_firecrawl_* ]
 
   "9_context_analysis":
+    require_before: [7_5_image_assets]
     do: |
       发文文本分析：集合全网平台（validated_accounts）的发文信息，归纳发文观点与涉华倾向。
       输出要求：
@@ -116,6 +135,7 @@ steps:
     forbid: [ web_search, web_extract, browser_*, clarify, mcp_firecrawl_* ]
 
   "10_context_analysis":
+    require_before: [7_5_image_assets]
     do: |
       发文文本分析：集合全网平台（validated_accounts）的发文信息，归纳发文点位，分析该账号的
       真实姓名、年龄、籍贯、常住地、活动城市、生活习惯、教育经历、工作经历、对华态度、电话邮箱码值，
@@ -127,6 +147,7 @@ steps:
 
   "11_output":
     once: true
+    require_before: [7_5_image_assets]
     sections: [一、账号基本信息, 二、账号全网关联账号, 三、账号网络活动情况, 四、核查思路]
     section1: |
       一、账号基本信息 含两个子节：
@@ -134,6 +155,7 @@ steps:
       - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
     section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
     section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式
+    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, ---]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

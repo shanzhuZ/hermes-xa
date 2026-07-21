@@ -86,9 +86,35 @@ def build_agent_context(task_id: str) -> Optional[str]:
 
     elif gate == "step7_posts":
         lines.append("步骤7：仅允许各平台发文 MCP/Apify；子步完成后系统自动关父节点。")
+        lines.append(
+            "步骤7全部发文子步终态后必须先跑图片资产管线，再进步骤8："
+            "python -m image_pipeline.run --task-id <taskId> --force-analyze"
+        )
 
-    elif gate == "step11_report":
-        lines.append("步骤11：输出符合结构的三段式终稿即可，勿再采集。")
+    elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
+        try:
+            from report_04.image_assets import has_stored_images
+
+            if not has_stored_images(task_id):
+                lines.append(
+                    "【步骤7.5 图片资产】尚无 stored 图片。若步骤7已收口，请先执行："
+                    "python -m image_pipeline.run --task-id <taskId> --force-analyze ；"
+                    "失败只记摘要，勿把任务判失败；然后继续步骤8/9/10。"
+                )
+            else:
+                lines.append(
+                    "图片资产已入库，步骤8可优先结合 collect_images / "
+                    "GET /api/tasks/{taskId}/images 写分析，勿重复全量空跑 vision。"
+                )
+        except Exception:
+            lines.append(
+                "步骤8前建议确认已跑图片管线："
+                "python -m image_pipeline.run --task-id <taskId> --force-analyze"
+            )
+        if gate == "step11_report":
+            lines.append("步骤11：输出符合结构的终稿即可，勿再采集。")
+        elif gate in ANALYSIS_STEP_KEYS:
+            lines.append("步骤8/9/10：同一次响应内并行输出三步分析正文。")
 
     return "\n".join(lines)
 
@@ -182,6 +208,13 @@ def run_session_finalize_light(store: Any, task_id: str) -> None:
 
     if get_step_status(task_id, "step11_report") == "completed":
         advance_to_analysis_phase(store, task_id, "会话结束收口")
+    elif get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+        try:
+            from report_04.image_assets import run_image_pipeline_for_report
+
+            run_image_pipeline_for_report(task_id, force_analyze=True, skip_if_stored=True)
+        except Exception as exc:
+            logger.warning("session_finalize 图片管线兜底失败 task=%s: %s", task_id, exc)
 
     _auto_step5_step6(store, task_id)
 

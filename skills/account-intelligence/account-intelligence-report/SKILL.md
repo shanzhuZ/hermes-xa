@@ -1,14 +1,14 @@
 ---
 name: account-intelligence-report
-description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→分析→画像报告。禁search_username。"
-version: 1.20.0
+description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→7.5图片入库→分析→画像报告。禁search_username。"
+version: 1.21.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [account-intelligence, report]
-    related_skills: []
+    related_skills: [image-asset-analysis]
 ---
 
 # 01 · 账号画像报告
@@ -31,10 +31,11 @@ metadata:
 - **步骤 5** 批次闭环：步骤4全部主页子节点终态后，对本批入库头像 **一次列齐并全部 vision**（可并行）；OCR 可选；远程 URL 失败即该流终态。**全部图片流终态后系统自动收口步骤5并进入步骤6；收口后禁止再调 vision/OCR**（勿回补）。全部图片流结束前禁止任何发文工具
 - **步骤 6** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮
 - **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天；**种子平台必须单独采发文**（Twitter/YouTube/微博用 MCP 发文工具；Instagram/TikTok/Telegram/Facebook/GitHub 再走一轮 Apify→dataset 入库 posts）。**禁止**因步骤1已采过主页而跳过种子平台发文；步骤1 Apify 只保留 profile，不算步骤7发文
-- **硬顺序**：步骤5 → 步骤6 → 步骤7，不可并行抢跑；步骤5未完成时调用发文工具会被系统拦截并要求继续 vision
+- **步骤 7.5（硬门槛）**：步骤7发文全部结束后、步骤8之前，必须跑图片资产入库+分析回填（见下）；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接写步骤8～11
+- **硬顺序**：步骤5 → 步骤6 → 步骤7 → **7.5 图片资产** → 步骤8/9/10，不可并行抢跑；步骤5未完成时调用发文工具会被系统拦截并要求继续 vision
 - **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search（YouTube 解析 UC 例外见上）
 - **步骤5→6→7**：图片流批次收口后进步骤6；步骤7仅在真正调用发文工具时开始，禁止「vision 还在跑、步骤7已 running」
-- **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现
+- **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现；步骤8可优先结合已入库的 `collect_images` / 图片 API，勿再全量空跑未入库 CDN
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
 - **步骤11** 必须按照整体章节的结构输出， 每一章节内容必须使用整段叙述性文字描述。不要换行输出展示
 
@@ -49,6 +50,7 @@ metadata:
 | 5  | 文本流+图片流 vs 种子                                                                      |
 | 6  | `validated_accounts`（相似账号）                                                         |
 | 7  | 发文：MCP 或 Apify                                                                     |
+| 7.5 | **图片资产**：发现头像/封面/发文配图 → 下载入库 HBase/`collect_images` → OCR/Vision 回填 |
 | 8  | 图片流： 分析账号头像、账号背景图片、账号发文配图的关联信息                                                     |
 | 9  | 文本流： 结合 各个平台的账号发文 分析发文观点及涉华发言 并配有发文作为佐证                                            |
 | 10 | 文本流： 结合 各个平台的账号发文 分析真实姓名、年龄、籍贯、常住地、活动城市、生活习惯、教育经历、工作经历、对华态度、电话邮箱码值、社交、亲友、同事等三个圈层关系 |
@@ -72,6 +74,24 @@ metadata:
 | OCR | 人脸无字默认跳过；失败或 No text → 立刻 vision，禁止同参重试 |
 | Vision | **同一 LLM 回合并行齐发** N 次 `vision_analyze`（N=待处理条数）；每条 1 次；禁止每 5 分钟只跑 1 张 |
 | 禁止 | 步骤5收口后再调 vision；禁止对未入库 CDN 空跑；禁止未齐就写步骤6/发文 |
+
+## 步骤 7.5 图片入库与分析回填（硬门槛）
+
+步骤7发文工具全部结束后、进入步骤8之前必须执行：
+
+1. 取得当前写报 `task_id`（Gateway `task:{uuid}` 或会话活跃任务）。
+2. **禁止**用 `search_files` / `web_search`「探测是否部署」；管线在仓库 `scripts/image_pipeline/`，**视为已部署**。
+3. 工作目录在 `scripts/`（或 `PYTHONPATH` 含 `scripts`），执行：
+
+```bash
+python -m image_pipeline.run --task-id <taskId> --force-analyze
+```
+
+4. 将 stdout JSON 摘要最多用 1 句进度说明；失败只记日志，**禁止**把整任务判失败，**禁止**跳过直接写步骤8～11。
+5. 步骤树**不新增**节点；系统 Hook 会在 7→8 / finalize 漏跑时兜底，但 **Agent 仍须主动执行本命令**。
+
+**禁止在报告正文写**：步骤 7.5、图片管线、未部署、task_id、Hook 等元叙述。
+
 ## 步骤 2 Maigret（必须用 collect_accounts）
 
 | 允许 | 禁止 |
@@ -107,7 +127,7 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 | YouTube   | `mcp__youtube__analyze_channel_videos(channelId=UC…)` |
 | 微博        | `mcp_weibo_get_user_feeds`（发文；注意不是 get_profile） |
 | Instagram | `mcp_apify_apify__instagram_scraper` → run → dataset |
-| TikTok    | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
+| TikTok | `mcp_apify_clockworks__tiktok_scraper` → run → dataset |
 | Telegram  | `mcp_apify_vujeen__telegram_channel_scraper` → run → dataset |
 | Facebook  | `mcp__apify__headlessagent__facebook_profile_post_scraper` → run → dataset |
 
@@ -141,3 +161,4 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 - ❌ 近期推文主题归纳（无原文）
 - ❌ 「如果你想进一步了解…」
 - ❌ 结尾不要输出类似报告完毕... 执行完毕... 数据来源等相关描述
+- ❌ 步骤 7.5 / 图片管线 / 未部署 / 继续步骤 8（任何元叙述写进终稿）

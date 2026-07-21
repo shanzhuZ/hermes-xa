@@ -1,8 +1,10 @@
 # 04 写报：步骤 7 子步 skipped 禁止补采 + Stream 编排（P1/P2 待办）
 
-**状态**：待实施（**图片资产、视频接入完成后再改**，避免与当前采集/多模态管线并行大改）  
+**状态**：待实施（**视频接入完成后再改**；图片资产已于 2026-07-21 接入 04，本待办与图片解耦）  
 **关联**：`docs/04写报编排与白名单-v1.md`（引擎 v2 P0 已落地）、`skills/account-intelligence/account-intelligence-report/SKILL.md`  
 **典型案例**：任务 `9be5b124-281e-4646-a50c-7564db3a4f3a` — `7.5`（`step7_post_telegram`）先 **skipped**，步骤 7 **父节点 completed**，编排 gate 已应进入 **步骤 8**，但 Stream 仍展示 **7.5 发文采集**；补采完成后 7.5 变 **completed**，8～11 才正常推进。
+
+> 说明：Skill 流程里的「步骤 7.5 图片资产」与步骤树节点 `7.5`（`step7_post_telegram`）是两回事——前者是图片管线，后者是 Telegram 发文子步。
 
 ---
 
@@ -114,14 +116,15 @@
 
 ## 6. 与图片 / 视频接入的边界
 
-- **图片管线**（`image_pipeline`、`image-asset-analysis`）：步骤 8 分析用图；与步骤 7 发文 **时序独立**。本待办 **不**改图片入库逻辑，仅保证 **步骤 7 skipped 后不再拖长发文轮**，避免占用 Agent 回合与 Hook 时间。
+- **图片管线**（`image_pipeline`、`image-asset-analysis`）：**04 已接入**（步骤 7 发文后 → Skill 7.5 / Hook 兜底）。与本待办「skipped 禁止补采」解耦，可独立验收。
 - **视频（YouTube 等）**：若未来步骤 7/8 增加视频下载或分析工具，在 **allowed_tools / 白名单** 中单独列类，**仍遵守**「对应 `step7_post_*` 已 skipped 则禁止该平台采集类工具」同一规则。
 
 ---
 
 ## 7. 实施前检查项
 
-- [ ] 图片 / 视频接入里程碑完成，04 写报主路径稳定。
+- [x] 图片接入里程碑完成（04 步骤 7.5，2026-07-21）
+- [ ] 视频接入里程碑（可选，与本待办可并行或先后）
 - [ ] 确认运维是否需要 `HERMES_REPORT_ALLOW_STEP7_LATE_COLLECT=1` 修历史任务。
 - [ ] 前端 / SSE 消费方确认可接 `gateStep` 字段。
 - [ ] 与产品确认：**skipped 子步晚到 dataset** 是否一律丢弃（推荐是，与策略 A 一致）。

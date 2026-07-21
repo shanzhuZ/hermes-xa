@@ -1635,6 +1635,18 @@ class TaskStore:
                 ),
             ),
         )
+        # 图片资产兜底：Agent 在 7→8 已跑则跳过；漏跑则补一次（失败不拖垮任务）
+        if ready_done or step7_ok:
+            try:
+                from report_04.image_assets import run_image_pipeline_for_report
+
+                run_image_pipeline_for_report(
+                    task_id,
+                    force_analyze=True,
+                    skip_if_stored=True,
+                )
+            except Exception as exc:
+                logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
         if ready_done:
             db.execute(
                 "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed')",

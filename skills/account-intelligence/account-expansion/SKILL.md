@@ -1,14 +1,14 @@
 ---
 name: account-expansion
-description: "账号扩建@种子。种子profile→Maigret跨平台发现→候选主页采集→文本流核查→发文→一次输出四节(扩建收集/多平台采集/账号核查/账号)。禁画像禁web_search。"
-version: 1.1.0
+description: "账号扩建@种子。种子profile→Maigret→主页+发文→3.5图片入库→文本流核查→发文→一次输出四节。禁画像禁web_search。"
+version: 1.2.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [account-intelligence, expansion]
-    related_skills: [account-intelligence-collect]
+    related_skills: [account-intelligence-collect, image-asset-analysis]
 ---
 
 # 账号扩建
@@ -27,23 +27,42 @@ metadata:
 3. **种子唯一**：只有用户指定的 @种子 是目标；禁止把 Maigret/简介里其他 handle 当种子
 4. **步骤 2 发现**：跑 `mcp_maigret_collect_accounts`；去重后进第一节；失败→记录并继续，不中止；**禁止**按 MCP 返回写画像
 5. **步骤 3 采主页 + 发文（平台顺序稳定）**：Maigret 结束后，先按“步骤二已确认的平台列表”建立本轮要采集的平台顺序；之后按平台顺序逐个平台完成采集。每个平台允许在同一步内拿 profile + 发文，但**禁止**只先跑种子 Twitter 发文、再回头补其他平台主页；也**禁止**步骤 4 先于步骤 3 全量采集启动。有 MCP→MCP，无 MCP→Apify；失败重试最多 2 次，三次均失败→跳过并标记"采集失败"；不换工具、不用 web_search
-6. **步骤 4** 双流核查（候选 vs 种子），两条流都要做：
+6. **步骤 3.5（硬门槛）**：步骤3主页+发文全部结束后、步骤4之前，必须跑图片资产入库+分析回填（见下）；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接进步骤4～6
+7. **步骤 4** 双流核查（候选 vs 种子），两条流都要做：
    - **文本流**（账号信息 + 发文信息）：昵称 / handle / 简介 / 互链 / 邮箱 / 发文内容，共 6 项逐条对比
-   - **图片流**（**只用头像 avatar_url**，不用背景图、不用发文图片）：对步骤 3 profile 里的头像 URL 调 `mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim")` 提取图内文字 **+** `vision_analyze` 描述画面，候选头像 vs 种子头像做比对（language 只能单码：`chi_sim` 或 `eng`）
+   - **图片流**（**只用头像 avatar_url**，不用背景图、不用发文图片）：对步骤 3 profile 里的头像 URL 调 `mcp_ocr_perform_ocr(input_data=头像URL, language="chi_sim")` 提取图内文字 **+** `vision_analyze` 描述画面，候选头像 vs 种子头像做比对（language 只能单码：`chi_sim` 或 `eng`）；可优先结合已入库的 `collect_images`
    - 综合判定基于文本流 + 图片流；发文内容对比基于步骤 3 采到的发文
-7. **第四节只列 HIGH 账号**：仅相似度极高（HIGH）的账号入选，MEDIUM/LOW 一律不展示；每条附一句判断依据；不含 profile、不含发文
-8. **步骤 6** 一次性输出四节
+8. **第四节只列 HIGH 账号**：仅相似度极高（HIGH）的账号入选，MEDIUM/LOW 一律不展示；每条附一句判断依据；不含 profile、不含发文
+9. **步骤 6** 一次性输出四节
 
-## 五步（硬顺序）
+## 硬顺序
 
 | 步 | 动作 |
 |----|------|
 | 1 | 种子平台 MCP/Apify profile（Instagram/TikTok/Telegram/Facebook/GitHub 走 Apify 三轮） |
 | 2 | Maigret MCP（跨平台发现） |
 | 3 | 按步骤二的平台顺序，逐个平台采集 profile + 发文（MCP **或** Apify，小 limit）；禁止只先跑单个平台发文 |
+| 3.5 | **图片资产**：发现头像/封面/发文配图 → 下载入库 HBase/`collect_images` → OCR/Vision 回填 |
 | 4 | 文本流（账号信息+发文内容）+ 图片流（**头像 avatar_url** OCR+vision）vs 种子（核查打分） |
 | 5 | 判定核查通过账号（**仅 HIGH 纳入**，MEDIUM/LOW 排除）→ 决定第四节列表 |
 | 6 | **一次**输出四节 |
+
+## 步骤 3.5 图片入库与分析回填（硬门槛）
+
+步骤3采集全部结束后、进入步骤4之前必须执行：
+
+1. 取得当前扩建 `task_id`（Gateway `task:{uuid}` 或会话活跃任务）。
+2. **禁止**用 `search_files` / `web_search`「探测是否部署」；管线在仓库 `scripts/image_pipeline/`，**视为已部署**。
+3. 工作目录在 `scripts/`（或 `PYTHONPATH` 含 `scripts`），执行：
+
+```bash
+python -m image_pipeline.run --task-id <taskId> --force-analyze
+```
+
+4. 将 stdout JSON 摘要最多用 1 句进度说明；失败只记日志，**禁止**把整任务判失败，**禁止**跳过直接写步骤4～6。
+5. 步骤树**不新增**节点；系统 Hook 会在 finalize 漏跑时兜底，但 **Agent 仍须主动执行本命令**。
+
+**禁止在四节正文写**：步骤 3.5、图片管线、未部署、task_id、Hook 等元叙述。
 
 ## 步骤 1 / 3 工具对照
 
@@ -58,7 +77,7 @@ metadata:
 **步骤 1**：有 MCP 用 MCP；无 MCP 必须 Apify 三轮，禁止因「无 MCP」跳过。
 **步骤 3 同时用两类工具**：profile 类 + 发文类（MCP 或 Apify），一次采完，确保 profile 与发文同源。**仍禁止**：YouTube 搜视频（只对已知 channelId 采）、`web_search`。
 
-## 步骤 7 输出骨架
+## 步骤 6 输出骨架
 
 ```
 （可选1句：已为 @种子 完成账号扩建，发现 M 个候选，核查通过 N 个。）
@@ -109,3 +128,4 @@ metadata:
 - ❌ 🧾 综合画像报告 / 用户画像总结 / 核心身份 / 发展轨迹
 - ❌ 近期推文主题归纳（无原文）
 - ❌ 「如果你想进一步了解…」
+- ❌ 步骤 3.5 / 图片管线 / 未部署 / 继续步骤 4（任何元叙述写进四节正文）

@@ -185,6 +185,14 @@ def advance_to_analysis_phase(store: Any, task_id: str, reason: str) -> bool:
     if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
         return changed
 
+    # 步骤7→8：图片资产兜底（Agent 主路径已跑则 skip_if_stored 秒回；禁止拖垮 Hook）
+    try:
+        from report_04.image_assets import run_image_pipeline_for_report
+
+        run_image_pipeline_for_report(task_id, force_analyze=True, skip_if_stored=True)
+    except Exception as exc:
+        logger.warning("advance_to_analysis 图片管线兜底失败 task=%s: %s", task_id, exc)
+
     for step_key in ANALYSIS_STEP_KEYS:
         if get_step_status(task_id, step_key) == "pending":
             store.set_step_status(task_id, step_key, "running", message="分析进行中…")
