@@ -1158,27 +1158,25 @@ class TaskStore:
         if existing.get("text_compare_done") and _step_status(task_id, "step5_streams") == "running":
             n_img = count_image_streams(task_id)
             if is_stream_compare_ready(task_id):
-                # 图片已齐：不在此处 completed，等 vision settle（由 sink 收口）
                 matched = int(existing.get("matched") or 0)
                 total = int(existing.get("total") or 0)
                 self.set_step_status(
                     task_id,
                     "step5_streams",
-                    "running",
+                    "completed",
                     message=(
-                        f"文本流比对完成（通过 {matched}/{total}）；图片流已齐，等待 vision 轮次结束"
+                        f"图片流 Vision 完成 ({n_img}/{n_img})"
                         if n_img > 0
-                        else f"文本流比对完成（通过 {matched}/{total}），无头像图片流"
+                        else f"文本流比对完成，通过 {matched}/{total} 条"
                     ),
                     payload={
                         "matched": matched,
                         "total": total,
                         "text_compare_done": True,
                         "image_pending": 0,
-                        "vision_ready": True,
                     },
-                    touch_updated_at=False,
                 )
+                self.run_validated_accounts(task_id)
                 return
             matched = int(existing.get("matched") or 0)
             total = int(existing.get("total") or 0)
@@ -1295,21 +1293,20 @@ class TaskStore:
             return
 
         if n_img > 0 and is_stream_compare_ready(task_id):
-            # 图片已齐：保持 running，等 sink vision settle 后再 completed
             self.set_step_status(
                 task_id,
                 "step5_streams",
-                "running",
-                message=f"文本流比对完成（通过 {matched}/{len(all_text)}）；图片流已齐，等待 vision 轮次结束",
+                "completed",
+                message=f"图片流 Vision 完成 ({n_img}/{n_img})",
                 payload={
                     "matched": matched,
                     "total": len(all_text),
                     "text_compare_done": True,
                     "image_pending": 0,
-                    "vision_ready": True,
                 },
             )
             self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
+            self.run_validated_accounts(task_id)
             return
 
         self.set_step_status(

@@ -70,7 +70,7 @@ metadata:
 | 开门 | 仅当步骤4全部 `step4_profile_*` 终态 |
 | URL | 只用已入库的 `avatar_url` / 图片流 `payload_url`；一次列齐本批全部待 vision |
 | OCR | 人脸无字默认跳过；失败或 No text → 立刻 vision，禁止同参重试 |
-| Vision | 每条图片流 1 次；全部终态后系统收口步骤5→步骤6 |
+| Vision | **同一 LLM 回合并行齐发** N 次 `vision_analyze`（N=待处理条数）；每条 1 次；禁止每 5 分钟只跑 1 张 |
 | 禁止 | 步骤5收口后再调 vision；禁止对未入库 CDN 空跑；禁止未齐就写步骤6/发文 |
 ## 步骤 2 Maigret（必须用 collect_accounts）
 

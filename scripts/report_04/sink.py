@@ -182,6 +182,46 @@ def _is_late_web_search_tool(tool_name: str, task_id: str) -> Optional[str]:
     )
 
 
+def _pending_image_stream_lines(task_id: str) -> List[str]:
+    from collect_01 import db as _db
+
+    rows = _db.fetch_all(
+        """
+        SELECT source_platform, payload_url FROM collect_identity_streams
+        WHERE task_id=%s AND stream_type='image' AND validation_status='pending'
+        ORDER BY source_platform, stream_id
+        """,
+        (task_id,),
+    )
+    lines: List[str] = []
+    for row in rows:
+        plat = str(row.get("source_platform") or "?")
+        url = str(row.get("payload_url") or "").strip()
+        if url:
+            lines.append(f"  · {plat}: {url[:220]}")
+    return lines
+
+
+def _is_redundant_step5_vision(tool_name: str, tool_args: Dict[str, Any], task_id: str) -> Optional[str]:
+    """该 URL 对应图片流已终态时禁止重复 vision。"""
+    if tool_name not in {"mcp_vision_analyze", "vision_analyze"}:
+        return None
+    from collect_01.image_stream_match import find_image_stream_for_tool
+
+    stream = find_image_stream_for_tool(task_id, tool_args)
+    if not stream:
+        return None
+    st = str(stream.get("validation_status") or "")
+    if st in {"processed", "pass", "fail"}:
+        pending = _pending_image_stream_lines(task_id)
+        tail = "\n".join(pending[:6]) if pending else "（无 pending，请停止 vision 等待步骤6）"
+        return (
+            f"该图片流已 vision 终态({st})，禁止重复调用。"
+            f"请并行处理剩余 pending（一次齐发 vision_analyze）：\n{tail}"
+        )
+    return None
+
+
 def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
     """步骤4未终态禁止 vision；步骤5已收口后禁止再 vision（批次闭环，不回开）。"""
     if tool_name not in _STEP5_STREAM_TOOLS:
@@ -191,6 +231,13 @@ def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
         return (
             "步骤5图片流已收口，禁止再调用 vision/OCR。"
             "请进入步骤6收敛可信账号，勿回补 vision（系统不再回开步骤5）。"
+        )
+    from report_04.gates import is_stream_compare_ready
+
+    if s5 == "running" and is_stream_compare_ready(task_id):
+        return (
+            "步骤5全部图片流已终态，禁止再 vision/OCR。"
+            "系统正在收口并进入步骤6，请勿重复调用 vision。"
         )
     from report_04.gates import step4_profiles_terminal
 
@@ -240,6 +287,22 @@ def _step5_guidance_context(task_id: str) -> Optional[str]:
 
     n_img = count_image_streams(task_id)
     n_done = count_image_streams_processed(task_id)
+    pending_lines = _pending_image_stream_lines(task_id)
+    if pending_lines:
+        n_pend = len(pending_lines)
+        return (
+            "【写报硬约束·步骤5】"
+            f"尚有 {n_pend} 条图片流未 vision 终态（进度 {n_done}/{n_img}）。"
+            f"本回合必须并行调用 {n_pend} 次 vision_analyze（一次齐发，禁止逐条多轮拖延）。"
+            "image_url 必须严格使用下列 payload_url：\n"
+            + "\n".join(pending_lines)
+            + "\n禁止：get_user_tweets、analyze_channel_videos、get_user_feeds、任何 Apify 发文。"
+        )
+    if n_img > 0 and n_done >= n_img:
+        return (
+            "【写报硬约束·步骤5】全部图片流已终态，禁止再 vision/OCR。"
+            "请停止步骤5工具，等待系统收口并进入步骤6。"
+        )
     return (
         "【写报硬约束·当前步骤5】必须完成全部图片流 vision 后才能进入步骤6/7。"
         f"图片流进度 {n_done}/{n_img}。"
@@ -249,18 +312,14 @@ def _step5_guidance_context(task_id: str) -> Optional[str]:
 
 
 def _vision_settle_ready(task_id: str) -> bool:
-    """图片流已齐，且距最近一次 vision/ocr 已过短安静期（或无图片流）。"""
+    """图片流全部终态后立即可收口，不再等 quiet period。"""
     from report_04.gates import count_image_streams
 
     if not is_stream_compare_ready(task_id):
         return False
     if count_image_streams(task_id) == 0:
         return True
-    age = seconds_since_last_tool(task_id, tool_names=list(_VISION_TOOL_NAMES))
-    if age is None:
-        # 库内流已齐但尚无 vision 工具：允许收口（可能全失败标记 processed）
-        return True
-    return age >= float(_STEP5_VISION_SETTLE_SECONDS)
+    return True
 
 
 def _extra(payload: Dict[str, Any]) -> Dict[str, Any]:
@@ -469,7 +528,7 @@ def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:
     try:
         from report_04.step_reconcile import maybe_fail_forward_stale_step5
 
-        n = maybe_fail_forward_stale_step5(store, task_id, min_wait_seconds=90)
+        n = maybe_fail_forward_stale_step5(store, task_id, min_wait_seconds=45)
         if n:
             _maybe_advance_step67(store, task_id)
     except Exception as exc:
@@ -489,6 +548,7 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         reason = (
             _is_invalid_youtube_channel_id(tool_name, tool_args)
             or _is_premature_step5_tool(tool_name, task_id)
+            or _is_redundant_step5_vision(tool_name, tool_args, task_id)
             or _is_late_web_search_tool(tool_name, task_id)
             or _is_premature_step7_tool(tool_name, task_id)
         )
@@ -672,6 +732,8 @@ def _on_step5_tool_after(
             payload={**patch, "image_pending": 0, "vision_ready": True},
         )
     _try_complete_step5_if_settled(store, task_id)
+    if is_stream_compare_ready(task_id) and get_step_status(task_id, "step5_streams") == "completed":
+        _maybe_advance_step67(store, task_id)
 
 
 def _try_parse_seed(store: TaskStore, task_id: str, assistant: str, user_message: str) -> None:

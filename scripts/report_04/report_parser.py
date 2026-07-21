@@ -112,6 +112,22 @@ def mentions_analysis_steps(text: str) -> bool:
     return bool(re.search(r"步骤\s*[89]|步骤\s*10|图片流分析|发文观点|涉华|圈层", text or "", re.I))
 
 
+def looks_like_entering_analysis_text(text: str) -> bool:
+    """是否明确进入步骤8/9/10（非进度句、非终稿）。"""
+    t = (text or "").strip()
+    if not t or len(t) < 40:
+        return False
+    if is_progress_only(t) or is_final_report(t):
+        return False
+    return bool(
+        re.search(
+            r"步骤\s*[89]\b|步骤\s*10\b|进入步骤\s*[89]|进入步骤\s*10|并行.*步骤\s*[89]",
+            t,
+            re.I,
+        )
+    )
+
+
 def analysis_steps_terminal(status_map: Dict[str, str]) -> bool:
     for k in ANALYSIS_STEP_KEYS:
         if status_map.get(k) not in {"completed", "skipped"}:
