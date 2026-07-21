@@ -1052,15 +1052,23 @@ def _complete_step11_from_report(
     logger.info("终稿轻量收口完成 task=%s summary_len=%d", task_id, len(assistant or ""))
 
     # —— 重路径：步骤4/7 收口（失败不影响已落的 summary）——
+    # 终稿已出却留下 step7 子节点 pending → 父节点永久 running；必须先批量 skip 再关父节点
     try:
+        from report_04.orchestrator import advance_to_analysis_phase
         from report_04.step_reconcile import (
+            close_collect_parent_if_ready,
             reconcile_step4_and_step7_children,
             reconcile_step7_from_post_tools,
         )
+        from report_04.phases import POST_PARENT_STEP_KEY
+        from report_04.task_store import _reconcile_report_post_child_steps
 
         reconcile_step7_from_post_tools(store, task_id)
         reconcile_step4_and_step7_children(store, task_id)
+        _reconcile_report_post_child_steps(store, task_id)
+        advance_to_analysis_phase(store, task_id, "终稿已出，收口未完成的发文子步骤")
         store.reconcile_collect_child_steps(task_id)
+        close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     except Exception as exc:
         logger.warning("终稿后步骤七收口失败 task=%s: %s", task_id, exc)
 

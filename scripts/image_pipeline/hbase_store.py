@@ -166,12 +166,13 @@ def put_image(
     origin_url: str,
     file_size: int,
 ) -> str:
-    """写入原图，返回 RowKey。"""
-    row_key = build_row_key(task_id, sha256)
-    if exists(row_key):
-        logger.info("local image exists, skip write: %s", row_key)
-        return row_key
+    """写入原图，返回 RowKey。
 
+    策略：
+    1) 若启用 HBase：调 HTTP insert；再用 getHbaseData 校验；失败则记警告并依赖本地兜底
+    2) **始终写本地回退目录**（Java 读 HBase 空时也可回退），避免「MySQL 已 stored 但两端都读不到」
+    """
+    row_key = build_row_key(task_id, sha256)
     payload = {
         "bytes": content,
         "mime_type": mime_type,
@@ -180,21 +181,82 @@ def put_image(
         "file_size": file_size,
     }
     cfg = hbase_config()
+
+    # 本地已有则直接复用（幂等）
+    if _local_path(row_key, cfg["local_fallback_dir"]).is_file():
+        logger.info("local image exists, skip write: %s", row_key)
+        return row_key
+
+    http_ok = False
     if cfg["enabled"]:
-        _write_http(row_key, payload, cfg)
-    else:
-        logger.info("HBase 未启用，使用本地回退目录写入: %s", cfg["local_fallback_dir"])
+        try:
+            _write_http(row_key, payload, cfg)
+            if _verify_http(row_key, cfg):
+                http_ok = True
+            else:
+                logger.warning(
+                    "HBase HTTP 写入返回成功但 getHbaseData 读不到数据，将依赖本地回退 row_key=%s",
+                    row_key,
+                )
+        except Exception as exc:
+            logger.warning("HBase HTTP 写入失败，改用本地回退 row_key=%s err=%s", row_key, exc)
+
+    # 始终落本地，保证 Java / 历史详情能读到
+    try:
         _write_local(row_key, payload, cfg["local_fallback_dir"])
+        logger.info(
+            "本地回退已写入 row_key=%s dir=%s http_ok=%s",
+            row_key,
+            cfg["local_fallback_dir"],
+            http_ok,
+        )
+    except Exception as exc:
+        if not http_ok:
+            raise HBaseStoreError(f"HBase 与本地回退均写入失败: {exc}") from exc
+        logger.warning("本地回退写入失败（HBase 已校验成功）row_key=%s err=%s", row_key, exc)
     return row_key
+
+
+def _verify_http(row_key: str, cfg: Dict[str, Any]) -> bool:
+    """用同机 getHbaseData 校验是否真正可读；接口异常或 data 为空视为未落库。"""
+    insert_url = cfg.get("insert_url") or ""
+    if not insert_url or "insertHbaseData" not in insert_url:
+        return False
+    get_url = insert_url.replace("insertHbaseData", "getHbaseData")
+    timeout = max(5, int(cfg.get("timeout_ms") or 30000) / 1000.0)
+    try:
+        resp = requests.post(
+            get_url,
+            json={"tableName": cfg["table"], "rowKey": row_key},
+            headers={"Content-Type": "application/json"},
+            timeout=timeout,
+            proxies={"http": None, "https": None},
+        )
+        if resp.status_code >= 400:
+            return False
+        obj = resp.json() if resp.text else {}
+        if not isinstance(obj, dict):
+            return False
+        data = obj.get("data")
+        if data is None or data == "" or data == {}:
+            return False
+        # data 可能是 JSON 字符串或对象
+        if isinstance(data, str) and "base64" not in data and len(data) < 8:
+            return False
+        return True
+    except Exception as exc:
+        logger.warning("getHbaseData 校验异常 row_key=%s err=%s", row_key, exc)
+        return False
 
 
 def get_image(row_key: str) -> Optional[Dict[str, Any]]:
     """
-    Python 侧读图仅支持本地回退（调试用）。
-    生产读图由 Java HBaseImageClient（ZK 原生）完成。
+    Python 侧优先读本地回退；生产前端读图仍走 Java API。
     """
     cfg = hbase_config()
+    local = _read_local(row_key, cfg["local_fallback_dir"])
+    if local:
+        return local
     if cfg["enabled"]:
-        logger.warning("生产环境请通过 Java API 读原图；Python get_image 在 HTTP 模式下不可用")
-        return None
-    return _read_local(row_key, cfg["local_fallback_dir"])
+        logger.warning("本地无文件且 Python 不直连 HBase ZK；请用 Java GET /api/images/{id}/bytes")
+    return None

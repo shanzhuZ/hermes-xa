@@ -4,12 +4,15 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import com.example.aw.collect.mapper.CollectImageMapper;
 import com.example.aw.hbase.HBaseImageClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.web.server.ResponseStatusException;
 
 import java.util.ArrayList;
+import java.util.Base64;
 import java.util.HashMap;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -23,6 +26,8 @@ import java.util.Map;
  */
 @Service
 public class ImageAssetQueryService {
+
+    private static final Logger log = LoggerFactory.getLogger(ImageAssetQueryService.class);
 
     @Autowired
     private CollectImageMapper collectImageMapper;
@@ -79,6 +84,89 @@ public class ImageAssetQueryService {
     }
 
     /**
+     * 历史详情专用：能读到存储就填 dataUrl，读不到/超时就跳过，绝不拖垮整单详情。
+     * <p>
+     * 仍保留 imageUrl，前端可按需再拉 /bytes。
+     */
+    public List<Map<String, Object>> listTaskImagesWithDataUrl(String taskId,
+                                                               int limit,
+                                                               int maxBytesPerImage) {
+        if (taskId == null || taskId.trim().isEmpty()) {
+            throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "taskId_required");
+        }
+        if (limit < 1) {
+            limit = 50;
+        }
+        if (limit > 200) {
+            limit = 200;
+        }
+        if (maxBytesPerImage < 64 * 1024) {
+            maxBytesPerImage = 64 * 1024;
+        }
+        List<Map<String, Object>> rows = collectImageMapper.selectPageByTask(
+                taskId.trim(), null, null, null, 0, limit);
+        List<Map<String, Object>> list = new ArrayList<Map<String, Object>>();
+        if (rows == null) {
+            return list;
+        }
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = toListItem(row);
+            item.put("mimeType", row.get("mime_type"));
+            item.put("fileSize", row.get("file_size"));
+            attachDataUrlFromStore(item, row, maxBytesPerImage);
+            list.add(item);
+        }
+        return list;
+    }
+
+    /**
+     * 单张尽力填充；任何异常只记 storeReadError，不影响其它图和详情接口。
+     */
+    private void attachDataUrlFromStore(Map<String, Object> item,
+                                        Map<String, Object> row,
+                                        int maxBytesPerImage) {
+        item.put("hasStoredBytes", Boolean.FALSE);
+        item.put("dataUrl", null);
+        String storageStatus = str(row.get("storage_status"));
+        String rowKey = str(row.get("hbase_row_key"));
+        String imageId = str(row.get("image_id"));
+        if (!"stored".equals(storageStatus) || rowKey.isEmpty()) {
+            return;
+        }
+        try {
+            Map<String, Object> blob = hBaseImageClient.getImageBytes(rowKey);
+            if (blob == null || blob.get("bytes") == null) {
+                item.put("storeReadError", "bytes_not_found");
+                return;
+            }
+            byte[] bytes = (byte[]) blob.get("bytes");
+            if (bytes.length == 0) {
+                item.put("storeReadError", "empty_bytes");
+                return;
+            }
+            item.put("hasStoredBytes", Boolean.TRUE);
+            item.put("storedBytes", Integer.valueOf(bytes.length));
+            if (bytes.length > maxBytesPerImage) {
+                // 太大不嵌入，前端用 imageUrl
+                return;
+            }
+            String mime = str(blob.get("mimeType"));
+            if (mime.isEmpty()) {
+                mime = str(row.get("mime_type"));
+            }
+            if (mime.isEmpty()) {
+                mime = "image/jpeg";
+            }
+            item.put("mimeType", mime);
+            item.put("dataUrl", "data:" + mime + ";base64," + Base64.getEncoder().encodeToString(bytes));
+            log.info("[历史图片] dataUrl 已填充 imageId={} bytes={}", imageId, Integer.valueOf(bytes.length));
+        } catch (Exception e) {
+            log.warn("[历史图片] 读存储跳过 imageId={} rowKey={} err={}", imageId, rowKey, e.getMessage());
+            item.put("storeReadError", e.getMessage() == null ? "hbase_read_failed" : e.getMessage());
+        }
+    }
+
+    /**
      * 查询单张图片完整元数据与分析结果。
      *
      * @param imageId 图片 ID
@@ -101,6 +189,7 @@ public class ImageAssetQueryService {
         Map<String, Object> row = requireImage(imageId);
         String storageStatus = str(row.get("storage_status"));
         String rowKey = str(row.get("hbase_row_key"));
+        log.info("[图片bytes接口] imageId={} storageStatus={} rowKey={}", imageId, storageStatus, rowKey);
         if (!"stored".equals(storageStatus) || rowKey.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "image_not_stored");
         }
@@ -116,14 +205,16 @@ public class ImageAssetQueryService {
             if (mime.isEmpty()) {
                 mime = "application/octet-stream";
             }
+            byte[] bytes = (byte[]) blob.get("bytes");
             Map<String, Object> out = new HashMap<String, Object>();
-            out.put("bytes", blob.get("bytes"));
+            out.put("bytes", bytes);
             out.put("mimeType", mime);
             out.put("fileName", imageId);
             return out;
         } catch (ResponseStatusException e) {
             throw e;
         } catch (Exception e) {
+            log.error("[图片bytes接口] 失败 imageId=" + imageId + " rowKey=" + rowKey, e);
             throw new ResponseStatusException(HttpStatus.INTERNAL_SERVER_ERROR,
                     "hbase_read_failed: " + e.getMessage());
         }

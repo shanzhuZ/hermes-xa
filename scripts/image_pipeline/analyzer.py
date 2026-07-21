@@ -32,10 +32,28 @@ def _as_dict(value: Any) -> Dict[str, Any]:
 
 
 def _extract_url(args: Dict[str, Any]) -> Optional[str]:
-    for key in ("image_url", "imageUrl", "url", "path", "image_path", "file_path"):
+    # OCR 常用 input_data；Vision 常用 image_url
+    for key in (
+        "image_url",
+        "imageUrl",
+        "input_data",
+        "url",
+        "path",
+        "image_path",
+        "file_path",
+    ):
         val = args.get(key)
         if val and isinstance(val, str) and val.strip():
-            return val.strip()
+            text = val.strip()
+            # input_data 偶发是本地路径或 base64，仅接受 http(s)/常见本地路径
+            if key == "input_data" and not (
+                text.startswith("http://")
+                or text.startswith("https://")
+                or text.startswith("/")
+                or re.match(r"^[A-Za-z]:[\\/]", text)
+            ):
+                continue
+            return text
     # 部分 OCR 工具用 images 列表
     images = args.get("images") or args.get("image_urls")
     if isinstance(images, list) and images:
@@ -48,19 +66,30 @@ def _extract_url(args: Dict[str, Any]) -> Optional[str]:
 
 
 def _extract_text(result: Dict[str, Any], tool_name: str) -> str:
-    for key in ("text", "ocr_text", "content", "description", "result", "answer", "output"):
+    # vision_analyze 主字段是 analysis
+    for key in (
+        "analysis",
+        "text",
+        "ocr_text",
+        "content",
+        "description",
+        "result",
+        "answer",
+        "output",
+    ):
         val = result.get(key)
         if isinstance(val, str) and val.strip():
             return val.strip()
-    # 嵌套 data
-    data = result.get("data")
-    if isinstance(data, dict):
-        for key in ("text", "ocr_text", "content", "description"):
-            val = data.get(key)
-            if isinstance(val, str) and val.strip():
-                return val.strip()
-    if isinstance(data, str) and data.strip():
-        return data.strip()
+    # 嵌套 data / structuredContent
+    for nest_key in ("data", "structuredContent"):
+        data = result.get(nest_key)
+        if isinstance(data, dict):
+            for key in ("analysis", "text", "ocr_text", "content", "description", "result"):
+                val = data.get(key)
+                if isinstance(val, str) and val.strip():
+                    return val.strip()
+        if isinstance(data, str) and data.strip():
+            return data.strip()
     # 整段兜底
     raw = result.get("raw") or result.get("message")
     if isinstance(raw, str) and raw.strip():
@@ -75,6 +104,19 @@ def _extract_text(result: Dict[str, Any], tool_name: str) -> str:
     return ""
 
 
+def _normalize_image_url_key(url: str) -> str:
+    """弱化 CDN 尺寸后缀差异，便于 origin_url 与工具参数对齐。"""
+    text = (url or "").strip().split("?")[0]
+    # Twitter: xxx_normal.jpg / xxx_400x400.jpg → xxx.jpg
+    text = re.sub(
+        r"_(?:normal|bigger|mini|200x200|400x400)(\.(?:jpe?g|png|webp|gif))$",
+        r"\1",
+        text,
+        flags=re.I,
+    )
+    return text.lower()
+
+
 def _url_loose_match(a: str, b: str) -> bool:
     if not a or not b:
         return False
@@ -85,8 +127,15 @@ def _url_loose_match(a: str, b: str) -> bool:
     b0 = b.split("?")[0]
     if a0 == b0:
         return True
+    ka = _normalize_image_url_key(a)
+    kb = _normalize_image_url_key(b)
+    if ka and ka == kb:
+        return True
     # 一方包含另一方核心 path
     if len(a0) > 40 and (a0 in b or b0 in a):
+        return True
+    # 去尺寸后缀后再做包含（Twitter _normal vs 原图）
+    if len(ka) > 40 and (ka in kb or kb in ka):
         return True
     return False
 

@@ -30,9 +30,9 @@ import java.util.Map;
  *   <li>任务主表 —— hermes_tasks（状态、类型、时间）</li>
  *   <li>用户提问 —— hermes_user_dialogues（msg_type=user_input，含 payload_json）</li>
  *   <li>终稿报告 —— hermes_user_dialogues（msg_type=summary 优先）via {@link TaskFinalAnswerQueryService}</li>
- *   <li>账号 —— collect_profiles</li>
- *   <li>发文 —— collect_posts</li>
- *   <li>图片 —— collect_images，映射复用 {@link ImageAssetQueryService}</li>
+ *   <li>账号 —— 优先 collect_display_records（step3_profiles）的 display_fields</li>
+ *   <li>发文 —— 优先 collect_display_records（step6_posts）的 display_fields</li>
+ *   <li>图片 —— collect_images；能读到 HBase/本地则附 dataUrl，读不到则仅 imageUrl</li>
  * </ul>
  * <p>
  * <b>字段命名约定：</b>库内多为下划线（account_id），对外 API 统一驼峰（accountId），
@@ -48,12 +48,12 @@ public class HistoryQaQueryService {
     private static final int PREVIEW_LEN = 200;
 
     /**
-     * 详情接口一次拉取图片的条数上限。
-     * ImageAssetQueryService.listTaskImages 单页 pageSize 上限是 100，
-     * 这里用 500 并走其内部限制：实际每页最多 100 条，若图片更多需前端另调分页图片接口。
-     * （当前实现只拉第 1 页，见 getHistoryTaskDetail 内注释。）
+     * 详情接口一次拉取图片的条数上限（含尽力读 dataUrl）。
      */
-    private static final int DETAIL_IMAGE_PAGE_SIZE = 500;
+    private static final int DETAIL_IMAGE_LIMIT = 100;
+
+    /** 历史详情里单张嵌入 dataUrl 的最大字节数（约 1.5MB）；超过只留 imageUrl */
+    private static final int DETAIL_IMAGE_MAX_BYTES = 1536 * 1024;
 
     /** 任务 / 对话 / 账号 / 发文 等综合 Mapper */
     @Autowired
@@ -200,40 +200,26 @@ public class HistoryQaQueryService {
         // report 结构：taskId/type/msgType/content/createdAt/ready
         Map<String, Object> report = taskFinalAnswerQueryService.getFinalAnswer(taskId.trim());
 
-        // ---------- 4. 账号列表（collect_profiles → 驼峰） ----------
-        List<Map<String, Object>> profileRows = collectTaskMapper.selectProfilesByTaskId(taskId.trim());
-        List<Map<String, Object>> profiles = new ArrayList<Map<String, Object>>();
-        if (profileRows != null) {
-            for (Map<String, Object> row : profileRows) {
-                profiles.add(toProfileItem(row));
-            }
-        }
+        // ---------- 4. 账号列表：优先展示层 display_fields（与步骤详情同结构） ----------
+        List<Map<String, Object>> profiles = loadProfileDisplayItems(taskId.trim());
 
-        // ---------- 5. 发文列表（collect_posts → 驼峰，含 media） ----------
-        List<Map<String, Object>> postRows = collectTaskMapper.selectPostsByTaskId(taskId.trim());
-        List<Map<String, Object>> posts = new ArrayList<Map<String, Object>>();
-        if (postRows != null) {
-            for (Map<String, Object> row : postRows) {
-                posts.add(toPostItem(row));
-            }
-        }
+        // ---------- 5. 发文列表：优先展示层（只取父节点 step6_posts，避免与子节点重复） ----------
+        List<Map<String, Object>> posts = loadPostDisplayItems(taskId.trim());
 
-        // ---------- 6. 图片列表 ----------
-        // 复用 ImageAssetQueryService：返回项已含 sourceType、storageStatus、analyzeStatus
-        // 中文与 *Code，以及 imageUrl=/api/images/{id}/bytes。
-        // 注意：listTaskImages 内部 pageSize 上限是 100，这里传 500 会被截成 100。
-        // 若单任务图片超过 100，详情里 images 只含前 100 条；总量看 counts.images，
-        // 完整分页请调 GET /api/tasks/{taskId}/images。
-        Map<String, Object> imagePage = imageAssetQueryService.listTaskImages(
-                taskId.trim(), null, null, null, 1, DETAIL_IMAGE_PAGE_SIZE);
-        @SuppressWarnings("unchecked")
-        List<Map<String, Object>> images = imagePage.get("list") instanceof List
-                ? (List<Map<String, Object>>) imagePage.get("list")
-                : new ArrayList<Map<String, Object>>();
+        // ---------- 6. 图片列表（MySQL 元数据 + 尽力填充 dataUrl；HBase 超时则跳过） ----------
+        List<Map<String, Object>> images = imageAssetQueryService.listTaskImagesWithDataUrl(
+                taskId.trim(), DETAIL_IMAGE_LIMIT, DETAIL_IMAGE_MAX_BYTES);
 
         // ---------- 7. 数量统计（与数组长度可能不一致：图片超过单页上限时） ----------
-        long profileCount = collectTaskMapper.countProfilesByTaskId(taskId.trim());
-        long postCount = collectTaskMapper.countPostsByTaskId(taskId.trim());
+        long profileCount = profiles.size();
+        long postCount = posts.size();
+        // 展示层为空时回退业务表计数，避免旧任务 counts 全 0
+        if (profileCount == 0) {
+            profileCount = collectTaskMapper.countProfilesByTaskId(taskId.trim());
+        }
+        if (postCount == 0) {
+            postCount = collectTaskMapper.countPostsByTaskId(taskId.trim());
+        }
         long imageCount = collectImageMapper.countByTask(taskId.trim(), null, null, null);
 
         Map<String, Object> counts = new LinkedHashMap<String, Object>();
@@ -324,7 +310,95 @@ public class HistoryQaQueryService {
     }
 
     /**
-     * collect_profiles 一行 → 前端账号卡片字段。
+     * 历史详情账号：优先 collect_display_records.step3_profiles 的 display_fields。
+     * 无展示层时回退 collect_profiles 原字段（兼容旧任务）。
+     */
+    private List<Map<String, Object>> loadProfileDisplayItems(String taskId) {
+        List<Map<String, Object>> display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKey(taskId, "step3_profiles"),
+                "step3_profiles",
+                "collect_profiles");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        List<Map<String, Object>> profileRows = collectTaskMapper.selectProfilesByTaskId(taskId);
+        List<Map<String, Object>> profiles = new ArrayList<Map<String, Object>>();
+        if (profileRows != null) {
+            for (Map<String, Object> row : profileRows) {
+                profiles.add(toProfileItem(row));
+            }
+        }
+        return profiles;
+    }
+
+    /**
+     * 历史详情发文：优先 collect_display_records.step6_posts 的 display_fields（父汇总，不重复子平台节点）。
+     * 无展示层时回退 collect_posts 原字段（兼容旧任务）。
+     */
+    private List<Map<String, Object>> loadPostDisplayItems(String taskId) {
+        List<Map<String, Object>> display = mapDisplayRecords(
+                collectTaskMapper.selectDisplayRecordsByStepKey(taskId, "step6_posts"),
+                "step6_posts",
+                "collect_posts");
+        if (!display.isEmpty()) {
+            return display;
+        }
+        List<Map<String, Object>> postRows = collectTaskMapper.selectPostsByTaskId(taskId);
+        List<Map<String, Object>> posts = new ArrayList<Map<String, Object>>();
+        if (postRows != null) {
+            for (Map<String, Object> row : postRows) {
+                posts.add(toPostItem(row));
+            }
+        }
+        return posts;
+    }
+
+    /**
+     * 与步骤详情接口一致：[{ id, recordTitle, platform, accountId, fields:[{label,value}], stepKey, dataType }]
+     */
+    private List<Map<String, Object>> mapDisplayRecords(List<Map<String, Object>> rows,
+                                                        String stepKey,
+                                                        String dataType) {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        if (rows == null || rows.isEmpty()) {
+            return out;
+        }
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", row.get("id"));
+            item.put("recordTitle", row.get("record_title"));
+            item.put("platform", row.get("platform"));
+            item.put("accountId", row.get("account_id"));
+            item.put("stepKey", stepKey);
+            item.put("dataType", dataType);
+            item.put("fields", parseDisplayFields(row.get("display_fields")));
+            out.add(item);
+        }
+        return out;
+    }
+
+    /** display_fields JSON → [{label,value}, ...]；解析失败返回空数组 */
+    private Object parseDisplayFields(Object raw) {
+        if (raw == null) {
+            return new ArrayList<Object>();
+        }
+        if (raw instanceof List) {
+            return raw;
+        }
+        String text = String.valueOf(raw).trim();
+        if (text.isEmpty()) {
+            return new ArrayList<Object>();
+        }
+        try {
+            Object parsed = JSON.parse(text);
+            return parsed == null ? new ArrayList<Object>() : parsed;
+        } catch (Exception e) {
+            return new ArrayList<Object>();
+        }
+    }
+
+    /**
+     * collect_profiles 一行 → 前端账号卡片字段（展示层缺失时的回退）。
      * 不做平台中文化，保留库内 platform 原值（twitter/instagram/...），与其它业务接口一致。
      */
     private Map<String, Object> toProfileItem(Map<String, Object> row) {

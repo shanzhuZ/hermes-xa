@@ -110,9 +110,9 @@ public class HistoryQaController {
      * <b>业务含义：</b>前端从列表点进某一条任务后，一次拉取本次任务的完整回顾数据：
      * <ol>
      *   <li>用户提问（content + payload）</li>
-     *   <li>采集到的账号列表（collect_profiles）</li>
-     *   <li>采集到的发文列表（collect_posts）</li>
-     *   <li>图片资产列表（collect_images，含 imageUrl 指向原图接口）</li>
+     *   <li>采集到的账号列表（优先 collect_display_records.display_fields）</li>
+     *   <li>采集到的发文列表（优先 collect_display_records.display_fields）</li>
+     *   <li>图片资产列表（collect_images；有存储则尽量带 dataUrl，失败不阻塞）</li>
      *   <li>模型终稿报告（优先 summary）</li>
      * </ol>
      * <p>
@@ -123,7 +123,7 @@ public class HistoryQaController {
      * <p>
      * <b>注意：</b>
      * <ul>
-     *   <li>原图像素不在本接口里返回；前端用 images[].imageUrl 调
+     *   <li>优先用 images[].dataUrl；没有则用 images[].imageUrl 调
      *       {@code GET /api/images/{imageId}/bytes}</li>
      *   <li>仅允许历史可见状态（pending/running/completed）；failed 返回 409</li>
      *   <li>任务不存在返回 404</li>

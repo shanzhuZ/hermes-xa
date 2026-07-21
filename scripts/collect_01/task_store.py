@@ -84,6 +84,35 @@ def is_three_section_report(content: str) -> bool:
     return sum(1 for m in markers if m in text) >= 2
 
 
+_SECTION1_RE = re.compile(
+    r"(?:^|\n)\s*(?:#{1,6}\s*)?一[、.．]\s*个人信息",
+    re.M,
+)
+
+
+def sanitize_three_section_report(content: str) -> str:
+    """三节报告强制从「一、个人信息」起笔，砍掉步骤6.5等脏前缀。"""
+    text = (content or "").strip()
+    if not text:
+        return text
+    m = _SECTION1_RE.search(text)
+    if not m:
+        return text
+    # 匹配可能吃掉行首换行，定位「一」字起点
+    start = m.start()
+    # 若匹配以换行开头，从换行后开始
+    if text[start] == "\n":
+        start += 1
+    cleaned = text[start:].lstrip()
+    # 统一成 ## 一、个人信息 开头（保留原文标题行其余部分）
+    first_line_end = cleaned.find("\n")
+    first_line = cleaned if first_line_end < 0 else cleaned[:first_line_end]
+    rest = "" if first_line_end < 0 else cleaned[first_line_end:]
+    if "一、个人信息" in first_line.replace(" ", "").replace("\u3000", "") or "一.个人信息" in first_line.replace(" ", ""):
+        cleaned = "## 一、个人信息" + rest
+    return cleaned.strip()
+
+
 def _stream_id_base(task_id: str, platform: str, account_id: str) -> str:
     """stream_id 列 VARCHAR(64)，超长 account_id 用摘要。"""
     digest = hashlib.md5(f"{task_id}:{platform}:{account_id}".encode("utf-8")).hexdigest()[:16]
@@ -380,8 +409,18 @@ class TaskStore:
         text = (content or "").strip()
         if not text or not task_id or text == "(empty)":
             return False
-        clipped = text[:65535]
         is_report = is_three_section_report(text)
+        if is_report:
+            cleaned = sanitize_three_section_report(text)
+            if cleaned != text:
+                logger.info(
+                    "三节报告已裁掉脏前缀 task=%s before=%d after=%d",
+                    task_id,
+                    len(text),
+                    len(cleaned),
+                )
+            text = cleaned
+        clipped = text[:65535]
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
             existing = db.fetch_one(
@@ -1028,6 +1067,18 @@ class TaskStore:
             ),
         )
         reconcile_step6_parent(self, task_id, poc)
+        # 步骤6后图片入库兜底：Agent 已在写报告前跑过则跳过；漏跑则补一次（失败不拖垮任务）
+        if ready_done:
+            try:
+                from collect_01.image_assets import run_image_pipeline_after_posts
+
+                run_image_pipeline_after_posts(
+                    task_id,
+                    force_analyze=True,
+                    skip_if_stored=True,
+                )
+            except Exception as exc:
+                logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
         if ready_done:
             db.execute(
                 "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed')",

@@ -4,7 +4,6 @@ import com.alibaba.fastjson.JSON;
 import com.alibaba.fastjson.JSONObject;
 import org.apache.hadoop.conf.Configuration;
 import org.apache.hadoop.hbase.Cell;
-import org.apache.hadoop.hbase.CellUtil;
 import org.apache.hadoop.hbase.TableName;
 import org.apache.hadoop.hbase.client.Connection;
 import org.apache.hadoop.hbase.client.ConnectionFactory;
@@ -25,35 +24,32 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.Base64;
 import java.util.HashMap;
+import java.util.LinkedHashMap;
 import java.util.Map;
+import java.util.concurrent.Callable;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.ThreadFactory;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
+import java.util.concurrent.atomic.AtomicInteger;
+import java.util.concurrent.locks.ReentrantLock;
 
 /**
- * 图片原图 HBase 读取客户端（ZK 原生）。
+ * 图片原图读取：优先 HBase（短超时），失败/超时立刻回退本地，绝不长时间卡住调用方。
  * <p>
- * 写入由 Python 调现成 HTTP 接口 insertHbaseData 完成，落库结构对齐历史写法：
- * 列族 info，单元格为 JSON：{"image_url":"...","base64_data":"data:image/xxx;base64,..."}
- * <p>
- * 读侧兼容：
- * 1) info:data / info:base64_data / 列族内任意含 base64_data 的 JSON
- * 2) 旧格式 cf:bytes + cf:mime
- * 3) HBase 关闭时读本地回退目录
+ * 读侧对齐 getRowData：遍历 Cell，用 offset/length 取 qualifier/value。
  */
 @Component
 public class HBaseImageClient {
 
     private static final Logger log = LoggerFactory.getLogger(HBaseImageClient.class);
 
-    private static final byte[] CF_INFO = Bytes.toBytes("info");
-    private static final byte[] CF_LEGACY = Bytes.toBytes("cf");
-    private static final byte[] COL_DATA = Bytes.toBytes("data");
-    private static final byte[] COL_BASE64 = Bytes.toBytes("base64_data");
-    private static final byte[] COL_BYTES = Bytes.toBytes("bytes");
-    private static final byte[] COL_MIME = Bytes.toBytes("mime");
-
-    @Value("${hermes.hbase.enabled:false}")
+    @Value("${hermes.hbase.enabled:true}")
     private boolean enabled;
 
-    /** 必须指向 insertHbaseData 实际写入的集群 */
     @Value("${hermes.hbase.zookeeper.quorum:192.168.3.171}")
     private String zkQuorum;
 
@@ -69,22 +65,112 @@ public class HBaseImageClient {
     @Value("${hermes.hbase.local-dir:}")
     private String localDir;
 
+    /** 单次 HBase Get / 建连最长等待（毫秒） */
+    @Value("${hermes.hbase.read-timeout-ms:3000}")
+    private long readTimeoutMs;
+
+    /** HBase 连续失败后冷却时间，冷却期内直接跳过 HBase 走本地 */
+    @Value("${hermes.hbase.fail-cooldown-ms:60000}")
+    private long failCooldownMs;
+
     private volatile Connection connection;
 
+    /** 冷却截止时间戳；>now 时跳过 HBase */
+    private volatile long hbaseSkipUntilMs = 0L;
+
+    /** 建连锁：超时线程占坑时其它请求直接失败回退，避免排队卡死 */
+    private final ReentrantLock connectLock = new ReentrantLock();
+
+    private final ExecutorService ioPool = Executors.newCachedThreadPool(new ThreadFactory() {
+        private final AtomicInteger seq = new AtomicInteger(1);
+
+        @Override
+        public Thread newThread(Runnable r) {
+            Thread t = new Thread(r, "hbase-image-io-" + seq.getAndIncrement());
+            t.setDaemon(true);
+            return t;
+        }
+    });
+
     /**
-     * 按 RowKey 读取原图。
-     *
-     * @param rowKey MySQL collect_images.hbase_row_key
-     * @return 含 bytes、mimeType；不存在返回 null
+     * 按 RowKey 读原图。HBase 不可用/超时/空结果时回退本地；都没有返回 null（不抛、不卡死）。
      */
     public Map<String, Object> getImageBytes(String rowKey) throws IOException {
         if (rowKey == null || rowKey.trim().isEmpty()) {
             return null;
         }
-        if (enabled) {
-            return getFromHBase(rowKey.trim());
+        String key = rowKey.trim();
+        long timeout = readTimeoutMs > 0 ? readTimeoutMs : 3000L;
+
+        if (enabled && System.currentTimeMillis() >= hbaseSkipUntilMs) {
+            try {
+                Map<String, Object> fromHb = callWithTimeout(new Callable<Map<String, Object>>() {
+                    @Override
+                    public Map<String, Object> call() throws Exception {
+                        return getFromHBase(key);
+                    }
+                }, timeout, "get rowKey=" + key);
+                if (fromHb != null && fromHb.get("bytes") != null) {
+                    byte[] bytes = (byte[]) fromHb.get("bytes");
+                    log.info("[HBase读图] 成功 rowKey={} bytes={} mime={}",
+                            key, Integer.valueOf(bytes.length), fromHb.get("mimeType"));
+                    return fromHb;
+                }
+                log.warn("[HBase读图] 无可用字节，回退本地 rowKey={}", key);
+            } catch (TimeoutException e) {
+                markHbaseUnhealthy("timeout " + timeout + "ms");
+                log.warn("[HBase读图] 超时，回退本地 rowKey={} timeoutMs={}", key, Long.valueOf(timeout));
+            } catch (Exception e) {
+                markHbaseUnhealthy(e.getMessage());
+                log.warn("[HBase读图] 失败，回退本地 rowKey={} err={}", key, e.getMessage());
+            }
+        } else if (enabled && System.currentTimeMillis() < hbaseSkipUntilMs) {
+            log.debug("[HBase读图] 冷却中，跳过 HBase rowKey={}", key);
         }
-        return getFromLocal(rowKey.trim());
+
+        Map<String, Object> local = getFromLocal(key);
+        if (local != null && local.get("bytes") != null) {
+            log.info("[HBase读图] 本地回退成功 rowKey={} bytes={}",
+                    key, Integer.valueOf(((byte[]) local.get("bytes")).length));
+        }
+        return local;
+    }
+
+    private void markHbaseUnhealthy(String reason) {
+        long until = System.currentTimeMillis() + (failCooldownMs > 0 ? failCooldownMs : 60000L);
+        hbaseSkipUntilMs = until;
+        // 连接可能已半死，丢掉后下次再试
+        Connection old = connection;
+        connection = null;
+        if (old != null) {
+            try {
+                old.close();
+            } catch (Exception ignore) {
+                // ignore
+            }
+        }
+        log.warn("[HBase读图] 进入冷却 {}ms reason={}", Long.valueOf(failCooldownMs), reason);
+    }
+
+    private <T> T callWithTimeout(Callable<T> task, long timeoutMs, String label)
+            throws TimeoutException, Exception {
+        Future<T> future = ioPool.submit(task);
+        try {
+            return future.get(timeoutMs, TimeUnit.MILLISECONDS);
+        } catch (TimeoutException e) {
+            future.cancel(true);
+            throw e;
+        } catch (ExecutionException e) {
+            Throwable cause = e.getCause() == null ? e : e.getCause();
+            if (cause instanceof Exception) {
+                throw (Exception) cause;
+            }
+            throw new IOException(label + " failed: " + cause.getMessage(), cause);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            future.cancel(true);
+            throw new IOException(label + " interrupted", e);
+        }
     }
 
     private Map<String, Object> getFromLocal(String rowKey) throws IOException {
@@ -113,94 +199,169 @@ public class HBaseImageClient {
         return out;
     }
 
+    /** getRowData 风格：Get → Cell offset/length → Map → 解析图片 */
     private Map<String, Object> getFromHBase(String rowKey) throws IOException {
         Table table = null;
         try {
             Connection conn = getConnection();
-            table = conn.getTable(TableName.valueOf(imageTable));
+            String tableName = imageTable == null || imageTable.trim().isEmpty()
+                    ? "collect_image_bytes" : imageTable.trim();
+            table = conn.getTable(TableName.valueOf(tableName));
             Get get = new Get(Bytes.toBytes(rowKey));
             Result result = table.get(get);
             if (result == null || result.isEmpty()) {
+                log.warn("[HBase读图] Result 为空 table={} rowKey={}", tableName, rowKey);
                 return null;
             }
-
-            Map<String, Object> parsed = parseInsertApiFormat(result);
+            Map<String, String> rowData = toRowDataMap(result);
+            log.info("[HBase读图] 命中行 table={} rowKey={} qualifiers={}",
+                    tableName, rowKey, rowData.keySet());
+            Map<String, Object> parsed = parseRowDataMap(rowData);
             if (parsed != null) {
                 return parsed;
             }
-            return parseLegacyFormat(result);
+            return parseLegacyBinaryCells(result);
         } finally {
             if (table != null) {
                 try {
                     table.close();
                 } catch (IOException e) {
-                    log.warn("关闭 HBase table 失败: {}", e.getMessage());
+                    log.warn("[HBase读图] 关闭 table 失败: {}", e.getMessage());
                 }
             }
         }
     }
 
-    /**
-     * 解析 insertHbaseData 写入格式：列族 info 内 JSON / base64_data。
-     */
-    private Map<String, Object> parseInsertApiFormat(Result result) {
-        byte[] family = Bytes.toBytes(columnFamily == null || columnFamily.trim().isEmpty()
-                ? "info" : columnFamily.trim());
+    private Map<String, String> toRowDataMap(Result result) {
+        Map<String, String> map = new LinkedHashMap<String, String>();
+        if (result == null || result.isEmpty() || result.listCells() == null) {
+            return map;
+        }
+        for (Cell cell : result.listCells()) {
+            if (cell == null) {
+                continue;
+            }
+            String family = Bytes.toString(
+                    cell.getFamilyArray(), cell.getFamilyOffset(), cell.getFamilyLength());
+            String qualifier = Bytes.toString(
+                    cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength());
+            String value = Bytes.toString(
+                    cell.getValueArray(), cell.getValueOffset(), cell.getValueLength());
+            if (qualifier != null) {
+                map.put(qualifier, value);
+            }
+            if (family != null && qualifier != null) {
+                map.put(family + ":" + qualifier, value);
+            }
+        }
+        return map;
+    }
 
-        String text = firstNonEmpty(
-                bytesToString(result.getValue(family, COL_DATA)),
-                bytesToString(result.getValue(family, COL_BASE64)),
-                bytesToString(result.getValue(CF_INFO, COL_DATA)),
-                bytesToString(result.getValue(CF_INFO, COL_BASE64))
-        );
-        if (text == null) {
-            // 扫描列族内所有列，找含 base64_data 的 JSON 或直接 data URI
-            for (Cell cell : result.listCells()) {
-                if (cell == null) {
-                    continue;
-                }
-                byte[] fam = CellUtil.cloneFamily(cell);
-                if (!Bytes.equals(fam, family) && !Bytes.equals(fam, CF_INFO)) {
-                    continue;
-                }
-                String cellText = bytesToString(CellUtil.cloneValue(cell));
-                if (cellText == null) {
-                    continue;
-                }
-                if (cellText.contains("base64_data") || cellText.startsWith("data:image")) {
-                    text = cellText;
-                    break;
+    private Map<String, Object> parseRowDataMap(Map<String, String> rowData) {
+        if (rowData == null || rowData.isEmpty()) {
+            return null;
+        }
+        String[] preferredKeys = new String[] {
+                "data", "base64_data", "base64", "content", "image", "value",
+                "info:data", "info:base64_data", "cf:data", "cf:base64_data"
+        };
+        for (String key : preferredKeys) {
+            Map<String, Object> parsed = decodeBase64Payload(rowData.get(key));
+            if (parsed != null) {
+                log.info("[HBase读图] 使用列 {} 解析成功", key);
+                return parsed;
+            }
+        }
+        for (Map.Entry<String, String> e : rowData.entrySet()) {
+            String text = e.getValue();
+            if (text == null || text.isEmpty()) {
+                continue;
+            }
+            if (text.contains("base64_data") || text.startsWith("data:image")
+                    || text.startsWith("{") || looksLikeBase64(text)) {
+                Map<String, Object> parsed = decodeBase64Payload(text);
+                if (parsed != null) {
+                    log.info("[HBase读图] 使用列 {} 扫描解析成功", e.getKey());
+                    return parsed;
                 }
             }
         }
-        if (text == null) {
-            return null;
-        }
-        return decodeBase64Payload(text);
+        return null;
     }
 
-    /** 兼容早期 cf:bytes / cf:mime */
-    private Map<String, Object> parseLegacyFormat(Result result) {
-        byte[] data = result.getValue(CF_LEGACY, COL_BYTES);
-        if (data == null || data.length == 0) {
+    private Map<String, Object> parseLegacyBinaryCells(Result result) {
+        if (result == null || result.listCells() == null) {
             return null;
         }
-        String mime = bytesToString(result.getValue(CF_LEGACY, COL_MIME));
-        if (mime == null || mime.trim().isEmpty()) {
-            mime = "application/octet-stream";
+        for (Cell cell : result.listCells()) {
+            if (cell == null) {
+                continue;
+            }
+            String qualifier = Bytes.toString(
+                    cell.getQualifierArray(), cell.getQualifierOffset(), cell.getQualifierLength());
+            if (qualifier == null) {
+                continue;
+            }
+            String q = qualifier.toLowerCase();
+            if (!"bytes".equals(q) && !"content".equals(q) && !"image".equals(q) && !"bin".equals(q)) {
+                continue;
+            }
+            byte[] raw = Bytes.copy(
+                    cell.getValueArray(), cell.getValueOffset(), cell.getValueLength());
+            if (raw == null || raw.length < 24 || !looksLikeImageMagic(raw)) {
+                continue;
+            }
+            String mime = "image/jpeg";
+            if (raw[0] == (byte) 0x89 && raw[1] == 0x50) {
+                mime = "image/png";
+            } else if (raw[0] == 0x47 && raw[1] == 0x49) {
+                mime = "image/gif";
+            } else if (raw.length > 12 && raw[0] == 0x52 && raw[8] == 0x57) {
+                mime = "image/webp";
+            }
+            Map<String, Object> out = new HashMap<String, Object>();
+            out.put("bytes", raw);
+            out.put("mimeType", mime);
+            return out;
         }
-        Map<String, Object> out = new HashMap<String, Object>();
-        out.put("bytes", data);
-        out.put("mimeType", mime.trim());
-        return out;
+        return null;
     }
 
-    /**
-     * 支持：
-     * 1) {"image_url":"...","base64_data":"data:image/jpeg;base64,xxxx"}
-     * 2) data:image/jpeg;base64,xxxx
-     * 3) 纯 base64
-     */
+    private static boolean looksLikeImageMagic(byte[] raw) {
+        if (raw == null || raw.length < 3) {
+            return false;
+        }
+        if ((raw[0] & 0xFF) == 0xFF && (raw[1] & 0xFF) == 0xD8) {
+            return true;
+        }
+        if ((raw[0] & 0xFF) == 0x89 && raw[1] == 0x50 && raw[2] == 0x4E) {
+            return true;
+        }
+        if (raw[0] == 0x47 && raw[1] == 0x49 && raw[2] == 0x46) {
+            return true;
+        }
+        return raw.length > 12 && raw[0] == 0x52 && raw[1] == 0x49 && raw[2] == 0x46 && raw[3] == 0x46
+                && raw[8] == 0x57 && raw[9] == 0x45 && raw[10] == 0x42 && raw[11] == 0x50;
+    }
+
+    private static boolean looksLikeBase64(String text) {
+        if (text == null || text.length() < 64) {
+            return false;
+        }
+        String t = text.trim();
+        if (t.startsWith("{") || t.startsWith("data:")) {
+            return false;
+        }
+        int n = Math.min(80, t.length());
+        for (int i = 0; i < n; i++) {
+            char c = t.charAt(i);
+            if (!(Character.isLetterOrDigit(c) || c == '+' || c == '/' || c == '=' || c == '\n' || c == '\r')) {
+                return false;
+            }
+        }
+        return true;
+    }
+
     private Map<String, Object> decodeBase64Payload(String text) {
         String raw = text == null ? "" : text.trim();
         if (raw.isEmpty()) {
@@ -208,19 +369,27 @@ public class HBaseImageClient {
         }
         String base64Part = raw;
         String mime = "image/jpeg";
-
         if (raw.startsWith("{")) {
             try {
                 JSONObject obj = JSON.parseObject(raw);
-                if (obj != null && obj.getString("base64_data") != null) {
-                    base64Part = obj.getString("base64_data").trim();
+                if (obj == null) {
+                    return null;
                 }
+                String candidate = firstNonBlank(
+                        obj.getString("base64_data"),
+                        obj.getString("base64Data"),
+                        obj.getString("base64"),
+                        obj.getString("data"),
+                        obj.getString("content")
+                );
+                if (candidate == null) {
+                    return null;
+                }
+                base64Part = candidate.trim();
             } catch (Exception e) {
-                log.warn("解析 HBase JSON 单元格失败: {}", e.getMessage());
                 return null;
             }
         }
-
         if (base64Part.startsWith("data:")) {
             int comma = base64Part.indexOf(',');
             if (comma > 5) {
@@ -234,8 +403,8 @@ public class HBaseImageClient {
                 base64Part = base64Part.substring(comma + 1);
             }
         }
-
         try {
+            base64Part = base64Part.replace("\r", "").replace("\n", "").replace(" ", "");
             byte[] bytes = Base64.getDecoder().decode(base64Part);
             if (bytes == null || bytes.length == 0) {
                 return null;
@@ -245,20 +414,11 @@ public class HBaseImageClient {
             out.put("mimeType", mime);
             return out;
         } catch (IllegalArgumentException e) {
-            log.warn("Base64 解码失败: {}", e.getMessage());
             return null;
         }
     }
 
-    private static String bytesToString(byte[] raw) {
-        if (raw == null || raw.length == 0) {
-            return null;
-        }
-        String text = new String(raw, StandardCharsets.UTF_8).trim();
-        return text.isEmpty() ? null : text;
-    }
-
-    private static String firstNonEmpty(String... vals) {
+    private static String firstNonBlank(String... vals) {
         if (vals == null) {
             return null;
         }
@@ -274,17 +434,37 @@ public class HBaseImageClient {
         if (connection != null && !connection.isClosed()) {
             return connection;
         }
-        synchronized (this) {
+        long waitMs = readTimeoutMs > 0 ? readTimeoutMs : 3000L;
+        boolean locked;
+        try {
+            locked = connectLock.tryLock(waitMs, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IOException("hbase_connect_interrupted", e);
+        }
+        if (!locked) {
+            throw new IOException("hbase_connect_busy_or_timeout");
+        }
+        try {
             if (connection != null && !connection.isClosed()) {
                 return connection;
             }
             Configuration conf = new Configuration();
             conf.set("hbase.zookeeper.quorum", zkQuorum);
             conf.set("hbase.zookeeper.property.clientPort", zkPort);
+            conf.setInt("hbase.client.retries.number", 1);
+            int to = (int) Math.min(waitMs, 3000L);
+            conf.setInt("hbase.rpc.timeout", to);
+            conf.setInt("hbase.client.operation.timeout", to);
+            conf.setInt("hbase.client.meta.operation.timeout", to);
+            conf.setInt("zookeeper.recovery.retry", 0);
+            conf.setInt("zookeeper.session.timeout", 3000);
             connection = ConnectionFactory.createConnection(conf);
-            log.info("HBase 连接已建立 quorum={} port={} table={} cf={}",
-                    zkQuorum, zkPort, imageTable, columnFamily);
+            log.info("[HBase读图] 连接已建立 quorum={} port={} table={} timeoutMs={}",
+                    zkQuorum, zkPort, imageTable, Long.valueOf(waitMs));
             return connection;
+        } finally {
+            connectLock.unlock();
         }
     }
 
@@ -297,11 +477,12 @@ public class HBaseImageClient {
 
     @PreDestroy
     public void destroy() {
+        ioPool.shutdownNow();
         if (connection != null) {
             try {
                 connection.close();
             } catch (IOException e) {
-                log.warn("关闭 HBase 连接失败: {}", e.getMessage());
+                log.warn("[HBase读图] 关闭连接失败: {}", e.getMessage());
             }
         }
     }

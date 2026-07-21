@@ -1,22 +1,22 @@
 ---
 name: image-asset-analysis
-description: "独立图片资产：发现头像/封面/发文配图→下载写入HBase→MySQL索引→OCR/Vision结果回填。不替代01-04主流程；第一期手动或单独调用。"
-version: 0.1.0
+description: "图片资产：发现头像/封面/发文配图→下载写HBase→MySQL索引→OCR/Vision回填。01采集在步骤6发文后、三节报告前必须执行；也可单独对某task重跑。"
+version: 0.2.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
 metadata:
   hermes:
     tags: [account-intelligence, image, asset]
-    related_skills: []
+    related_skills: [account-intelligence-collect]
 ---
 
 # 图片资产入库与分析
 
 **语言**：用户中文输入时，全程简体中文。
 
-本 Skill **独立于** `account-intelligence-collect` / expand / verify / report。  
-**第一期不要改 01～04 步骤树或完成条件**；仅在明确收到「对某 task 跑图片入库」指令时执行。
+**01 接入**：`account-intelligence-collect` 在步骤 6 发文结束后、步骤 7 三节报告前，必须执行本管线（见 collect Skill 步骤 6.5）。  
+本 Skill 仍可单独对某 `task_id` 重跑/补跑；**不要**改 01 步骤树完成条件；管线失败**禁止**把整任务标 `failed`。
 
 ## 目标
 
@@ -39,17 +39,17 @@ metadata:
 
 ## 执行步骤（硬顺序）
 
-1. 拿到 `task_id`（用户给出或当前会话活跃任务）。
-2. 运行管线（推荐先只入库）：
-
-```bash
-python -m image_pipeline.run --task-id <taskId> --skip-analyze
-```
-
-3. 若任务内已有 OCR/Vision 工具输出，再跑分析回填：
+1. 拿到 `task_id`（用户给出、Gateway `task:{uuid}`，或当前会话活跃任务）。
+2. **01 主路径 / 推荐一条命令**（入库 + 分析回填）：
 
 ```bash
 python -m image_pipeline.run --task-id <taskId> --force-analyze
+```
+
+3. 仅入库、暂不分析：
+
+```bash
+python -m image_pipeline.run --task-id <taskId> --skip-analyze
 ```
 
 4. 仅诊断发现、不下载：
@@ -61,10 +61,10 @@ python -m image_pipeline.run --task-id <taskId> --discover-only
 5. 下载失败重试：
 
 ```bash
-python -m image_pipeline.run --task-id <taskId> --retry-failed --skip-analyze
+python -m image_pipeline.run --task-id <taskId> --retry-failed --force-analyze
 ```
 
-6. 将命令 stdout 的 JSON 摘要原样返回给用户（字段见下）。
+6. 将命令 stdout 的 JSON 摘要原样返回（01 主流程最多 1 句进度，勿写成报告）。
 
 ## 返回摘要字段
 
@@ -83,17 +83,17 @@ python -m image_pipeline.run --task-id <taskId> --retry-failed --skip-analyze
 
 ## 铁律
 
-1. **禁止**修改 01～04 Skill 步骤、Hook 完成条件、步骤树状态机（除非用户明确要求接入）。
-2. **禁止**把图片管线失败升级为整任务 `failed`（第一期）。
-3. **禁止**在 Skill 或脚本里硬编码 HBase/MySQL 密码；只用 `.env`。
-4. 原图只通过 Java `GET /api/images/{imageId}/bytes` 给前端，禁止前端直连 HBase。
-5. 视频入库本期不做；发现阶段应跳过明显视频 URL。
+1. **禁止**把图片管线失败升级为整任务 `failed`。
+2. **禁止**在 Skill 或脚本里硬编码 HBase/MySQL 密码；只用 `.env`。
+3. 原图只通过 Java `GET /api/images/{imageId}/bytes` 给前端，禁止前端直连 HBase。
+4. 视频入库本期不做；发现阶段应跳过明显视频 URL。
+5. 01 步骤树**不新增**「图片入库」节点；6.5 由 Agent 用 terminal 执行本管线即可。
 
 ## 与现有 OCR/Vision 关系
 
-- 01～04 现有图片流可继续跑。
+- 01 步骤 4 图片流（头像 OCR/Vision）继续跑。
 - 本模块优先**回填** `hermes_tool_outputs` 中已有 OCR/Vision 结果到 `collect_images`。
-- 后续接入主流程时，再改为由本 Skill 主动调 OCR/Vision 并写库。
+- 无既有分析结果时标记 `analyze_status=skipped`，可用 `--force-analyze` 重试。
 
 ## 联调检查
 

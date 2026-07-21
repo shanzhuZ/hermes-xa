@@ -202,6 +202,11 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
                 message=f"{platform} 已纳入可信账号，但未采集到发文",
             )
             updated += 1
+    # 子节点收口后立刻关父节点，避免「子全终态、父仍 running」
+    if updated:
+        from report_04.step_reconcile import close_collect_parent_if_ready
+
+        close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     return updated
 
 
