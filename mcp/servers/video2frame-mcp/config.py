@@ -1,0 +1,99 @@
+"""视频 MCP 配置：路径、下载限制、VLM 默认值。"""
+
+from __future__ import annotations
+
+import os
+from pathlib import Path
+from typing import Any, Dict
+
+
+def _repo_root() -> Path:
+    # mcp/servers/video2frame-mcp/config.py → 仓库根
+    return Path(__file__).resolve().parent.parent.parent.parent
+
+
+def hermes_home() -> Path:
+    val = (os.environ.get("HERMES_HOME") or "").strip()
+    if val:
+        return Path(val).resolve()
+    return _repo_root()
+
+
+def load_dotenv_if_present() -> None:
+    env_path = hermes_home() / ".env"
+    if not env_path.is_file():
+        return
+    try:
+        from dotenv import load_dotenv
+
+        load_dotenv(env_path, override=False)
+    except ImportError:
+        for line in env_path.read_text(encoding="utf-8", errors="ignore").splitlines():
+            line = line.strip()
+            if not line or line.startswith("#") or "=" not in line:
+                continue
+            key, _, value = line.partition("=")
+            key = key.strip()
+            value = value.strip().strip('"').strip("'")
+            if key and key not in os.environ:
+                os.environ[key] = value
+
+
+def video_root_dir() -> Path:
+    load_dotenv_if_present()
+    raw = (os.environ.get("HERMES_VIDEO_LOCAL_DIR") or "").strip()
+    if raw:
+        return Path(raw).resolve()
+    return hermes_home() / "data" / "video_bytes"
+
+
+def download_config() -> Dict[str, Any]:
+    load_dotenv_if_present()
+    return {
+        "connect_timeout": float(os.environ.get("HERMES_VIDEO_CONNECT_TIMEOUT", "15")),
+        "read_timeout": float(os.environ.get("HERMES_VIDEO_READ_TIMEOUT", "300")),
+        "max_bytes": int(os.environ.get("HERMES_VIDEO_MAX_BYTES", str(200 * 1024 * 1024))),
+        "max_retries": int(os.environ.get("HERMES_VIDEO_MAX_RETRIES", "3")),
+        "user_agent": os.environ.get(
+            "HERMES_VIDEO_USER_AGENT",
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+        ),
+    }
+
+
+def vlm_config() -> Dict[str, Any]:
+    """默认走 Perplexity sonar（与 config.yaml auxiliary.vision 一致）；可用环境变量覆盖回本地 32B。"""
+    load_dotenv_if_present()
+    api_key = (
+        os.environ.get("HERMES_VIDEO_VLM_API_KEY")
+        or os.environ.get("PERPLEXITY_API_KEY")
+        or ""
+    ).strip()
+    return {
+        "api_url": os.environ.get(
+            "HERMES_VIDEO_VLM_API_URL",
+            "https://api.perplexity.ai/chat/completions",
+        ),
+        "model": os.environ.get("HERMES_VIDEO_VLM_MODEL", "sonar"),
+        "api_key": api_key,
+        "prompt": os.environ.get("HERMES_VIDEO_VLM_PROMPT", "请详细说明图片内容"),
+        "summary_prompt": os.environ.get(
+            "HERMES_VIDEO_VLM_SUMMARY_PROMPT",
+            "下面是同一视频按时间顺序的抽帧描述，请用中文总结整段视频内容、人物、场景与主题：",
+        ),
+        "max_tokens": int(os.environ.get("HERMES_VIDEO_VLM_MAX_TOKENS", "800")),
+        # pplx 有速率限制，默认略保守
+        "concurrency": int(os.environ.get("HERMES_VIDEO_VLM_CONCURRENCY", "3")),
+        "timeout": int(os.environ.get("HERMES_VIDEO_VLM_TIMEOUT", "120")),
+    }
+
+
+def default_frame_interval_sec() -> float:
+    load_dotenv_if_present()
+    return float(os.environ.get("HERMES_VIDEO_FRAME_INTERVAL_SEC", "3"))
+
+
+def suggested_max_videos_per_task() -> int:
+    """文档建议上限；第一期不做硬限制。"""
+    return 3
