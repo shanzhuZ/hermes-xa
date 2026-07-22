@@ -175,9 +175,13 @@ def _latest_apify_collect_outcome(task_id: str, platform: str) -> str:
 
 
 def _apify_actor_success(task_id: str, platform: str) -> bool:
+    return _apify_actor_success_count(task_id, platform) > 0
+
+
+def _apify_actor_success_count(task_id: str, platform: str) -> int:
     tool = _PLATFORM_BY_APIFY_ACTOR.get(platform)
     if not tool:
-        return False
+        return 0
     row = db.fetch_one(
         """
         SELECT COUNT(*) AS c FROM hermes_tool_outputs
@@ -185,7 +189,104 @@ def _apify_actor_success(task_id: str, platform: str) -> bool:
         """,
         (task_id, tool),
     )
+    return int((row or {}).get("c") or 0)
+
+
+def _post_round_dataset_success(task_id: str, platform: str) -> bool:
+    """发文轮 get_dataset_items 已成功（phase=step3_post_*），无论是否解析出帖子。"""
+    post_key = f"step3_post_{platform}"
+    row = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name='mcp_apify_get_dataset_items'
+          AND status='success' AND phase=%s
+        """,
+        (task_id, post_key),
+    )
     return int((row or {}).get("c") or 0) > 0
+
+
+def _platform_collect_never_started(task_id: str, platform: str) -> bool:
+    """主页+发文子步都仍是 pending：视为从未开跑（不阻塞其它平台 peer-skip）。"""
+    if not platform:
+        return True
+    prof = get_step_status(task_id, profile_platform_step_key(platform)) or "pending"
+    post = get_step_status(task_id, f"step3_post_{platform}") or "pending"
+    return prof == "pending" and post == "pending"
+
+
+def _all_other_started_platforms_terminal(task_id: str, platform: str) -> bool:
+    """其它「已开跑」平台是否均已终态。
+
+    关键：忽略双方都还 pending 的未开跑平台，否则会出现
+    youtube(pending) ↔ facebook(等待发文 running) 互相阻塞的死锁。
+    """
+    if not platform:
+        return False
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, PROFILE_PARENT_STEP_KEY),
+    )
+    by_plat: Dict[str, Dict[str, str]] = {}
+    for row in rows:
+        sk = str(row.get("step_key") or "")
+        p = _collect_platform_of_step(sk)
+        if not p or p == platform:
+            continue
+        bucket = by_plat.setdefault(p, {})
+        st = str(row.get("status") or "pending")
+        if sk.startswith("step3_profile_"):
+            bucket["profile"] = st
+        elif sk.startswith("step3_post_"):
+            bucket["post"] = st
+
+    saw_started = False
+    for p, stmap in by_plat.items():
+        prof = stmap.get("profile") or "pending"
+        post = stmap.get("post") or "pending"
+        if prof == "pending" and post == "pending":
+            continue
+        saw_started = True
+        if prof in {"pending", "running"} or post in {"pending", "running"}:
+            return False
+    return saw_started
+
+
+def _can_skip_empty_posts(
+    task_id: str,
+    platform: str,
+    *,
+    profiles_done: bool,
+    streams_done: bool,
+) -> bool:
+    """主页已完成、发文仍 0 条时，是否可在步骤2内 skip（禁止依赖父步骤已完成造成死锁）。
+
+    触发条件（满足其一即可）：
+    1. 发文轮 dataset 已成功（空结果当场收口）
+    2. 其它已开跑平台均已终态（未开跑 pending 不阻塞），且本平台已有采集尝试
+    3. 父步骤或风格阶段已完成（历史兜底）
+    """
+    if _post_round_dataset_success(task_id, platform):
+        return True
+    attempted = (
+        _dataset_success_for_platform(task_id, platform)
+        or _apify_actor_success_count(task_id, platform) >= 1
+        or _post_tool_success(task_id, platform)
+    )
+    # 优先用「已开跑平台」判定，避免未采集的 youtube pending 卡住 facebook 发文
+    if attempted and (
+        _all_other_started_platforms_terminal(task_id, platform)
+        or _all_other_platforms_terminal(task_id, platform)
+    ):
+        return True
+    if (profiles_done or streams_done) and (
+        _dataset_success_for_platform(task_id, platform) or _post_tool_success(task_id, platform)
+    ):
+        return True
+    return False
 
 
 def _dataset_success_for_platform(task_id: str, platform: str) -> bool:
@@ -596,20 +697,27 @@ def reconcile_step3_collect_child_steps(store: Any, task_id: str) -> int:
             )
             updated += 1
             continue
-        # dataset 成功但 0 条发文：须等父步骤/风格阶段再 skip，避免主页轮 dataset 误杀后续发文轮
+        # 主页已完成、发文 0 条：步骤2内 peer/发文轮收口（禁止等父步骤 completed 造成死锁）
         if (
             cnt == 0
             and cur in {"running", "pending"}
-            and _dataset_success_for_platform(task_id, platform)
-            and (profiles_done or streams_done)
+            and prof_status == "completed"
+            and _can_skip_empty_posts(
+                task_id,
+                platform,
+                profiles_done=profiles_done,
+                streams_done=streams_done,
+            )
         ):
             if cur != "skipped":
-                store.set_step_status(
-                    task_id,
-                    step_key,
-                    "skipped",
-                    message=f"{platform} 未采集到发文",
+                msg = (
+                    f"{platform} 未采集到发文"
+                    if _post_round_dataset_success(task_id, platform)
+                    or profiles_done
+                    or streams_done
+                    else f"{platform} 未采集到发文（其它平台已收口）"
                 )
+                store.set_step_status(task_id, step_key, "skipped", message=msg)
                 updated += 1
             continue
         if prof_status in {"failed", "skipped"}:

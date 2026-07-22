@@ -26,10 +26,12 @@ def run_image_pipeline_after_posts(
     *,
     force_analyze: bool = True,
     skip_if_stored: bool = False,
+    skip_analyze: bool = False,
 ) -> Optional[Dict[str, Any]]:
     """对任务跑图片发现/下载/入库/分析回填。
 
     失败只打日志并返回 None，不抛出（不得拖垮 01 主任务）。
+    skip_analyze=True：只发现+下载入库，不做 OCR/Vision 回填（03 步骤3后加速用）。
     """
     if not task_id:
         return None
@@ -42,6 +44,7 @@ def run_image_pipeline_after_posts(
         summary = process_task(
             task_id=task_id,
             force_analyze=force_analyze,
+            skip_analyze=skip_analyze,
         )
         logger.info(
             "图片资产管线完成 task=%s discovered=%s stored=%s analyzed=%s failed=%s",

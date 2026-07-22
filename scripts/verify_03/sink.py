@@ -215,12 +215,23 @@ def _maybe_advance_step45(store: TaskStore, task_id: str) -> None:
     if is_image_compare_ready(task_id) and get_step_status(task_id, "step4_image_compare") != "completed":
         msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
         store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+        _kickoff_images_after_step4(task_id, reason="step4_image_ready")
     if (
         get_step_status(task_id, "step4_text_compare") == "completed"
         and get_step_status(task_id, "step4_image_compare") == "completed"
         and get_step_status(task_id, "step5_validated") != "completed"
     ):
         store.run_validated_accounts(task_id)
+
+
+def _kickoff_images_after_step4(task_id: str, *, reason: str = "") -> None:
+    """步骤4 图片流完成后后台回填 collect_images 分析（不阻塞 Hook）。"""
+    try:
+        from verify_03.image_assets import kickoff_images_after_vision
+
+        kickoff_images_after_vision(task_id, reason=reason or "step4_image_compare_completed")
+    except Exception as exc:
+        logger.warning("步骤4后图片管线 kickoff 失败 task=%s: %s", task_id, exc)
 
 
 def _on_step4_tool_after(
@@ -256,6 +267,7 @@ def _on_step4_tool_after(
     if get_step_status(task_id, "step4_image_compare") != "completed":
         msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
         store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+        _kickoff_images_after_step4(task_id, reason="step4_vision_done")
     _maybe_advance_step45(store, task_id)
 
 
@@ -458,14 +470,30 @@ def _sync_platform_collect_steps(
     elif tool_name in POST_TOOLS and tool_ok:
         cur = get_step_status(task_id, post_key)
         if n_post == 0 and tool_name == "mcp_apify_get_dataset_items":
-            # 主页轮 dataset 常无 posts：一律勿 skip，留给后续发文轮或收口逻辑
+            # 本轮带了主页（n_prof>0）：主页轮，保持 running 等发文轮；
+            # 主页早已完成且本轮无主页无发文：发文轮空结果 → 当场 skip
             if cur not in {"completed", "skipped", "failed"}:
-                store.set_step_status(
-                    task_id,
-                    post_key,
-                    "running",
-                    message=f"{platform} 等待发文采集…",
-                )
+                if n_prof > 0:
+                    store.set_step_status(
+                        task_id,
+                        post_key,
+                        "running",
+                        message=f"{platform} 等待发文采集…",
+                    )
+                elif get_step_status(task_id, prof_key) in {"completed", "skipped"}:
+                    store.set_step_status(
+                        task_id,
+                        post_key,
+                        "skipped",
+                        message=f"{platform} 未采集到发文",
+                    )
+                else:
+                    store.set_step_status(
+                        task_id,
+                        post_key,
+                        "running",
+                        message=f"{platform} 等待发文采集…",
+                    )
         elif cur == "pending":
             store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
     elif tool_name in POST_TOOLS and not tool_ok:

@@ -1,13 +1,13 @@
 # 03 账号核查 — 唯一参考（Skill 只加载本文件）
-version: "1.17.0"
+version: "1.18.1"
 
 identity: 用户指定的多个 @种子账号 作为目标；禁止把 Maigret/简介里其他 handle 当种子。
 
 forbidden_always:
   tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
-  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 图片资产管线系统未部署, 跳过步骤 3.5, 跳过3.5, 无Gateway, Gateway task_id, image_pipeline未部署, 任务不存在, verify-]
+  output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 图片资产管线系统未部署, 跳过步骤 3.5, 跳过3.5, 无Gateway, Gateway task_id, image_pipeline未部署, 任务不存在, verify-, image_pipeline, force-analyze]
 
-# 硬顺序：3_contents 后进 4/5；图片由 Hook 自动入库（3.5 不对用户可见）
+# 硬顺序：3_contents 后直接 4/5；图片仅 Hook 入库，Agent 不跑 3.5
 mandatory_auto_steps: [2_profiles, 3_contents, 4_analysis_content, 5_streams, 6_validated, 7_output]
 
 steps:
@@ -40,6 +40,7 @@ steps:
       - github → mcp_apify_knotless_cadence__github_profile_scraper
         input: { usernames: ["{u}"], maxRepos: 5 }
       Apify：三轮拿 profile；本步以主页为主，dataset 若夹带 posts 可入库但不替代步骤三发文义务。
+      硬约束：每次 Actor 成功后必须对本 run 调 get_dataset_items；发文轮禁止 limit=1（只会拿到 profile）。
       失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
     forbid: [maigret, get_user_tweets, get_user_feeds, analyze_channel_videos, youtube search, vision, ocr, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
 
@@ -53,17 +54,15 @@ steps:
       - bilibili → 平台发文/视频 MCP（若有）
       【Apify】同步骤二 Actor，三轮 resultsLimit 按平台；已有 dataset 可复用，不足则再拉一轮
       失败/空数据→跳过该账号，禁止 web_search，禁止重试超过 1 次
-      全部发文采集结束后进入步骤4/5；图片由 Hook 自动入库，禁止在对用户可见内容写「跳过3.5」
-    forbid: [maigret, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, youtube search, vision, ocr, 任何报告文字]
+      全部发文采集结束后直接进入步骤4/5；图片由 Hook 自动入库
+      禁止 terminal / image_pipeline；禁止对用户提及 3.5 / task_id / 跳过图片
+    forbid: [maigret, web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, youtube search, vision, ocr, 任何报告文字, terminal跑image_pipeline, 提及3.5]
 
   "3_5_image_assets":
     require_before: [3_contents]
     do: |
-      图片资产由系统 Hook 自动入库（步骤树无独立节点）。Agent 侧：
-      1) 有 Gateway task:{uuid} 时可可选 terminal 补跑 image_pipeline；无 uuid 则静默继续
-      2) 禁止编造假 id；禁止 search_files 探测部署
-      3) 对用户可见的 stream/终稿中禁止出现：步骤3.5、跳过3.5、Gateway、task_id、图片管线
-    forbid: [写最终报告, web_search, web_extract, browser_*, clarify, search_files, 对用户提及3.5, 编造task_id, verify-]
+      【系统步骤，非 Agent】图片由 verify_03 Hook 自动入库；Agent 禁止执行本步、禁止 terminal、禁止任何提及。
+    forbid: [写最终报告, web_search, web_extract, browser_*, clarify, search_files, terminal, image_pipeline, 对用户提及3.5]
 
   "4_analysis_content":
     require_before: [3_contents]
@@ -99,6 +98,8 @@ steps:
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
+  # get_dataset_items：发文轮禁止 limit=1（只会拿到 profile，发文永远 0）；主页确认后须再拉足够条数
+  dataset_items: { forbid_limit_1_for_posts: true, recommend_limit: ">=20" }
   instagram: { tool: mcp_apify_apify__instagram_scraper, input: { directUrls: ["https://www.instagram.com/{u}/"], resultsLimit: 5 } }
   tiktok: { tool: mcp_apify_clockworks__tiktok_scraper, input: { profiles: ["https://www.tiktok.com/@{u}"], resultsPerPage: 5 } }
   telegram: { tool: mcp_apify_vujeen__telegram_channel_scraper, input: { channels: ["{ch}"], maxPostsPerChannel: 3 } }

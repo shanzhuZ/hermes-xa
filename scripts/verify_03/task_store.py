@@ -349,9 +349,12 @@ class TaskStore:
             reconcile_step3_collect_child_steps,
         )
 
-        # 其它平台已终态时，跳过从未开跑 MCP/Apify 的 pending（含 YouTube 被 web 绕行）
-        auto_skip_unattempted_collect_children(self, task_id, aggressive=False)
-        reconcile_step3_collect_child_steps(self, task_id)
+        # 两轮：先收口「等待发文」空结果，再 peer-skip 未开跑平台，避免互相死锁
+        updated = 0
+        for _ in range(2):
+            updated += int(auto_skip_unattempted_collect_children(self, task_id, aggressive=False) or 0)
+            updated += int(reconcile_step3_collect_child_steps(self, task_id) or 0)
+
         rows = db.fetch_all(
             """
             SELECT step_key, status FROM collect_phase_steps
@@ -360,12 +363,11 @@ class TaskStore:
             (task_id, PROFILE_PARENT_STEP_KEY),
         )
         if not rows:
-            return 0
-        updated = 0
+            return updated
         for row in rows:
             st = str(row.get("status") or "pending")
             if st in {"pending", "running"}:
-                return 0
+                return updated
         if _step_status(task_id, "step3_profiles") != "completed":
             self.set_step_status(
                 task_id,
@@ -373,7 +375,7 @@ class TaskStore:
                 "completed",
                 message="各平台主页与发文采集已尝试完毕",
             )
-            updated = 1
+            updated += 1
             # 步骤二刚收口：仅后台 kickoff，禁止同步等待（否则 post_tool Hook 120s 超时）
             try:
                 from verify_03.image_assets import kickoff_images_background
@@ -1041,8 +1043,29 @@ class TaskStore:
         return True
 
     def close_analysis_after_report(self, task_id: str) -> None:
-        """终稿已出时收口 step3_streams / step4 / step5，并把任务标 completed。"""
+        """终稿已出时收口步骤2采集子树 + step3_streams / step4 / step5，并把任务标 completed。"""
         from verify_03.gates import count_image_streams, is_image_compare_ready
+        from verify_03.step_reconcile import (
+            auto_skip_unattempted_collect_children,
+            force_close_open_collect_children,
+            reconcile_step3_collect_child_steps,
+        )
+
+        # 终稿已出：步骤2必须终态（禁止任务 completed 但 2.x.1 仍 running）
+        try:
+            reconcile_step3_collect_child_steps(self, task_id)
+            auto_skip_unattempted_collect_children(self, task_id, aggressive=True)
+            force_close_open_collect_children(self, task_id)
+            self.reconcile_profile_platform_steps(task_id)
+            if _step_status(task_id, "step3_profiles") in {"pending", "running"}:
+                self.set_step_status(
+                    task_id,
+                    "step3_profiles",
+                    "completed",
+                    message="终稿已出，主页与发文采集收口",
+                )
+        except Exception as exc:
+            logger.warning("终稿收口步骤2失败 task=%s: %s", task_id, exc)
 
         if _step_status(task_id, "step3_profiles") in {"completed", "skipped"}:
             if _step_status(task_id, "step3_streams") in {"pending", "running"}:
@@ -1076,6 +1099,12 @@ class TaskStore:
                 n_img = count_image_streams(task_id)
                 msg = "无头像图片流，跳过图片比对" if n_img == 0 else "终稿已出，图片比对收口"
                 self.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+                try:
+                    from verify_03.image_assets import kickoff_images_after_vision
+
+                    kickoff_images_after_vision(task_id, reason="close_analysis_step4")
+                except Exception as exc:
+                    logger.warning("终稿收口后图片分析 kickoff 失败 task=%s: %s", task_id, exc)
 
             if (
                 _step_status(task_id, "step4_text_compare") == "completed"
@@ -1112,6 +1141,15 @@ class TaskStore:
                 WHERE task_id=%s AND status IN ('pending', 'running')
                 """,
                 (PHASE_DONE, task_id),
+            )
+            # 步骤2事后收口可能把 current_phase 改回 cross_platform，校正为 done
+            db.execute(
+                """
+                UPDATE hermes_tasks
+                SET current_phase=%s, updated_at=NOW(3)
+                WHERE task_id=%s AND status='completed' AND IFNULL(current_phase,'')<>%s
+                """,
+                (PHASE_DONE, task_id, PHASE_DONE),
             )
 
     def finalize_task(self, task_id: str) -> None:

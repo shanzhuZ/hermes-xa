@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-verification
-description: "账号核查，支持多平台多个种子账号，主页+发文→3.5图片入库→文字流与图片流比对，输出三节核验报告。"
-version: 1.21.0
+description: "账号核查，支持多平台多个种子账号，主页+发文→双流比对，输出三节核验报告（图片由系统自动入库）。"
+version: 1.22.1
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -24,12 +24,9 @@ metadata:
 
 **步骤3**：对所有账号采集对应平台的发文信息（**仅**使用 MCP 或 Apify）。必须采集执行北京时间当前向前31天内的全部发文内容。失败直接跳过，**禁止**换用 web/浏览器。每个账号必须返回输出呈现结果。
 
-**步骤3.5（图片入库，系统自动，Agent 勿对外提及）**：
-- 图片资产由 **Hook 在发文收口 / 写终稿前自动入库**，Agent **不必**、也 **不要** 为查不到 task_id 而在 stream/终稿里写「跳过 3.5」。
-- 若对话上下文里已有 Gateway `task:{uuid}`，可用 `terminal` 在 `scripts/` 下补跑一次（可选）：
-  `python -m image_pipeline.run --task-id <taskId> --force-analyze`
-- **禁止编造**假 task_id；**查不到 uuid 时静默继续步骤4**，一句都不要提 3.5 / Gateway / 图片管线。
-- 终稿必须以 `一、账号基础信息` 开头，禁止管线元叙述。
+**步骤3 结束后**：发文采集完成后**直接进入步骤4**。图片资产入库由**系统 Hook 自动完成**（步骤树无 3.5 节点）。
+- **禁止**用 `terminal` 跑 `image_pipeline` / 任何图片入库命令。
+- **禁止**在 stream、思考过程、终稿里提及：步骤3.5、跳过3.5、task_id、Gateway、图片管线、image_pipeline。
 
 **步骤4**：结合每个账号的发文内容，分析归纳出盖章好的发文风格 及 涉及领域。并配有相应发文作为作证。每个账号必须返回输出呈现结果。
 
@@ -92,8 +89,7 @@ metadata:
 **步骤1**：接收用户输入的多平台多个种子账号（平台+用户名）。
 支持平台：twitter/weibo/youtube/bilibili（MCP）与 instagram/tiktok/telegram/facebook/github（Apify）。
 **步骤2**：对多个种子账号采集主页信息（有 MCP 用 MCP；无 MCP 必须 Apify 三轮：Actor → get_actor_run → get_dataset_items）。
-**步骤3**：对多个种子账号采集对应平台近一个月发文（MCP 或 Apify 三轮）。
-**步骤3.5**：图片由 Hook 自动入库；Agent 对用户可见内容中禁止提及 3.5 / 跳过 / task_id。
+**步骤3**：对多个种子账号采集对应平台近一个月发文（MCP 或 Apify 三轮）。发文结束后直接步骤4；图片由 Hook 自动入库。
 **步骤4**：归纳发文风格与领域。
 **步骤5**：同步执行文字流分析（账户名/简介/发文风格相似度）和图片流分析（OCR头像 + 多模态vision图片内容）。
 **步骤6**：结合文字流与图片流分析的所有候选账号匹配结果并说明原因。
@@ -104,5 +100,6 @@ metadata:
 - ❌ 额外工具调用超出硬顺序步骤。
 - ❌ 在步骤 1-6 中输出报告格式「一、」「二、」「三、」。
 - ❌ 任何收尾引导语、扩展建议或无关内容。
-- ❌ 步骤 3.5 / 跳过 3.5 / 图片管线 / image_pipeline / task_id / Gateway / force-analyze /「任务不存在」写进 stream、对用户可见回复或三节终稿。
+- ❌ 用 terminal / image_pipeline / collect_images 做图片入库（系统 Hook 负责）。
+- ❌ 步骤 3.5 / 跳过 3.5 / 图片管线 / image_pipeline / task_id / Gateway / force-analyze /「任务不存在」写进 stream、思考或三节终稿。
 - ❌ 编造 `verify-xxx` 等假 task_id。
