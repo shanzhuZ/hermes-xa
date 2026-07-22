@@ -992,6 +992,31 @@ class TaskStore:
         if not text or not task_id or text == "(empty)":
             return False
         if is_three_section_report(text):
+            from verify_03.gates import is_vision_gate_ready
+
+            vision_gate = is_vision_gate_ready(task_id)
+            if not vision_gate.get("ok"):
+                # 不落 summary、不收口任务：逼模型先调 vision_analyze
+                logger.warning(
+                    "终稿被 Vision 门禁拦截 task=%s: %s",
+                    task_id,
+                    vision_gate.get("message"),
+                )
+                clipped_reply = text[:65535]
+                dup = db.fetch_one(
+                    """
+                    SELECT id FROM hermes_user_dialogues
+                    WHERE task_id=%s AND role='assistant' AND msg_type=%s AND content=%s
+                    LIMIT 1
+                    """,
+                    (task_id, "assistant_reply", clipped_reply),
+                )
+                if not dup:
+                    self.save_dialogue(
+                        task_id, session_id, "assistant", text, "assistant_reply"
+                    )
+                return False
+
             body = extract_three_section_body(text) or text
             clipped = body[:65535]
             # 闸门：终稿入库前必须先尝试图片资产（禁止报告后再补跑）
@@ -1044,7 +1069,11 @@ class TaskStore:
 
     def close_analysis_after_report(self, task_id: str) -> None:
         """终稿已出时收口步骤2采集子树 + step3_streams / step4 / step5，并把任务标 completed。"""
-        from verify_03.gates import count_image_streams, is_image_compare_ready
+        from verify_03.gates import (
+            count_image_streams,
+            is_image_compare_ready,
+            is_vision_gate_ready,
+        )
         from verify_03.step_reconcile import (
             auto_skip_unattempted_collect_children,
             force_close_open_collect_children,
@@ -1090,21 +1119,41 @@ class TaskStore:
                         message="终稿已出，文本比对收口",
                     )
 
+            vision_ok = bool(is_vision_gate_ready(task_id).get("ok"))
             if _step_status(task_id, "step4_image_compare") in {"pending", "running"}:
-                if not is_image_compare_ready(task_id) and hasattr(self, "mark_remaining_image_streams_failed"):
-                    try:
-                        self.mark_remaining_image_streams_failed(task_id, "终稿已出：未完成 vision 兜底")
-                    except Exception as exc:
-                        logger.warning("终稿收口图片流兜底失败 task=%s: %s", task_id, exc)
                 n_img = count_image_streams(task_id)
-                msg = "无头像图片流，跳过图片比对" if n_img == 0 else "终稿已出，图片比对收口"
-                self.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
-                try:
-                    from verify_03.image_assets import kickoff_images_after_vision
+                if n_img == 0:
+                    self.set_step_status(
+                        task_id,
+                        "step4_image_compare",
+                        "completed",
+                        message="无头像图片流，跳过图片比对",
+                    )
+                elif vision_ok or is_image_compare_ready(task_id):
+                    # 仅当已真实做过 Vision（或流已非 pending）才收口；禁止「未调 vision 假 fail」
+                    if vision_ok:
+                        self.set_step_status(
+                            task_id,
+                            "step4_image_compare",
+                            "completed",
+                            message="图片流 Vision 完成",
+                        )
+                        try:
+                            from verify_03.image_assets import kickoff_images_after_vision
 
-                    kickoff_images_after_vision(task_id, reason="close_analysis_step4")
-                except Exception as exc:
-                    logger.warning("终稿收口后图片分析 kickoff 失败 task=%s: %s", task_id, exc)
+                            kickoff_images_after_vision(task_id, reason="close_analysis_step4")
+                        except Exception as exc:
+                            logger.warning("终稿收口后图片分析 kickoff 失败 task=%s: %s", task_id, exc)
+                    else:
+                        logger.warning(
+                            "终稿收口暂缓图片流：Vision 门禁未过 task=%s",
+                            task_id,
+                        )
+                else:
+                    logger.warning(
+                        "终稿收口暂缓图片流：仍有未 Vision 的头像 task=%s",
+                        task_id,
+                    )
 
             if (
                 _step_status(task_id, "step4_text_compare") == "completed"
@@ -1123,15 +1172,24 @@ class TaskStore:
                         message="终稿已出，核验收口",
                     )
 
-        # 仍有未终态分析节点则强制收口
+        # 仍有未终态分析节点则强制收口（图片流除外：无 Vision 不得假完成）
         for step_key, message in (
             ("step3_streams", "终稿已出，风格归纳收口"),
             ("step4_text_compare", "终稿已出，文本比对收口"),
-            ("step4_image_compare", "终稿已出，图片比对收口"),
             ("step5_validated", "终稿已出，核验收口"),
         ):
             if _step_status(task_id, step_key) in {"pending", "running"}:
                 self.set_step_status(task_id, step_key, "completed", message=message)
+        if (
+            _step_status(task_id, "step4_image_compare") in {"pending", "running"}
+            and is_vision_gate_ready(task_id).get("ok")
+        ):
+            self.set_step_status(
+                task_id,
+                "step4_image_compare",
+                "completed",
+                message="终稿已出，图片比对收口",
+            )
 
         if _step_status(task_id, "step5_validated") == "completed":
             db.execute(

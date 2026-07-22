@@ -1,5 +1,5 @@
 # 03 账号核查 — 唯一参考（Skill 只加载本文件）
-version: "1.18.1"
+version: "1.19.0"
 
 identity: 用户指定的多个 @种子账号 作为目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -77,10 +77,12 @@ steps:
     do: |
       结合对步骤2采集账号主页信息 与 步骤4账号发言观点与发言风格，同时展开一下分析：
         - 文本流：昵称/handle/简介/互链/邮箱/码值/电话 → 使用账号主页信息做多组合对比
-        - 图片流：有 avatar_url → 各 1 次 mcp_ocr_perform_ocr(language=chi_sim) + vision_analyze
+        - 图片流（硬约束）：有 avatar_url / 头像 → 每个账号各 1 次 mcp_ocr_perform_ocr(language=chi_sim|eng)
+          + 各 1 次 vision_analyze/mcp_vision_analyze（传入头像 URL）
           （language 只能 chi_sim 或 eng；禁止 eng+chi_sim）
-        - 可优先结合 collect_images / GET /api/tasks/{taskId}/images 已入库结果
-    forbid: [发文工具, 写最终报告]
+        - collect_images 只表示已存图，不能代替 OCR/Vision；禁止用常识编造 3.2
+        - 全部头像 Vision 完成前禁止输出三节终稿（系统会拒收未完成 Vision 的 summary）
+    forbid: [发文工具, 写最终报告, 跳过vision, 用常识写图片流, 以已入库跳过vision]
 
   "6_validated":
     require_before: [3_contents]
@@ -94,7 +96,8 @@ steps:
     sections: [一、账号基础信息, 二、各个平台账号发言及发言观点, 三、账号核验结果及依据]
     section2: [3.1文本流表, 3.2图片流表, 3.3高匹配度的同一人账号, 3.4低匹配度的账号]
     section3: 每平台一块，MCP/Apify 原文逐条，禁止主题归纳
-    forbid_in_body: [步骤 3.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---]
+    require_before_tools: [vision_analyze或mcp_vision_analyze覆盖全部头像图片流]
+    forbid_in_body: [步骤 3.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---, 未调用vision却写3.2]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

@@ -840,19 +840,23 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
 
     s4img = get_step_status(task_id, "step4_image_compare")
     if s4img in {"pending", "running"}:
-        if is_image_compare_ready(task_id):
-            n_img = count_image_streams(task_id)
-            msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流比对完成"
-            store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
-        elif hasattr(store, "mark_remaining_image_streams_failed"):
-            n_skip = store.mark_remaining_image_streams_failed(task_id, "会话结束兜底：未完成 vision")
-            if n_skip or count_image_streams(task_id) == 0:
-                msg = (
-                    "无头像图片流，跳过图片比对"
-                    if count_image_streams(task_id) == 0
-                    else f"图片流比对结束（兜底跳过 {n_skip} 条）"
-                )
-                store.set_step_status(task_id, "step4_image_compare", "completed", message=msg)
+        from verify_03.gates import count_vision_tool_calls, is_vision_gate_ready
+
+        n_img = count_image_streams(task_id)
+        if n_img == 0:
+            store.set_step_status(task_id, "step4_image_compare", "completed", message="无头像图片流，跳过图片比对")
+        elif is_vision_gate_ready(task_id).get("ok"):
+            store.set_step_status(task_id, "step4_image_compare", "completed", message="图片流比对完成")
+        elif is_image_compare_ready(task_id) and count_vision_tool_calls(task_id) > 0:
+            # 已调过 Vision（含失败），允许按流状态收口
+            store.set_step_status(task_id, "step4_image_compare", "completed", message="图片流比对完成")
+        else:
+            # 禁止会话结束把未调用的 Vision 标成假 fail，否则模型可跳过图片流
+            logger.warning(
+                "会话结束暂缓图片流收口：尚未调用 vision task=%s streams=%s",
+                task_id,
+                n_img,
+            )
 
     if (
         get_step_status(task_id, "step4_text_compare") == "completed"

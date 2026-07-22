@@ -59,6 +59,86 @@ def is_image_compare_ready(task_id: str) -> bool:
     return count_image_streams_processed(task_id) >= n_img
 
 
+def count_vision_tool_calls(task_id: str) -> int:
+    """成功或失败的 vision 工具调用次数（只要发起过就算尝试）。"""
+    row = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM hermes_tool_outputs
+        WHERE task_id=%s
+          AND tool_name IN ('vision_analyze', 'mcp_vision_analyze')
+          AND status IN ('success', 'error')
+        """,
+        (task_id,),
+    )
+    return int((row or {}).get("c") or 0)
+
+
+def count_image_streams_vision_done(task_id: str) -> int:
+    """真正做过 Vision 收口的图片流（排除终稿兜底假 fail）。"""
+    row = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM collect_identity_streams
+        WHERE task_id=%s AND stream_type='image'
+          AND (
+            validation_status='pass'
+            OR (
+              validation_status='fail'
+              AND IFNULL(validation_detail,'') NOT LIKE %s
+              AND IFNULL(validation_detail,'') NOT LIKE %s
+            )
+          )
+        """,
+        (task_id, "%终稿%", "%未完成 vision 兜底%"),
+    )
+    return int((row or {}).get("c") or 0)
+
+
+def is_vision_gate_ready(task_id: str) -> Dict[str, Any]:
+    """终稿门禁：有头像图片流时，必须已发起 Vision（禁止常识编造 3.2）。
+
+    通过条件（满足其一）：
+    - 无 image 流 → 放行
+    - vision 工具调用次数 >= 图片流数（已真实调过，即使 URL 回写偶发未匹配）
+    - 或：无 pending，且已 Vision 收口的流数 >= 图片流数
+    """
+    n_img = count_image_streams(task_id)
+    if n_img <= 0:
+        return {"ok": True, "message": "无图片流，跳过 Vision 门禁", "n_img": 0}
+
+    row_pending = db.fetch_one(
+        """
+        SELECT COUNT(*) AS c FROM collect_identity_streams
+        WHERE task_id=%s AND stream_type='image' AND validation_status='pending'
+        """,
+        (task_id,),
+    )
+    n_pending = int((row_pending or {}).get("c") or 0)
+    n_vision_tools = count_vision_tool_calls(task_id)
+    n_done = count_image_streams_vision_done(task_id)
+
+    if n_vision_tools >= n_img or (n_pending == 0 and n_done >= n_img):
+        return {
+            "ok": True,
+            "message": "Vision 门禁通过",
+            "n_img": n_img,
+            "n_pending": n_pending,
+            "n_vision_tools": n_vision_tools,
+            "n_done": n_done,
+        }
+    return {
+        "ok": False,
+        "message": (
+            f"Vision 未完成：图片流={n_img} pending={n_pending} "
+            f"vision工具={n_vision_tools} 已收口={n_done}；"
+            f"须对每个头像调用 vision_analyze 后再输出三节终稿"
+        ),
+        "n_img": n_img,
+        "n_pending": n_pending,
+        "n_vision_tools": n_vision_tools,
+        "n_done": n_done,
+    }
+
+
 def can_advance_to_step4(task_id: str) -> Dict[str, Any]:
     """文本/图片流分析前：步骤1完成且步骤3（主页+发文）完成。"""
     s1 = get_step_status(task_id, "step1_input_accounts")
