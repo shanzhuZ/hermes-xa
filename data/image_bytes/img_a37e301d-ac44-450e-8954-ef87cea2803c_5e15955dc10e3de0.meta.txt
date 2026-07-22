@@ -1,4 +1,0 @@
-mime=image/jpeg
-url=https://scontent-iad3-1.xx.fbcdn.net/v/t39.30808-1/484083741_1235637024593894_3405130113333440975_n.jpg?stp=dst-jpg_tt6&cstp=mx1773x1773&ctp=s720x720&_nc_cat=1&ccb=1-7&_nc_sid=3ab345&_nc_ohc=9QhhtfBoOUAQ7kNvwEULwk7&_nc_oc=Adpz4cJbli6ftCxsgN0fu8JVTDNDq66CF8VTkWOAgWnr2EEMueL8aeoXZz0SsfVhqc8&_nc_zt=24&_nc_ht=scontent-iad3-1.xx&_nc_gid=689A_Dpfr63ibWDDCKVO0Q&_nc_ss=7b289&oh=00_AQDyYiNp6oZ5Kt1dopLN7M1Kx6Ce9TunKN46XsitHf1lyw&oe=6A65F44A
-sha256=5e15955dc10e3de06ffa56b2f327c0dfdf2a2c2757bf42cf842ff175a8ff725d
-file_size=25833

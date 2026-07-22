@@ -1,4 +1,0 @@
-mime=image/jpeg
-url=https://wx3.sinaimg.cn/orj480/008BwBorly4hjq564k2k9j303o03oa9w.jpg
-sha256=60a5ed3f796faaa31774280538a857bc0a46421a72f6f8149321776a164598a4
-file_size=3387

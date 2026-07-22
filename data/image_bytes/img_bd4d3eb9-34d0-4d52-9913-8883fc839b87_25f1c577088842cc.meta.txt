@@ -1,4 +1,0 @@
-mime=image/jpeg
-url=https://pbs.twimg.com/profile_images/2004333954157989888/FRDtrJk8.jpg
-sha256=25f1c577088842cc6a7c6908433b03ba49ddb5bf950e1a1f31b45562d0916ccd
-file_size=24875

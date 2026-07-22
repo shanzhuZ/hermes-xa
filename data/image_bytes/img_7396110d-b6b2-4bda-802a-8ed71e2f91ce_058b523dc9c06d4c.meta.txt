@@ -1,4 +1,0 @@
-mime=image/jpeg
-url=https://pbs.twimg.com/profile_images/1879013694367252480/Gxa-Pspq.jpg
-sha256=058b523dc9c06d4c34ec7278dce98495ad8164d2ce1b8fc5e60dfc48f74ab2cd
-file_size=18136
