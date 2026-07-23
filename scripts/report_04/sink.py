@@ -1028,15 +1028,22 @@ def _looks_like_report_meta_closing(text: str) -> bool:
 
 
 def _resolve_final_report_text(assistant: str, session_id: Optional[str]) -> Optional[str]:
-    """当前轮是终稿则用当前轮；否则从 state.db 回扫真终稿（避免短收尾覆盖）。"""
+    """当前轮是终稿则用当前轮；否则从 state.db 回扫真终稿（避免短收尾覆盖）。
+
+    返回已剥掉前缀元叙述的正文，便于落 summary / 回填。
+    """
+    from report_04.report_parser import extract_report_body
+
     text = (assistant or "").strip()
     if is_final_report(text):
-        return text
+        return extract_report_body(text)
     from_state = _load_assistant_output_from_state(session_id or "")
     if from_state and is_final_report(from_state):
-        return from_state
+        return extract_report_body(from_state)
     if text and not _looks_like_report_meta_closing(text):
         return None
+    if from_state and is_final_report(from_state):
+        return extract_report_body(from_state)
     return from_state
 
 
@@ -1047,20 +1054,24 @@ def _complete_step11_from_report(
     session_id: Optional[str],
 ) -> None:
     """先轻量落 summary / 收口 8～11，再可选 backfill 与 reconcile（防 Hook 120s 超时半截）。"""
+    from report_04.report_parser import extract_report_body
+
     if get_step_status(task_id, "step11_report") == "completed":
         return
     if not is_final_report(assistant):
         return
+    # 落库用剥前缀后的正文，避免 summary 带「跳过7.5」脏前缀
+    report_body = extract_report_body(assistant)
 
     # —— 轻量路径：立刻终态，避免超时停在 running ——
-    backfill = backfill_analysis_from_report(assistant)
+    backfill = backfill_analysis_from_report(report_body)
     try:
-        if can_advance_to_analysis(task_id).get("ok"):
-            for step_key, content in backfill.items():
-                if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
-                    store.save_analysis_display(
-                        task_id, step_key, content, source="backfill_from_step11"
-                    )
+        # 终稿已出时直接回填；此时 step7 可能尚未收口，不能再用 can_advance 挡住
+        for step_key, content in backfill.items():
+            if get_step_status(task_id, step_key) not in {"completed", "skipped"}:
+                store.save_analysis_display(
+                    task_id, step_key, content, source="backfill_from_step11"
+                )
     except Exception as exc:
         logger.warning("终稿轻量 backfill 失败 task=%s: %s", task_id, exc)
     for step_key in ANALYSIS_STEP_KEYS:
@@ -1068,12 +1079,17 @@ def _complete_step11_from_report(
         if st not in {"completed", "skipped"}:
             # pending/running 一律 skip，禁止停在 running
             store.set_step_status(task_id, step_key, "skipped", message="终稿已出，未单独输出")
-    store.save_assistant_output(task_id, session_id, assistant)
+    # 子步若先前已终态，上面会跳过 set_step_status，父壳 phase_analysis 可能仍 pending；强制 rollup
+    try:
+        store._maybe_complete_phase_shell(task_id, "step10_context_pii")
+    except Exception as exc:
+        logger.warning("终稿后 phase_analysis 收口失败 task=%s: %s", task_id, exc)
+    store.save_assistant_output(task_id, session_id, report_body)
     store.set_step_status(task_id, "step11_report", "completed", message="画像报告已生成")
     from report_04.phases import PHASE_DONE
 
     store.set_task_phase(task_id, PHASE_DONE)
-    logger.info("终稿轻量收口完成 task=%s summary_len=%d", task_id, len(assistant or ""))
+    logger.info("终稿轻量收口完成 task=%s summary_len=%d", task_id, len(report_body or ""))
 
     # —— 重路径：步骤4/7 收口（失败不影响已落的 summary）——
     # 终稿已出却留下 step7 子节点 pending → 父节点永久 running；必须先批量 skip 再关父节点
@@ -1101,6 +1117,11 @@ def _complete_step11_from_report(
         _try_finalize_report(store, task_id, light_only=True)
     except Exception as exc:
         logger.warning("终稿后任务 completed 标记失败 task=%s: %s", task_id, exc)
+    # advance_to_analysis 可能把 current_phase 改回 analysis；终稿后强制 done
+    try:
+        store.set_task_phase(task_id, PHASE_DONE)
+    except Exception:
+        pass
 
 
 def _infer_platform(

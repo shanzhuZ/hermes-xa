@@ -76,7 +76,10 @@ public class HermesGatewayClient {
     }
 
     /**
-     * 在已有 session 上发起一轮采集（异步读 SSE，不阻塞 HTTP 接口返回）。
+     * 在已有 session 上发起一轮采集（异步读 SSE，不阻塞调用方）。
+     * <p>
+     * 建连与读流均在后台线程；禁止在 report-plan 调度线程上同步等 Gateway，
+     * 否则会拖死后续写报任务的规划收口。
      *
      * @param sessionId   Hermes 会话，多轮复用
      * @param taskId      本次采集业务 ID，调用前须已预插 hermes_tasks
@@ -90,21 +93,24 @@ public class HermesGatewayClient {
         started.put("sessionId", sessionId);
         thoughtStreamHub.publish(taskId, "run.started", started);
 
-        final HttpURLConnection conn = openStreamChat(sessionId, taskId, userMessage);
-        int code = conn.getResponseCode();
-        if (code < 200 || code >= 300) {
-            String err = readAll(conn.getErrorStream());
-            Map<String, Object> failed = new LinkedHashMap<String, Object>();
-            failed.put("content", err);
-            failed.put("success", Boolean.FALSE);
-            thoughtStreamHub.publish(taskId, "run.failed", failed);
-            thoughtStreamHub.complete(taskId);
-            throw new RuntimeException("chat/stream 失败, httpCode=" + code + " " + err);
-        }
         executor.submit(new Runnable() {
             @Override
             public void run() {
+                HttpURLConnection conn = null;
                 try {
+                    conn = openStreamChat(sessionId, taskId, userMessage);
+                    int code = conn.getResponseCode();
+                    if (code < 200 || code >= 300) {
+                        String err = readAll(conn.getErrorStream());
+                        Map<String, Object> failed = new LinkedHashMap<String, Object>();
+                        failed.put("content", err);
+                        failed.put("success", Boolean.FALSE);
+                        thoughtStreamHub.publish(taskId, "run.failed", failed);
+                        thoughtStreamHub.complete(taskId);
+                        collectTaskMapper.markTaskFailed(
+                                taskId, truncateErr("chat/stream 失败, httpCode=" + code + " " + err));
+                        return;
+                    }
                     drainStream(conn, taskId);
                 } catch (Exception e) {
                     log.error("消费 Gateway SSE 失败 taskId={}", taskId, e);
@@ -118,6 +124,13 @@ public class HermesGatewayClient {
                         // ignore
                     }
                     collectTaskMapper.markTaskFailed(taskId, truncateErr(e.getMessage()));
+                    if (conn != null) {
+                        try {
+                            conn.disconnect();
+                        } catch (Exception ignore) {
+                            // ignore
+                        }
+                    }
                 }
             }
         });

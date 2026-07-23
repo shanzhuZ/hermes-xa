@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.mapper.CollectTaskMapper;
 import com.example.aw.collect.registry.TaskTypeRegistry;
 import com.example.aw.collect.stream.ThoughtStreamHub;
 import com.example.aw.gateway.HermesGatewayClient;
@@ -24,12 +25,19 @@ public class CollectSubmitService {
 
     private static final Logger log = LoggerFactory.getLogger(CollectSubmitService.class);
 
-    /** 写报：规划推完后异步等 SSE 再启 Agent，避免堵在 HTTP 响应前 */
-    private final ScheduledExecutorService reportStartScheduler = Executors.newSingleThreadScheduledExecutor(
+    /**
+     * 写报：规划慢推 + 启 Agent。必须用缓存线程池，禁止单线程：
+     * 否则 SSE 推送或 Gateway 建连阻塞时，后续任务会永久卡在 step_plan=思考中。
+     */
+    private final ScheduledExecutorService reportStartScheduler = Executors.newScheduledThreadPool(
+            4,
             new java.util.concurrent.ThreadFactory() {
+                private final java.util.concurrent.atomic.AtomicInteger seq =
+                        new java.util.concurrent.atomic.AtomicInteger(1);
+
                 @Override
                 public Thread newThread(Runnable r) {
-                    Thread t = new Thread(r, "report-plan-then-agent");
+                    Thread t = new Thread(r, "report-plan-then-agent-" + seq.getAndIncrement());
                     t.setDaemon(true);
                     return t;
                 }
@@ -49,6 +57,9 @@ public class CollectSubmitService {
 
     @Autowired
     private ThoughtStreamHub thoughtStreamHub;
+
+    @Autowired
+    private CollectTaskMapper collectTaskMapper;
 
     public Map<String, Object> submitCollect(String sessionId, String taskId, String message, String taskType)
             throws Exception {
@@ -110,10 +121,21 @@ public class CollectSubmitService {
                 public void run() {
                     try {
                         thoughtStreamHub.awaitSubscriber(tid, 2500L);
+                    } catch (Exception e) {
+                        log.warn("04 等待 SSE 订阅者异常（继续规划） taskId={}: {}", tid, e.getMessage());
+                    }
+                    try {
                         reportPlanBootstrap.finishPlanStreamPaced(tid);
+                    } catch (Exception e) {
+                        log.error("04 规划慢推失败，强制收口 step_plan taskId={}", tid, e);
+                        forceCompleteStepPlan(tid);
+                    }
+                    // 兜底：禁止 step_plan 永久停在 running（思考中）
+                    forceCompleteStepPlanIfStillRunning(tid);
+                    try {
                         hermesGatewayClient.submitCollectAsync(sid, tid, msg);
                     } catch (Exception e) {
-                        log.error("04 规划慢推或启动 Agent 失败 taskId={}", tid, e);
+                        log.error("04 启动 Agent 失败 taskId={}", tid, e);
                     }
                 }
             }, 200L, TimeUnit.MILLISECONDS);
@@ -121,6 +143,33 @@ public class CollectSubmitService {
             hermesGatewayClient.submitCollectAsync(sessionId, taskId, gatewayMessage);
         }
         return buildAcceptedBody(sessionId, taskId, typeDef, newConversation);
+    }
+
+    /** 规划异常时至少让第 0 步离开 running，避免前端永久卡住。 */
+    private void forceCompleteStepPlan(String taskId) {
+        try {
+            collectTaskMapper.updateStepStatus(
+                    taskId,
+                    ReportTaskCreateService.STEP_PLAN,
+                    "completed",
+                    "已规划好节点：1.锁定目标；2.线索发现；3.账号采集；4.关联碰撞；"
+                            + "5.内容采集；6.深度研判；7.报告生成");
+        } catch (Exception e) {
+            log.warn("强制收口 step_plan 失败 taskId={}: {}", taskId, e.getMessage());
+        }
+    }
+
+    private void forceCompleteStepPlanIfStillRunning(String taskId) {
+        try {
+            String st = collectTaskMapper.selectStepStatus(taskId, ReportTaskCreateService.STEP_PLAN);
+            if (st != null && "running".equals(st)) {
+                log.warn("step_plan 仍 running，强制 completed taskId={}", taskId);
+                forceCompleteStepPlan(taskId);
+            }
+        } catch (Exception e) {
+            log.warn("检查 step_plan 状态失败 taskId={}: {}", taskId, e.getMessage());
+            forceCompleteStepPlan(taskId);
+        }
     }
 
     private Map<String, Object> buildAcceptedBody(

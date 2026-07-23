@@ -42,7 +42,27 @@ _DIRTY_META_PATTERNS = (
     re.compile(r"\btask_id\b|任务\s*ID\s*[：:]", re.I),
     re.compile(r"collect_images|skip_if_stored|HERMES_REPORT_", re.I),
     re.compile(r"shell\s+hook|Hook\s*超时|120s", re.I),
+    re.compile(r"管线未找到|即席执行|非\s*Gateway\s*会话", re.I),
 )
+
+
+def extract_report_body(content: str) -> str:
+    """剥掉终稿前的进度/管线元叙述，从「一、账号基本信息」起截取。
+
+    Agent 常在终稿前写「跳过步骤7.5…」导致整段被脏数据门禁拒绝、步骤8～10永久 running。
+    """
+    raw = (content or "").strip()
+    if not raw:
+        return ""
+    markers = ("## 一、账号基本信息", "# 一、账号基本信息", "一、账号基本信息")
+    best = -1
+    for m in markers:
+        i = raw.find(m)
+        if i >= 0 and (best < 0 or i < best):
+            best = i
+    if best < 0:
+        return raw
+    return raw[best:].strip()
 
 
 def is_progress_only(text: str) -> bool:
@@ -79,22 +99,25 @@ def starts_with_report_section1(content: str) -> bool:
         return False
     if t.startswith("##"):
         t = t[2:].lstrip()
+    elif t.startswith("#"):
+        t = t[1:].lstrip()
     return t.startswith(_SECTION1_HEAD)
 
 
 def is_final_report(content: str) -> bool:
-    """合法步骤11终稿：够长、含≥2个章节、以第一节开头、无管线脏数据。
+    """合法步骤11终稿：够长、含≥2个章节、以第一节开头、正文无管线脏数据。
 
+    允许 Agent 在第一节前写进度句；判定时先剥前缀再门禁。
     注意：步骤8/9/10 的独立块走 parse_standalone_analysis_blocks，不经过本函数。
     """
-    raw = (content or "").strip()
-    if len(raw) < 200:
+    body = extract_report_body(content)
+    if len(body) < 200:
         return False
-    if not starts_with_report_section1(raw):
+    if not starts_with_report_section1(body):
         return False
-    if has_report_dirty_meta(raw):
+    if has_report_dirty_meta(body):
         return False
-    text = raw.replace(" ", "").replace("\u3000", "")
+    text = body.replace(" ", "").replace("\u3000", "")
     return sum(1 for m in _FINAL_MARKERS if m in text) >= 2
 
 
@@ -130,17 +153,18 @@ def backfill_analysis_from_report(text: str) -> Dict[str, str]:
     仅对 is_final_report 通过的干净终稿切片；脏数据/非第一节开头的正文不回填，
     避免污染 display。步骤8/9/10 若已由 standalone 块写入则不受影响。
     """
-    if not is_final_report(text):
+    body = extract_report_body(text)
+    if not is_final_report(body):
         return {}
     s8_parts: List[str] = []
-    s1 = _extract_section(text, "一、账号基本信息", ("二、", "## 二"))
+    s1 = _extract_section(body, "一、账号基本信息", ("二、", "## 二"))
     if s1:
         s8_parts.append(s1)
-    s2 = _extract_section(text, "二、账号全网关联账号", ("三、", "## 三"))
+    s2 = _extract_section(body, "二、账号全网关联账号", ("三、", "## 三"))
     if "2.3" in s2 or "图片流" in s2:
         s8_parts.append(s2)
-    s9 = _extract_section(text, "三、账号网络活动情况", ("四、", "## 四"))
-    s10 = _extract_section(text, "四、核查思路", ())
+    s9 = _extract_section(body, "三、账号网络活动情况", ("四、", "## 四"))
+    s10 = _extract_section(body, "四、核查思路", ())
     if not s10 and s9:
         s10 = s9
     out: Dict[str, str] = {}

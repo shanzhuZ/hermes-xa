@@ -16,6 +16,8 @@ import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.CopyOnWriteArrayList;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicInteger;
 import java.util.function.Consumer;
 
@@ -35,6 +37,22 @@ public class ThoughtStreamHub {
     /** 前端长连接超时（毫秒） */
     public static final long DEFAULT_TIMEOUT_MS = 2L * 60L * 60L * 1000L;
 
+    /**
+     * SSE 实推线程池：publish 只写缓冲后立刻返回，避免 SseEmitter.send 堵住业务线程
+     * （曾导致写报 step_plan 永久停在「思考中」）。
+     */
+    private final ExecutorService pushExecutor = Executors.newCachedThreadPool(
+            new java.util.concurrent.ThreadFactory() {
+                private final AtomicInteger seq = new AtomicInteger(1);
+
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "thought-sse-push-" + seq.getAndIncrement());
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
+
     private final ConcurrentHashMap<String, TaskChannel> channels = new ConcurrentHashMap<String, TaskChannel>();
 
     @Autowired
@@ -53,7 +71,13 @@ public class ThoughtStreamHub {
         if (taskId == null || taskId.trim().isEmpty()) {
             return;
         }
-        channels.computeIfAbsent(taskId, TaskChannel::new);
+        final ExecutorService push = pushExecutor;
+        channels.computeIfAbsent(taskId, new java.util.function.Function<String, TaskChannel>() {
+            @Override
+            public TaskChannel apply(String id) {
+                return new TaskChannel(id, push);
+            }
+        });
     }
 
     /**
@@ -63,7 +87,13 @@ public class ThoughtStreamHub {
         if (taskId == null || taskId.trim().isEmpty()) {
             return;
         }
-        TaskChannel channel = channels.computeIfAbsent(taskId, TaskChannel::new);
+        final ExecutorService push = pushExecutor;
+        TaskChannel channel = channels.computeIfAbsent(taskId, new java.util.function.Function<String, TaskChannel>() {
+            @Override
+            public TaskChannel apply(String id) {
+                return new TaskChannel(id, push);
+            }
+        });
         channel.publish(eventType, payload);
     }
 
@@ -119,7 +149,13 @@ public class ThoughtStreamHub {
     }
 
     public SseEmitter subscribe(String taskId, long timeoutMs) {
-        final TaskChannel channel = channels.computeIfAbsent(taskId, TaskChannel::new);
+        final ExecutorService push = pushExecutor;
+        final TaskChannel channel = channels.computeIfAbsent(taskId, new java.util.function.Function<String, TaskChannel>() {
+            @Override
+            public TaskChannel apply(String id) {
+                return new TaskChannel(id, push);
+            }
+        });
         final SseEmitter emitter = new SseEmitter(timeoutMs);
         channel.attach(emitter);
         emitter.onCompletion(new Runnable() {
@@ -210,10 +246,12 @@ public class ThoughtStreamHub {
         private final AtomicInteger seq = new AtomicInteger(0);
         private final List<Map<String, Object>> buffer = new ArrayList<Map<String, Object>>();
         private final CopyOnWriteArrayList<SseEmitter> subscribers = new CopyOnWriteArrayList<SseEmitter>();
+        private final ExecutorService pushExecutor;
         private volatile boolean completed;
 
-        private TaskChannel(String taskId) {
+        private TaskChannel(String taskId, ExecutorService pushExecutor) {
             this.taskId = taskId;
+            this.pushExecutor = pushExecutor;
         }
 
         private void attach(SseEmitter emitter) {
@@ -267,11 +305,21 @@ public class ThoughtStreamHub {
                 }
             }
 
-            for (SseEmitter emitter : subscribers) {
-                if (!safeSend(emitter, event)) {
-                    subscribers.remove(emitter);
-                }
+            // 快照后异步推：调用方（规划线程/Gateway 转发）不被慢客户端拖死
+            final List<SseEmitter> snapshot = new ArrayList<SseEmitter>(subscribers);
+            if (snapshot.isEmpty()) {
+                return;
             }
+            pushExecutor.execute(new Runnable() {
+                @Override
+                public void run() {
+                    for (SseEmitter emitter : snapshot) {
+                        if (!safeSend(emitter, event)) {
+                            subscribers.remove(emitter);
+                        }
+                    }
+                }
+            });
         }
 
         private void complete() {

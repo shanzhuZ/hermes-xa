@@ -1,4 +1,7 @@
-﻿"""04 账号画像写报 — 八大阶段壳 + 业务子步定义。"""
+﻿"""04 账号画像写报 — 七大阶段壳 + 业务子步定义。
+
+图片资产管线仍在步骤7发文收口后后台跑（见 orchestrator/image_assets），不进步骤树。
+"""
 
 from __future__ import annotations
 
@@ -21,14 +24,12 @@ TASK_TYPE = "account_report"
 SKILL_NAME = "account-intelligence-report"
 
 STEP_PLAN_KEY = "step_plan"
-STEP_ASSETS_KEY = "step_assets"
 
 PHASE_LOCK_TARGET = "phase_lock_target"
 PHASE_DISCOVERY_SHELL = "phase_discovery"
 PHASE_ACCOUNT_COLLECT = "phase_account_collect"
 PHASE_COLLISION = "phase_collision"
 PHASE_CONTENT = "phase_content"
-PHASE_ASSETS_SHELL = "phase_assets"
 PHASE_ANALYSIS_SHELL = "phase_analysis"
 PHASE_REPORT_SHELL = "phase_report"
 
@@ -95,21 +96,20 @@ def seed_agent_title(platform: Optional[str]) -> str:
 
 
 def phase_shell_steps() -> Tuple[StepDef, ...]:
-    """L1 八大阶段壳（展示父节点）。"""
+    """L1 七大阶段壳（展示父节点；图片资产管线不进树）。"""
     return (
         StepDef(PHASE_LOCK_TARGET, "1. 锁定目标", 100, "1", None, PHASE_SEED),
         StepDef(PHASE_DISCOVERY_SHELL, "2. 线索发现", 200, "2", None, PHASE_DISCOVERY),
         StepDef(PHASE_ACCOUNT_COLLECT, "3. 账号采集", 300, "3", None, PHASE_PROFILES),
         StepDef(PHASE_COLLISION, "4. 关联碰撞", 400, "4", None, PHASE_STREAM_VALIDATE),
         StepDef(PHASE_CONTENT, "5. 内容采集", 500, "5", None, PHASE_POSTS),
-        StepDef(PHASE_ASSETS_SHELL, "6. 资产沉淀", 600, "6", None, PHASE_ANALYSIS),
-        StepDef(PHASE_ANALYSIS_SHELL, "7. 深度研判", 700, "7", None, PHASE_ANALYSIS),
-        StepDef(PHASE_REPORT_SHELL, "8. 报告生成", 800, "8", None, PHASE_REPORT),
+        StepDef(PHASE_ANALYSIS_SHELL, "6. 深度研判", 600, "6", None, PHASE_ANALYSIS),
+        StepDef(PHASE_REPORT_SHELL, "7. 报告生成", 700, "7", None, PHASE_REPORT),
     )
 
 
 def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
-    """业务执行步（挂在八大壳下；step_key 不变）。"""
+    """业务执行步（挂在七大壳下；step_key 不变）。"""
     return (
         StepDef("step1_seed", seed_agent_title(platform), 110, "1.1", PHASE_LOCK_TARGET, PHASE_SEED),
         StepDef("step2_maigret", "Maigret Agent 跨平台收集", 210, "2.1", PHASE_DISCOVERY_SHELL, PHASE_DISCOVERY),
@@ -125,16 +125,15 @@ def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDe
         StepDef("step5_streams", "信息核验流 Agent 核查", 410, "4.1", PHASE_COLLISION, PHASE_STREAM_VALIDATE),
         StepDef("step6_validated", "相似账号认定 Agent", 420, "4.2", PHASE_COLLISION, PHASE_VALIDATED),
         StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
-        StepDef(STEP_ASSETS_KEY, "图片资产入库与回填", 610, "6.1", PHASE_ASSETS_SHELL, PHASE_ANALYSIS),
-        StepDef("step8_img_analysis", "图片流 Agent 分析", 710, "7.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
-        StepDef("step9_context_views", "观点与涉华分析 Agent", 720, "7.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
-        StepDef("step10_context_pii", "PII 与圈层分析 Agent", 730, "7.3", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
-        StepDef("step11_report", "画像报告 Agent", 810, "8.1", PHASE_REPORT_SHELL, PHASE_REPORT),
+        StepDef("step8_img_analysis", "图片流 Agent 分析", 610, "6.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step9_context_views", "观点与涉华分析 Agent", 620, "6.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step10_context_pii", "PII 与圈层分析 Agent", 630, "6.3", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step11_report", "画像报告 Agent", 710, "7.1", PHASE_REPORT_SHELL, PHASE_REPORT),
     )
 
 
 def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
-    """完整预插树：规划 + 八壳 + 业务子步（平台动态子节点另追加）。"""
+    """完整预插树：规划 + 七壳 + 业务子步（平台动态子节点另追加）。"""
     plan = StepDef(STEP_PLAN_KEY, "制定执行计划", 5, "0", None, None)
     return (plan,) + phase_shell_steps() + execution_steps_for_platform(platform)
 
@@ -342,7 +341,7 @@ def tool_collect_step_key(tool_name: str, platform: Optional[str]) -> str:
 
 
 def root_step_keys() -> List[str]:
-    return [s.step_key for s in execution_steps_for_platform("twitter") if s.step_key != STEP_ASSETS_KEY]
+    return [s.step_key for s in execution_steps_for_platform("twitter")]
 
 
 def initial_steps(platform: Optional[str] = None) -> List[StepDef]:
@@ -351,6 +350,31 @@ def initial_steps(platform: Optional[str] = None) -> List[StepDef]:
 
 def tool_step_key(tool_name: str) -> str:
     return TOOL_PRIMARY_STEP.get(tool_name, "step4_profiles")
+
+
+PHASE_SHELL_KEYS = frozenset(s.step_key for s in phase_shell_steps())
+
+# 业务直接子步 → L1 七大壳（深叶 3.1.x / 5.1.x 不映射到壳，由 3.1/5.1 收口后再滚壳）
+EXECUTION_PARENT_SHELL: Dict[str, str] = {
+    s.step_key: str(s.parent_step_key)
+    for s in execution_steps_for_platform("twitter")
+    if s.parent_step_key
+}
+
+
+def is_phase_shell(step_key: Optional[str]) -> bool:
+    return bool(step_key) and str(step_key) in PHASE_SHELL_KEYS
+
+
+def phase_shell_of_execution_step(step_key: Optional[str]) -> Optional[str]:
+    """若 step_key 是挂在七大壳下的直接业务步，返回壳 key。"""
+    if not step_key:
+        return None
+    return EXECUTION_PARENT_SHELL.get(str(step_key))
+
+
+def direct_execution_children(phase_key: str) -> List[str]:
+    return [k for k, p in EXECUTION_PARENT_SHELL.items() if p == phase_key]
 
 
 def step_phase(step_key: str) -> Optional[str]:

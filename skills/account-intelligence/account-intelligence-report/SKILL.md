@@ -91,6 +91,7 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 5. 步骤树**不新增**节点；系统 Hook 会在 7→8 / finalize 漏跑时兜底，但 **Agent 仍须主动执行本命令**。
 
 **禁止在报告正文写**：步骤 7.5、图片管线、未部署、task_id、Hook 等元叙述。
+**禁止**因终端报错/找不到会话就自编「管线未找到 / 即席执行 / 跳过步骤 7.5」写进 stream 或终稿前缀；图片入库由系统 Hook 兜底。
 
 ## 步骤 2 Maigret（必须用 collect_accounts）
 

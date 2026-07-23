@@ -58,7 +58,7 @@ _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
     "step11_report": frozenset(),
 }
 
-# 仅业务执行 key（不含 step_plan / 八大阶段壳）；壳长期 pending 不可参与门禁推断
+# 仅业务执行 key（不含 step_plan / 七大阶段壳）；壳长期 pending 不可参与门禁推断
 _ROOT_ORDER = tuple(root_step_keys())
 
 

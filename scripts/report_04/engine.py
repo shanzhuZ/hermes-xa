@@ -92,27 +92,33 @@ def build_agent_context(task_id: str) -> Optional[str]:
         )
 
     elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
+        lines.append(
+            f"当前 task_id={task_id}。图片资产由系统 Hook 兜底；"
+            "禁止在终稿前缀/正文写「跳过步骤7.5 / 管线未找到 / 即席执行」等元叙述。"
+        )
         try:
             from report_04.image_assets import has_stored_images
 
             if not has_stored_images(task_id):
                 lines.append(
-                    "【步骤7.5 图片资产】尚无 stored 图片。若步骤7已收口，请先执行："
-                    "python -m image_pipeline.run --task-id <taskId> --force-analyze ；"
-                    "失败只记摘要，勿把任务判失败；然后继续步骤8/9/10。"
+                    "若需补跑图片入库（勿写入报告正文）："
+                    f"python -m image_pipeline.run --task-id {task_id} --force-analyze ；"
+                    "失败只记日志，勿判失败，继续步骤8/9/10。"
                 )
             else:
                 lines.append(
                     "图片资产已入库，步骤8可优先结合 collect_images / "
-                    "GET /api/tasks/{taskId}/images 写分析，勿重复全量空跑 vision。"
+                    f"GET /api/tasks/{task_id}/images 写分析，勿重复全量空跑 vision。"
                 )
         except Exception:
             lines.append(
-                "步骤8前建议确认已跑图片管线："
-                "python -m image_pipeline.run --task-id <taskId> --force-analyze"
+                "步骤8前可确认图片管线："
+                f"python -m image_pipeline.run --task-id {task_id} --force-analyze"
             )
         if gate == "step11_report":
-            lines.append("步骤11：输出符合结构的终稿即可，勿再采集。")
+            lines.append(
+                "步骤11：终稿必须以「一、账号基本信息」开头，勿在第一节前写进度/管线句。"
+            )
         elif gate in ANALYSIS_STEP_KEYS:
             lines.append("步骤8/9/10：同一次响应内并行输出三步分析正文。")
 

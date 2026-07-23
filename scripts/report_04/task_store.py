@@ -14,6 +14,7 @@ from urllib.parse import urlparse
 
 from collect_01 import db
 from report_04.phases import (
+    ANALYSIS_STEP_KEYS,
     PHASE_ANALYSIS,
     PHASE_DISCOVERY,
     PHASE_DONE,
@@ -27,7 +28,10 @@ from report_04.phases import (
     PROFILE_PARENT_STEP_KEY,
     TASK_TYPE,
     PLATFORM_LABELS,
+    direct_execution_children,
     initial_steps,
+    is_phase_shell,
+    phase_shell_of_execution_step,
     post_platform_step_key,
     profile_platform_step_key,
     post_step_node,
@@ -743,7 +747,16 @@ class TaskStore:
         progress_pct: Optional[int] = None,
         touch_updated_at: bool = True,
         force_reopen: bool = False,
+        skip_phase_rollup: bool = False,
     ) -> None:
+        # 软顺序：业务子步变 running 前，先点亮所属七大壳
+        if (
+            not skip_phase_rollup
+            and status == "running"
+            and not is_phase_shell(step_key)
+        ):
+            self._ensure_phase_shell_running(task_id, step_key)
+
         self.ensure_step_row(task_id, step_key)
         current = db.fetch_one(
             "SELECT status, finished_at, payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
@@ -818,6 +831,52 @@ class TaskStore:
         # 仅 running/completed 推进 current_phase；pending 回滚不改 phase（避免步骤7误抢 phase=posts）
         if phase and status in {"running", "completed"}:
             self.set_task_phase(task_id, phase)
+
+        # 业务直接子步终态后：若同壳下直接子步均终态，则父壳 completed
+        if (
+            not skip_phase_rollup
+            and status in {"completed", "skipped", "failed"}
+            and not is_phase_shell(step_key)
+        ):
+            self._maybe_complete_phase_shell(task_id, step_key)
+
+    def _ensure_phase_shell_running(self, task_id: str, execution_step_key: str) -> None:
+        shell = phase_shell_of_execution_step(execution_step_key)
+        if not shell:
+            return
+        cur = get_step_status(task_id, shell)
+        if cur == "running":
+            return
+        # pending / completed（补采重开）/ 空 → running；展示上先有壳再有子步
+        self.set_step_status(
+            task_id,
+            shell,
+            "running",
+            message="子步骤执行中",
+            skip_phase_rollup=True,
+        )
+
+    def _maybe_complete_phase_shell(self, task_id: str, execution_step_key: str) -> None:
+        shell = phase_shell_of_execution_step(execution_step_key)
+        if not shell:
+            return
+        children = direct_execution_children(shell)
+        if not children:
+            return
+        for child in children:
+            st = get_step_status(task_id, child)
+            if st not in {"completed", "skipped", "failed"}:
+                return
+        cur = get_step_status(task_id, shell)
+        if cur == "completed":
+            return
+        self.set_step_status(
+            task_id,
+            shell,
+            "completed",
+            message="阶段内业务步骤已全部终态",
+            skip_phase_rollup=True,
+        )
 
     def ensure_step_row(self, task_id: str, step_key: str) -> None:
         """旧任务可能缺少 step4_profiles 等新步骤行。"""
@@ -1600,6 +1659,14 @@ class TaskStore:
             "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
             (task_id,),
         )
+        # 分析步已点亮却仍 running：禁止整任务 completed（否则步骤6永久卡住）
+        analysis_running = False
+        for ak in ANALYSIS_STEP_KEYS:
+            if _step_status(task_id, ak) == "running":
+                analysis_running = True
+                break
+        if not analysis_running and _step_status(task_id, "step11_report") == "running":
+            analysis_running = True
         # 终稿已落库则任务可 completed（避免 step11 完成却 ready_done=false 永久 running）
         if step11 in {"completed", "skipped"} and has_dialogue_summary:
             ready_done = True
@@ -1607,6 +1674,12 @@ class TaskStore:
             # 禁止：已有部分发文就标任务 completed，却留下 step7_posts=running
             ready_done = step2_ok and step5_ok and step7_ok and (
                 poc > 0 or post_children_ok or not post_children
+            )
+        if analysis_running:
+            ready_done = False
+            logger.info(
+                "finalize 暂缓 completed：分析/报告步仍 running task=%s",
+                task_id,
             )
         db.execute(
             """

@@ -12,19 +12,18 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 04 账号画像写报 — 预建任务：step_plan + 八大阶段壳 + 业务子步。
+ * 04 账号画像写报 — 预建任务：step_plan + 七大阶段壳 + 业务子步。
+ * 图片资产管线不进树（发文收口后后台跑）。
  */
 @Service
 public class ReportTaskCreateService implements TaskCreateService {
 
     public static final String STEP_PLAN = "step_plan";
-    public static final String STEP_ASSETS = "step_assets";
     public static final String PHASE_LOCK_TARGET = "phase_lock_target";
     public static final String PHASE_DISCOVERY = "phase_discovery";
     public static final String PHASE_ACCOUNT_COLLECT = "phase_account_collect";
     public static final String PHASE_COLLISION = "phase_collision";
     public static final String PHASE_CONTENT = "phase_content";
-    public static final String PHASE_ASSETS = "phase_assets";
     public static final String PHASE_ANALYSIS = "phase_analysis";
     public static final String PHASE_REPORT = "phase_report";
 
@@ -138,7 +137,7 @@ public class ReportTaskCreateService implements TaskCreateService {
     }
 
     /**
-     * 插树：step_plan + 八大阶段壳 + 业务子步，全部 pending。
+     * 插树：step_plan + 七大阶段壳 + 业务子步，全部 pending。
      * 规划收口与启动 Agent 由 {@link ReportPlanBootstrap} / CollectSubmitService 负责。
      */
     private void insertReportSteps(String taskId, String seedPlatform) {
@@ -149,9 +148,8 @@ public class ReportTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, null, 300, "3", "3. 账号采集");
         collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, null, 400, "4", "4. 关联碰撞");
         collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, null, 500, "5", "5. 内容采集");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ASSETS, null, 600, "6", "6. 资产沉淀");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, null, 700, "7", "7. 深度研判");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, null, 800, "8", "8. 报告生成");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, null, 600, "6", "6. 深度研判");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, null, 700, "7", "7. 报告生成");
 
         collectTaskMapper.insertPhaseStep(
                 taskId, "step1_seed", PHASE_LOCK_TARGET, 110, "1.1", seedAgentTitle(seedPlatform));
@@ -168,15 +166,13 @@ public class ReportTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertPhaseStep(
                 taskId, "step7_posts", PHASE_CONTENT, 510, "5.1", "跨平台发文采集 Agent");
         collectTaskMapper.insertPhaseStep(
-                taskId, STEP_ASSETS, PHASE_ASSETS, 610, "6.1", "图片资产入库与回填");
+                taskId, "step8_img_analysis", PHASE_ANALYSIS, 610, "6.1", "图片流 Agent 分析");
         collectTaskMapper.insertPhaseStep(
-                taskId, "step8_img_analysis", PHASE_ANALYSIS, 710, "7.1", "图片流 Agent 分析");
+                taskId, "step9_context_views", PHASE_ANALYSIS, 620, "6.2", "观点与涉华分析 Agent");
         collectTaskMapper.insertPhaseStep(
-                taskId, "step9_context_views", PHASE_ANALYSIS, 720, "7.2", "观点与涉华分析 Agent");
+                taskId, "step10_context_pii", PHASE_ANALYSIS, 630, "6.3", "PII 与圈层分析 Agent");
         collectTaskMapper.insertPhaseStep(
-                taskId, "step10_context_pii", PHASE_ANALYSIS, 730, "7.3", "PII 与圈层分析 Agent");
-        collectTaskMapper.insertPhaseStep(
-                taskId, "step11_report", PHASE_REPORT, 810, "8.1", "画像报告 Agent");
+                taskId, "step11_report", PHASE_REPORT, 710, "7.1", "画像报告 Agent");
     }
 
     private String seedAgentTitle(String platform) {
