@@ -33,6 +33,8 @@ vmr --version/
 # ========== MCP 生成数据 ==========
 mcp/data/maigret-reports/*
 !mcp/data/maigret-reports/.gitkeep
+mcp/data/youtube-cookies.txt
+mcp/data/*cookies*.txt
 
 # ========== Python / Node ==========
 __pycache__/

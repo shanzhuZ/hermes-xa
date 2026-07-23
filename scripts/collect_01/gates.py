@@ -151,3 +151,10 @@ def can_advance_to_step45(task_id: str) -> Dict[str, Any]:
         return {"ok": False, "message": f"步骤二发文子步骤未全部完成（{pending_child}）"}
 
     return {"ok": True, "message": "满足 step4/5 推进条件"}
+
+
+def can_write_collect_report(task_id: str) -> Dict[str, Any]:
+    """步骤7：视频节点须终态（失败也放行）；无视频节点则直接放行。"""
+    from collect_01.video_report import can_write_report_after_videos
+
+    return can_write_report_after_videos(task_id)

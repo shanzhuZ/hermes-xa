@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+from datetime import datetime
 from typing import Any, Dict, List, Optional
 
 
@@ -94,6 +95,43 @@ def first_str(*values: Any) -> Optional[str]:
     return None
 
 
+def normalize_published_at(value: Any) -> Optional[str]:
+    """统一成 MySQL DATETIME 可接受的 'YYYY-MM-DD HH:MM:SS'。
+
+    支持：
+    - 2026-06-28T01:00:29Z / 带毫秒 / 带时区偏移
+    - Wed Jul 22 05:19:47 +0000 2026（Twitter）
+    """
+    text = first_str(value)
+    if not text:
+        return None
+    # 已是 MySQL 友好格式
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", text):
+        return text
+    # ISO8601
+    iso = text.replace("T", " ").strip()
+    if iso.endswith("Z"):
+        iso = iso[:-1]
+    # 去掉 +08:00 / +0000 等偏移
+    iso = re.sub(r"[+-]\d{2}:?\d{2}$", "", iso).strip()
+    if "." in iso:
+        iso = iso.split(".", 1)[0]
+    if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", iso):
+        return iso[:19]
+    # Twitter / ctime 风格
+    for fmt in ("%a %b %d %H:%M:%S %z %Y", "%a %b %d %H:%M:%S %Y"):
+        try:
+            dt = datetime.strptime(text, fmt)
+            return dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            continue
+    try:
+        dt = datetime.fromisoformat(text.replace("Z", "+00:00"))
+        return dt.strftime("%Y-%m-%d %H:%M:%S")
+    except Exception:
+        return None
+
+
 def profile_row(
     ctx: Dict[str, Any],
     *,
@@ -162,7 +200,7 @@ def post_row(
         "title": title,
         "content_text": text,
         "content_url": content_url,
-        "published_at": published_at,
+        "published_at": normalize_published_at(published_at),
         "view_count": view_count,
         "like_count": like_count,
         "comment_count": comment_count,

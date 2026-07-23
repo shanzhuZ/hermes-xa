@@ -77,6 +77,7 @@ def reconcile_post_child_steps(store, task_id: str) -> int:
     updated = 0
     for row in children:
         step_key = str(row.get("step_key") or "")
+        # 只收口发文子节点，视频 6.x.1 由 video_runner 负责
         if not step_key.startswith("step6_post_"):
             continue
         platform = step_key.replace("step6_post_", "", 1)
@@ -93,6 +94,12 @@ def reconcile_post_child_steps(store, task_id: str) -> int:
                 payload={"post_count": cnt},
             )
             updated += 1
+            try:
+                from collect_01.video_job import maybe_start_platform_video
+
+                maybe_start_platform_video(store, task_id, platform)
+            except Exception:
+                pass
             continue
         if platform in validated:
             if _post_tool_success(task_id, platform):
@@ -109,6 +116,16 @@ def reconcile_post_child_steps(store, task_id: str) -> int:
                     "skipped",
                     message=f"可信账号未采集 {platform} 发文",
                 )
+            updated += 1
+            continue
+        # 非可信平台却被拉起 running（如 Agent 误采 TG）：收口避免卡死步骤六
+        if cur in {"pending", "running"}:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "skipped",
+                message=f"{platform} 非可信账号，跳过发文采集",
+            )
             updated += 1
     return updated
 

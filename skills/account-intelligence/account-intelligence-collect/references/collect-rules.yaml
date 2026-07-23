@@ -1,5 +1,5 @@
 # 01 账号采集 — 唯一参考（Skill 只加载本文件）
-version: "1.16.0"
+version: "1.17.0"
 
 language: 用户中文输入时全程简体中文；步骤1-6.5进度与步骤7报告均不得用英文。
 
@@ -9,19 +9,20 @@ mode_switch: |
   - 禁止调用 mcp_maigret_collect_accounts
   - 禁止采候选主页
   - 禁止生成候选 validated_accounts
-  - 只执行：种子主页 → 种子图片/文本分析 → 种子发文采集 → 6.5 图片入库+分析回填 → 输出三节
+  - 只执行：种子主页 → 种子图片/文本分析 → 种子发文采集 → 6.5 图片入库+分析回填 → 等待视频节点终态 → 输出三节
 
 forbidden_always:
-  tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*]
+  tools: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video]
   output: [综合画像, 用户画像, 综合介绍, 发展轨迹, 各方评价, 如果你想进一步了解, 四、, 无对应 MCP, 无 MCP 采集工具, 没有对应 MCP, 图片资产管线系统未部署, 跳过步骤 6.5, image_pipeline未部署, 任务 ID 未注册, 继续步骤 7]
 
 # 步骤 4～7 必须自动完成，禁止停下来问用户
-mandatory_auto_steps: [4_streams, 5_validated, 6_posts, 6_5_image_assets, 7_output]
+mandatory_auto_steps: [4_streams, 5_validated, 6_posts, 6_5_image_assets, 6_6_video_wait, 7_output]
 never_ask_user: |
   禁止在步骤 3 之后调用 clarify 询问是否跳过 4～7。
   无 OCR/vision 时：仍执行文本流比对；图片流仅登记 avatar_url，标为 pending，不得询问用户。
-  步骤 6 发文结束后必须执行 6_5_image_assets，再进入步骤 7。
+  步骤 6 发文结束后必须执行 6_5_image_assets（可与后台视频并行），再 6_6_video_wait，再进入步骤 7。
   步骤 7 必须一次性输出三节，不得因「数据量大」而跳过中间步骤。
+  禁止调用 mcp_video2frame_* 长耗时工具（视频由 Hook 后台跑）。
 
 steps:
   "1_seed":
@@ -121,16 +122,29 @@ steps:
       3) cd 到仓库 scripts/ 后 terminal 执行：
          python -m image_pipeline.run --task-id <taskId> --force-analyze
       4) 该命令：发现头像/封面/发文配图 → 下载 HBase → collect_images → 回填 OCR/Vision
-      5) 读 stdout JSON；对用户最多 1 句进度；失败也继续 7_output，禁止编造「系统未部署」
-    forbid: [写最终报告, 输出一/二/三节, clarify, web_search, search_files]
+      5) 读 stdout JSON；对用户最多 1 句进度；失败也继续后续步骤，禁止编造「系统未部署」
+      说明：各平台发文完成后 Hook 可能已后台拉起 6.x.1 视频分析，与本步骤并行。
+    forbid: [写最终报告, 输出一/二/三节, clarify, web_search, search_files, mcp_video2frame_run_video_pipeline]
+
+  "6_6_video_wait":
+    mandatory: true
+    when: 6_5 之后、7_output 之前
+    do: |
+      等待各平台视频子节点（6.x.1）终态；无视频节点则立即通过。
+      cd 到仓库 scripts/ 后 terminal 执行：
+        python -m collect_01.video_report --task-id <taskId>
+      该命令最长约 10 分钟；超时会强制失败视频节点并放行。
+      读 stdout JSON 的 section_markdown；步骤7「三、发文信息」须写入视频观察（有成功结果时）。
+      禁止调用 mcp_video2frame_*。
+    forbid: [写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video, clarify]
 
   "7_output":
     once: true
-    require_before: [6_5_image_assets]
+    require_before: [6_5_image_assets, 6_6_video_wait]
     must_start_with: "## 一、个人信息"
     sections: [一、个人信息, 二、账号核验依据, 三、发文信息]
     section2: [2.1文本流表, 2.2图片流表, 2.3纳入, 2.4未纳入]
-    section3: 每平台一块，MCP/Apify 原文逐条，禁止主题归纳
+    section3: 每平台一块，MCP/Apify 原文逐条，禁止主题归纳；有视频分析结果时在本节写入「视频观察」
     forbid_preamble: true
     forbid_in_body: [步骤 6.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, 继续步骤 7, image_pipeline, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, ---]
 

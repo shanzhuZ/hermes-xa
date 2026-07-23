@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-video2frame-mcp — 视频直链下载 / 抽帧 / 多模态分析 / MySQL 入库
+video2frame-mcp — 视频下载 / 抽帧 / 多模态分析 / MySQL 入库
 
 工具：
-  - download_video: 仅下载直链到本地并写 collect_videos
-  - extract_frames: 按间隔抽帧（默认每 3 秒），全部落盘
+  - download_video: 直链或 yt-dlp（YouTube 等）下载并写 collect_videos
+  - extract_frames: 按间隔抽帧（默认每 3 秒）
   - analyze_frames: 对帧列表做 VLM 分析
-  - run_video_pipeline: URL 或本地路径 → 下载(可选) → 抽帧 → 全分析 → 入库
-                       （建议每任务 ≤3 个视频，本阶段不硬限制）
+  - run_video_pipeline: URL/本地 → 下载 → 前2分钟抽帧 → 分析 → 入库
+                       （01 采集请走后台脚本，勿 Agent 同步长等）
 """
 
 from __future__ import annotations
@@ -29,11 +29,12 @@ from mcp.server.fastmcp import FastMCP
 from analyze import analyze_frames as do_analyze_frames
 from config import (
     default_frame_interval_sec,
+    max_analyze_duration_sec,
     suggested_max_videos_per_task,
     video_root_dir,
     vlm_config,
 )
-from download import download_direct_video
+from download import download_video
 from frames import extract_frames_by_interval
 import mysql_store
 from pipeline import run_video_pipeline as do_run_video_pipeline
@@ -62,9 +63,9 @@ def download_video(
     task_type: str = "",
     source_type: str = "post_video",
 ) -> str:
-    """下载视频直链到 {HERMES_HOME}/data/video_bytes/{task_id}/{video_id}/，并写入 collect_videos。
+    """下载视频到 {HERMES_HOME}/data/video_bytes/{task_id}/{video_id}/，并写入 collect_videos。
 
-    注意：仅支持 http(s) 直链（如 .mp4），不支持平台页解析。
+    支持 http(s) 直链与 YouTube/Twitter 等页面链接（yt-dlp）。
     建议每个任务最多处理 3 个视频（本阶段不硬限制）。
     """
     tip = f"建议每个任务最多 {suggested_max_videos_per_task()} 个视频（本阶段不硬限制）"
@@ -100,7 +101,7 @@ def download_video(
             "UPDATE collect_videos SET storage_status='downloading', updated_at=CURRENT_TIMESTAMP(3) WHERE video_id=%s",
             (video_id,),
         )
-        meta = download_direct_video(origin_url, base / "source")
+        meta = download_video(origin_url, base / "source")
         mysql_store.mark_video_stored(video_id, meta)
         return _json({"status": "stored", "tip": tip, "video_id": video_id, **meta})
     except Exception as exc:
@@ -188,6 +189,7 @@ def run_video_pipeline(
     task_type: str = "",
     source_type: str = "post_video",
     frame_interval_sec: float = 3.0,
+    max_duration_sec: float = 0,
     quality: int = 95,
     api_url: str = "",
     model: str = "",
@@ -197,9 +199,10 @@ def run_video_pipeline(
     skip_summary: bool = False,
     persist: bool = True,
 ) -> str:
-    """一键：直链下载(可选) → 每3秒抽帧(全量存) → 全帧分析 → 写 MySQL + 本地目录。
+    """一键：下载(直链/YouTube yt-dlp) → 前2分钟每3秒抽帧 → 帧分析 → MySQL。
 
     建议每个任务最多 3 个视频（本阶段仅建议，不硬限制）。
+    注意：01 采集请走后台脚本，勿让 Agent 同步长时间等待本工具。
     """
     try:
         result = do_run_video_pipeline(
@@ -213,6 +216,7 @@ def run_video_pipeline(
             task_type=task_type or None,
             source_type=source_type or "post_video",
             frame_interval_sec=float(frame_interval_sec or default_frame_interval_sec()),
+            max_duration_sec=float(max_duration_sec or max_analyze_duration_sec()),
             quality=int(quality),
             api_url=api_url or None,
             model=model or None,

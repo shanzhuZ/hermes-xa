@@ -59,6 +59,17 @@ def download_config() -> Dict[str, Any]:
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ),
+        # YouTube 反爬：cookies 文件或浏览器（chrome/edge）
+        "ytdlp_cookies": (os.environ.get("HERMES_VIDEO_YTDLP_COOKIES") or "").strip(),
+        "ytdlp_cookies_from_browser": (
+            os.environ.get("HERMES_VIDEO_YTDLP_COOKIES_FROM_BROWSER") or ""
+        ).strip(),
+        "proxy": (
+            os.environ.get("HERMES_VIDEO_PROXY")
+            or os.environ.get("HTTPS_PROXY")
+            or os.environ.get("HTTP_PROXY")
+            or ""
+        ).strip(),
     }
 
 
@@ -92,6 +103,12 @@ def vlm_config() -> Dict[str, Any]:
 def default_frame_interval_sec() -> float:
     load_dotenv_if_present()
     return float(os.environ.get("HERMES_VIDEO_FRAME_INTERVAL_SEC", "3"))
+
+
+def max_analyze_duration_sec() -> float:
+    """只分析视频前 N 秒（默认 120=前2分钟）。"""
+    load_dotenv_if_present()
+    return float(os.environ.get("HERMES_VIDEO_MAX_ANALYZE_SEC", "120"))
 
 
 def suggested_max_videos_per_task() -> int:

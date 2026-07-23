@@ -403,7 +403,7 @@ mcp_servers:
       include:
         - get-channel-stats
         - analyze-channel-videos
-  # 独立视频抽帧分析 MCP（未接入 01–04；仅直链）
+  # 独立视频抽帧分析 MCP（01 由 Hook 后台调用，禁止 Agent 同步长等）
   video2frame:
     enabled: true
     command: D:/environment/python/python.exe
@@ -414,8 +414,13 @@ mcp_servers:
       PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
       HERMES_VIDEO_VLM_API_URL: https://api.perplexity.ai/chat/completions
       HERMES_VIDEO_VLM_MODEL: sonar
+      HERMES_VIDEO_FRAME_INTERVAL_SEC: '3'
+      HERMES_VIDEO_MAX_ANALYZE_SEC: '120'
+      # YouTube 反爬：Netscape cookies.txt（勿提交 git）
+      HERMES_VIDEO_YTDLP_COOKIES: D:/hermes-xa/mcp/data/youtube-cookies.txt
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
+      HERMES_VIDEO_PROXY: ${HTTPS_PROXY}
       FASTMCP_SHOW_SERVER_BANNER: 'false'
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
@@ -423,6 +428,12 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 900
     connect_timeout: 120
+    tools:
+      include:
+        - download_video
+        - extract_frames
+        - analyze_frames
+        - run_video_pipeline
 custom_providers:
   - name: google
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/

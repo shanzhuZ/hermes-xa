@@ -6,3 +6,4 @@ opencv-python>=4.8.0
 Pillow>=10.0.0
 pymysql>=1.1.0
 python-dotenv>=1.0.0
+yt-dlp[default]>=2024.8.0

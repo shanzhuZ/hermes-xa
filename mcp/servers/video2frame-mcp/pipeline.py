@@ -9,8 +9,14 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 from analyze import analyze_frames, summarize_video_from_frame_texts
-from config import default_frame_interval_sec, suggested_max_videos_per_task, video_root_dir, vlm_config
-from download import download_direct_video
+from config import (
+    default_frame_interval_sec,
+    max_analyze_duration_sec,
+    suggested_max_videos_per_task,
+    video_root_dir,
+    vlm_config,
+)
+from download import download_video
 from frames import extract_frames_by_interval
 import mysql_store
 
@@ -33,6 +39,7 @@ def run_video_pipeline(
     task_type: Optional[str] = None,
     source_type: str = "post_video",
     frame_interval_sec: Optional[float] = None,
+    max_duration_sec: Optional[float] = None,
     quality: int = 95,
     api_url: Optional[str] = None,
     model: Optional[str] = None,
@@ -44,8 +51,9 @@ def run_video_pipeline(
 ) -> Dict[str, Any]:
     """
     一键管线。
-    - 给 origin_url：先直链下载
+    - 给 origin_url：直链或 yt-dlp（YouTube/页面）下载
     - 或给 video_path：直接用本地文件
+    - 默认只抽前 max_duration_sec 秒（默认 120），每 interval 秒一帧
     建议：每个任务视频数 ≤ suggested_max_videos_per_task()（本阶段不硬限制）
     """
     started = time.time()
@@ -56,13 +64,15 @@ def run_video_pipeline(
         raise ValueError("origin_url 与 video_path 至少提供一个")
 
     interval = float(frame_interval_sec if frame_interval_sec is not None else default_frame_interval_sec())
+    max_dur = float(max_duration_sec if max_duration_sec is not None else max_analyze_duration_sec())
     video_id = mysql_store.make_video_id(task_id, origin_url or "", video_path or "")
     base = _task_video_dir(task_id, video_id)
     frames_dir = base / "frames"
     base.mkdir(parents=True, exist_ok=True)
 
     tip = (
-        f"建议每个任务最多处理 {suggested_max_videos_per_task()} 个视频（本阶段不硬限制）"
+        f"建议每个任务最多处理 {suggested_max_videos_per_task()} 个视频（本阶段不硬限制）；"
+        f"仅分析前 {max_dur:.0f}s，每 {interval}s 一帧"
     )
 
     row = {
@@ -96,7 +106,7 @@ def run_video_pipeline(
                     (video_id,),
                 )
             dest = base / "source"
-            dl_meta = download_direct_video(origin_url, dest)
+            dl_meta = download_video(origin_url, dest)
             local_video = Path(dl_meta["local_path"])
         else:
             local_video = Path(video_path).resolve()
@@ -118,12 +128,14 @@ def run_video_pipeline(
                 dl_meta["file_size"] = local_video.stat().st_size
                 dl_meta["content_sha256"] = mysql_store.file_sha256(str(local_video))
 
-        # 2) 抽帧（每 interval 秒，全部落盘）
+        # 2) 抽帧：仅前 max_dur 秒，每 interval 秒一帧
         extract = extract_frames_by_interval(
             str(local_video),
             str(frames_dir),
             interval_sec=interval,
             quality=quality,
+            start_time=0.0,
+            end_time=max_dur,
             overwrite=True,
         )
         vinfo = extract.get("video_info") or {}
@@ -245,6 +257,7 @@ def run_video_pipeline(
             "tip": tip,
             "local_video": str(local_video),
             "frame_interval_sec": interval,
+            "max_duration_sec": max_dur,
             "frame_extracted_cnt": len(frame_rows_raw),
             "frame_analyzed_cnt": analyzed_cnt,
             "preview_frame_indexes": sorted(preview_idxs),

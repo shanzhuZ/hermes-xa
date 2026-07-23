@@ -411,15 +411,34 @@ class TaskStore:
             return False
         is_report = is_three_section_report(text)
         if is_report:
-            cleaned = sanitize_three_section_report(text)
-            if cleaned != text:
+            from collect_01.video_report import (
+                can_write_report_after_videos,
+                inject_video_into_report,
+            )
+
+            gate = can_write_report_after_videos(task_id)
+            if not gate.get("ok"):
+                # 视频未终态：不落 summary，避免抢跑报告；保留为普通回复便于 Agent 重试
+                logger.warning(
+                    "三节报告被视频门禁拦截 task=%s open=%s",
+                    task_id,
+                    gate.get("open"),
+                )
+                self.save_dialogue(
+                    task_id,
+                    session_id,
+                    "assistant",
+                    text[:65535],
+                    msg_type="assistant_reply",
+                )
+                return False
+            text = inject_video_into_report(sanitize_three_section_report(text), task_id)
+            if text != content:
                 logger.info(
-                    "三节报告已裁掉脏前缀 task=%s before=%d after=%d",
+                    "三节报告已处理视频观察/脏前缀 task=%s after=%d",
                     task_id,
                     len(text),
-                    len(cleaned),
                 )
-            text = cleaned
         clipped = text[:65535]
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
@@ -563,6 +582,31 @@ class TaskStore:
                 """,
                 (task_id, step_key, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
             )
+            return
+        if step_key.startswith("step6_video_"):
+            from collect_01.phases import (
+                post_step_key,
+                video_step_node,
+                video_step_order,
+                video_step_title,
+            )
+
+            platform = step_key.replace("step6_video_", "", 1)
+            db.execute(
+                """
+                INSERT IGNORE INTO collect_phase_steps
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                """,
+                (
+                    task_id,
+                    step_key,
+                    post_step_key(platform),
+                    video_step_order(platform),
+                    video_step_node(platform),
+                    video_step_title(platform),
+                ),
+            )
 
     def save_tool_output(
         self,
@@ -671,7 +715,11 @@ class TaskStore:
                 logger.warning("展示层双写 candidate 失败: %s", exc)
 
     def save_post_rows(self, rows: List[Dict[str, Any]], *, step_key: str = "step6_posts") -> None:
+        from collect_01.normalizers.base import normalize_published_at
+
         for row in rows:
+            # 二次兜底：避免异常 published_at 导致整批入库失败
+            row = {**row, "published_at": normalize_published_at(row.get("published_at"))}
             db.execute(
                 """
                 INSERT INTO collect_posts
@@ -686,7 +734,8 @@ class TaskStore:
                 ON DUPLICATE KEY UPDATE
                   content_text=VALUES(content_text), view_count=VALUES(view_count),
                   like_count=VALUES(like_count), comment_count=VALUES(comment_count),
-                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json)
+                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json),
+                  published_at=COALESCE(VALUES(published_at), published_at)
                 """,
                 row,
             )

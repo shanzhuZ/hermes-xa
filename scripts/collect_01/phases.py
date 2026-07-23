@@ -149,6 +149,23 @@ def post_step_node(platform: str) -> str:
     return f"6.{post_step_index(platform)}"
 
 
+def video_step_key(platform: str) -> str:
+    return f"step6_video_{platform}"
+
+
+def video_step_title(platform: str) -> str:
+    label = PLATFORM_LABELS.get(platform, platform)
+    return f"{label}视频分析"
+
+
+def video_step_order(platform: str) -> int:
+    return post_step_order(platform) + 1
+
+
+def video_step_node(platform: str) -> str:
+    return f"{post_step_node(platform)}.1"
+
+
 def root_step_keys() -> List[str]:
     return [s.step_key for s in ROOT_STEPS]
 
@@ -178,5 +195,7 @@ def step_phase(step_key: str) -> Optional[str]:
         if s.step_key == step_key:
             return s.current_phase
     if step_key.startswith("step6_post_"):
+        return PHASE_COLLECT
+    if step_key.startswith("step6_video_"):
         return PHASE_COLLECT
     return None

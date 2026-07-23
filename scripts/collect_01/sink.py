@@ -313,6 +313,12 @@ def _sync_platform_post_step(
         )
         if tool_output_id:
             store.update_tool_output_phase(tool_output_id, child)
+        try:
+            from collect_01.video_job import maybe_start_platform_video
+
+            maybe_start_platform_video(store, task_id, platform)
+        except Exception as exc:
+            logger.warning("启动平台视频分析失败 task=%s platform=%s: %s", task_id, platform, exc)
     else:
         # 仅有 profile、无发文：不标记步骤六完成（主页轮常见）
         store.set_step_status(
@@ -794,9 +800,22 @@ def _persist_normalized(
         store.save_candidate_rows([row], step_key="step2_cross_platform")
     posts = data.get("posts") or []
     if posts:
+        ok = 0
         for row in posts:
             sk = post_step or post_step_key(str(row.get("platform") or ""))
-            store.save_post_rows([row], step_key=sk)
+            try:
+                store.save_post_rows([row], step_key=sk)
+                ok += 1
+            except Exception as exc:
+                logger.warning(
+                    "发文入库失败 task=%s platform=%s content_id=%s: %s",
+                    task_id,
+                    row.get("platform"),
+                    row.get("content_id"),
+                    exc,
+                )
+        if ok:
+            logger.info("发文入库成功 task=%s count=%d/%d", task_id, ok, len(posts))
 
 
 def _on_post_llm_call(payload: Dict[str, Any]) -> None:

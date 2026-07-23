@@ -46,7 +46,23 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
         ctx.get("account_id"),
         (data.get("user") or {}).get("rest_id"),
         (data.get("user") or {}).get("id_str"),
-    ) or "unknown"
+    )
+    # 工具常用 screen_name：用已入库 profile 反查 rest_id
+    if not account_id:
+        handle = first_str((ctx.get("tool_args") or {}).get("screen_name"))
+        if handle and ctx.get("task_id"):
+            from collect_01 import db
+
+            prow = db.fetch_one(
+                """
+                SELECT account_id FROM collect_profiles
+                WHERE task_id=%s AND platform='twitter' AND LOWER(account_handle)=LOWER(%s)
+                LIMIT 1
+                """,
+                (ctx["task_id"], handle.lstrip("@")),
+            )
+            account_id = first_str((prow or {}).get("account_id"))
+    account_id = account_id or "unknown"
     rows: List[Dict[str, Any]] = []
     for item in tweets if isinstance(tweets, list) else []:
         if not isinstance(item, dict):
@@ -62,8 +78,9 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 content_id=str(tid),
                 content_text=first_str(item.get("full_text"), item.get("text")),
                 content_url=f"https://twitter.com/i/status/{tid}",
-                like_count=safe_int(item.get("favorite_count")),
-                repost_count=safe_int(item.get("retweet_count")),
+                published_at=first_str(item.get("created_at"), item.get("date")),
+                like_count=safe_int(item.get("favorite_count") if item.get("favorite_count") is not None else item.get("likes")),
+                repost_count=safe_int(item.get("retweet_count") if item.get("retweet_count") is not None else item.get("retweets")),
                 raw=item,
             )
         )

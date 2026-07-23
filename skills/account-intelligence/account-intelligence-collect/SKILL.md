@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-collect
 description: "01采集@种子。Maigret后MCP/Apify只采主页→流比对→相似账号采发文→一次输出三节。禁画像禁web_search。"
-version: 1.15.0
+version: 1.16.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -26,15 +26,17 @@ metadata:
 0. **工具名**：步骤 2 **只允许** `mcp_maigret_collect_accounts`；**禁止** `search_username` / `search_usernames` / `mcp_maigret_get_prompt`。Twitter 种子 **必须** `mcp_twitter_get_user_info(screen_name=whyyoutouzhele)`，**禁止** `username` 参数（会报错）。调 MCP 前若不确定参数，先看工具 schema，禁止猜参数名。
 0b. **禁止加载** `account-intelligence-profile`（02 画像 Skill）；本任务只做采集，不得 `skill_view` 画像 Skill。
 0c. **禁止 clarify**：步骤 1～7 **必须自动跑完**；步骤 3 之后**不得**问用户「是否跳过 4～7」「先做哪个」。无 OCR/vision 时：文本流照常做，图片流只登记 URL，**继续**步骤 5～7。
-0d. **单平台硬规则**：若用户明确表示“不要/不需要/仅当前平台/单平台/不跨平台”，则**禁止**调用 `mcp_maigret_collect_accounts`，也**禁止**进入候选主页采集。此时只允许：`1_seed` 种子主页 → 图片/文本分析 → `6_posts` 种子发文 → **`6.5` 图片入库+分析回填** → 三节报告。
+0d. **单平台硬规则**：若用户明确表示“不要/不需要/仅当前平台/单平台/不跨平台”，则**禁止**调用 `mcp_maigret_collect_accounts`，也**禁止**进入候选主页采集。此时只允许：`1_seed` 种子主页 → 图片/文本分析 → `6_posts` 种子发文 → **`6.5` 图片入库+分析回填** → **`6.6` 等待视频终态** → 三节报告。
+0e. **禁止**同步调用 `mcp_video2frame_*`（视频由 Hook 在发文平台完成后台拉起 `6.x.1`）。
 1. **步骤 1～6**：禁止 `web_search` / `web_extract` / `browser_*`；禁止写报告、人物传记、综合介绍
-2. **步骤 1～6.5**：禁止输出「一、」「二、」「三、」任何内容；最多 2 句进度
+2. **步骤 1～6.6**：禁止输出「一、」「二、」「三、」任何内容；最多 2 句进度
 3. **Maigret 返回后**：读 `summary.accounts` + `agent_must_do_next`（若有），**禁止**按 MCP 返回写画像
 4. **步骤 3 只采主页**：有 MCP→profile；**无原生 MCP→必须 Apify**（不能说「无 MCP 就不采」）；种子 bio 里的 t.me/ 等互链也算候选；失败就跳过
 5. **步骤 4** 必须 OCR+vision（有头像）+ 2.1/2.2 表数据；若 `vision_analyze(image_url=远程URL)` 失败，先下载到本地临时文件，再用本地路径重试 1 次
-6. **步骤 6** 才对 `validated_accounts` 采发文
-6.5. **步骤 6 发文结束后、步骤 7 写报告前**：必须跑图片资产入库 + 分析回填（见下）；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接写报告
-7. **步骤 7** 一次性按 `collect-rules.yaml` 输出三节
+6. **步骤 6** 才对 `validated_accounts` 采发文；某平台发文结束后 Hook 可能自动挂 `6.x.1` 视频子节点（每平台最多 1 条最新可下载视频）
+6.5. **步骤 6 发文结束后、步骤 7 写报告前**：必须跑图片资产入库 + 分析回填（见下）；可与视频后台并行；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接写报告
+6.6. **图片 6.5 之后**：必须 `python -m collect_01.video_report --task-id <taskId>` 等到视频节点终态（无节点立即通过），再写报告
+7. **步骤 7** 一次性按 `collect-rules.yaml` 输出三节；有视频成功结果时在「三、发文信息」写入视频观察
 
 ## 七步（硬顺序，跨平台任务）
 
@@ -45,9 +47,10 @@ metadata:
 | 3 | Maigret 候选 **+ 种子简介互链**；各条：MCP profile **或** Apify（小 limit）；失败跳过 |
 | 4 | 文本流+图片流 vs 种子 |
 | 5 | `validated_accounts`（相似账号） |
-| 6 | 发文：MCP 或 Apify |
-| 6.5 | **图片资产**：发现头像/封面/发文配图 → 下载入库 HBase/`collect_images` → OCR/Vision 回填 |
-| 7 | **一次**输出三节 |
+| 6 | 发文：MCP 或 Apify（完成后 Hook 可挂 `6.x.1` 视频） |
+| 6.5 | **图片资产**：发现头像/封面/发文配图 → 下载入库 HBase/`collect_images` → OCR/Vision 回填（可与视频并行） |
+| 6.6 | **等待视频**：`python -m collect_01.video_report --task-id …` |
+| 7 | **一次**输出三节（含视频观察若有） |
 
 ## 单平台（用户明确不要跨平台时）
 
@@ -57,6 +60,7 @@ metadata:
 | 2 | 种子文本流 + 图片流分析（仅种子，不做候选比对） |
 | 3 | 仅采种子发文 |
 | 3.5 | **同 6.5**：图片入库 + 分析回填 |
+| 3.6 | **同 6.6**：等待视频终态 |
 | 4 | 输出三节 |
 
 单平台任务中：
@@ -79,8 +83,21 @@ python -m image_pipeline.run --task-id <taskId> --force-analyze
 ```
 
 4. 读 stdout JSON；对用户最多 1 句进度（**单独一轮短回复或工具后旁白即可，禁止写进步骤 7 报告**）。命令失败也继续步骤 7，不要编造「未部署 / 未注册」。
-5. **task_id**：只用 Gateway `task:{uuid}` 里的 uuid；查不到就跳过 6.5 直接步骤 7，**禁止**在报告里解释原因。
+5. **task_id**：只用 Gateway `task:{uuid}` 里的 uuid；查不到就跳过 6.5 直接步骤 6.6/7，**禁止**在报告里解释原因。
 6. **步骤 7 报告必须以 `## 一、个人信息` 开头**，禁止任何脏前缀。
+
+## 步骤 6.6 等待视频终态（硬门槛）
+
+图片 6.5 之后、写三节报告之前，在 `scripts/` 下执行：
+
+```bash
+python -m collect_01.video_report --task-id <taskId>
+```
+
+- 无 `6.x.1` 视频节点：立即返回 ok。
+- 有节点：等到成功/失败（最长约 10 分钟，超时强制失败并放行）。
+- **禁止**调用 `mcp_video2frame_*`。
+- stdout JSON 含 `section_markdown` 时，步骤 7「三、发文信息」须写入视频观察。
 
 ## 步骤 3 工具对照
 

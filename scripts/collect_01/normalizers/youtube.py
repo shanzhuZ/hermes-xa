@@ -64,6 +64,7 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 title=first_str(item.get("title")),
                 content_text=first_str(item.get("description")),
                 content_url=f"https://www.youtube.com/watch?v={vid}",
+                published_at=first_str(item.get("publishedAt"), item.get("published_at")),
                 view_count=safe_int(item.get("viewCount")),
                 like_count=safe_int(item.get("likeCount")),
                 comment_count=safe_int(item.get("commentCount")),
