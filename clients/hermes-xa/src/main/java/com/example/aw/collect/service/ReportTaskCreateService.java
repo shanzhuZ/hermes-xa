@@ -138,18 +138,19 @@ public class ReportTaskCreateService implements TaskCreateService {
 
     /**
      * 插树：step_plan + 七大阶段壳 + 业务子步，全部 pending。
+     * 七大壳挂在 step_plan 下（流程图：根 → 制定执行计划 → 1..7）。
      * 规划收口与启动 Agent 由 {@link ReportPlanBootstrap} / CollectSubmitService 负责。
      */
     private void insertReportSteps(String taskId, String seedPlatform) {
         collectTaskMapper.insertPhaseStep(taskId, STEP_PLAN, null, 5, "0", "制定执行计划");
 
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_LOCK_TARGET, null, 100, "1", "1. 锁定目标");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_DISCOVERY, null, 200, "2", "2. 线索发现");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, null, 300, "3", "3. 账号采集");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, null, 400, "4", "4. 关联碰撞");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, null, 500, "5", "5. 内容采集");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, null, 600, "6", "6. 深度研判");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, null, 700, "7", "7. 报告生成");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_LOCK_TARGET, STEP_PLAN, 100, "1", "1. 锁定目标");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_DISCOVERY, STEP_PLAN, 200, "2", "2. 线索发现");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, STEP_PLAN, 300, "3", "3. 账号采集");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, STEP_PLAN, 400, "4", "4. 关联碰撞");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, STEP_PLAN, 500, "5", "5. 内容采集");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, STEP_PLAN, 600, "6", "6. 深度研判");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, STEP_PLAN, 700, "7", "7. 报告生成");
 
         collectTaskMapper.insertPhaseStep(
                 taskId, "step1_seed", PHASE_LOCK_TARGET, 110, "1.1", seedAgentTitle(seedPlatform));

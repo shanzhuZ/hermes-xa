@@ -1,0 +1,4 @@
+mime=image/jpeg
+url=https://pbs.twimg.com/profile_images/2053244804520427520/m8mdWZCG.jpg
+sha256=c855db6c89ad4e8fd80e7b253078d3ea221b3436db55b70c8c4d82a4d46e59b5
+file_size=24875

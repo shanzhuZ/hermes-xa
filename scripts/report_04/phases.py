@@ -96,15 +96,15 @@ def seed_agent_title(platform: Optional[str]) -> str:
 
 
 def phase_shell_steps() -> Tuple[StepDef, ...]:
-    """L1 七大阶段壳（展示父节点；图片资产管线不进树）。"""
+    """L1 七大阶段壳（挂在 step_plan 下；图片资产管线不进树）。"""
     return (
-        StepDef(PHASE_LOCK_TARGET, "1. 锁定目标", 100, "1", None, PHASE_SEED),
-        StepDef(PHASE_DISCOVERY_SHELL, "2. 线索发现", 200, "2", None, PHASE_DISCOVERY),
-        StepDef(PHASE_ACCOUNT_COLLECT, "3. 账号采集", 300, "3", None, PHASE_PROFILES),
-        StepDef(PHASE_COLLISION, "4. 关联碰撞", 400, "4", None, PHASE_STREAM_VALIDATE),
-        StepDef(PHASE_CONTENT, "5. 内容采集", 500, "5", None, PHASE_POSTS),
-        StepDef(PHASE_ANALYSIS_SHELL, "6. 深度研判", 600, "6", None, PHASE_ANALYSIS),
-        StepDef(PHASE_REPORT_SHELL, "7. 报告生成", 700, "7", None, PHASE_REPORT),
+        StepDef(PHASE_LOCK_TARGET, "1. 锁定目标", 100, "1", STEP_PLAN_KEY, PHASE_SEED),
+        StepDef(PHASE_DISCOVERY_SHELL, "2. 线索发现", 200, "2", STEP_PLAN_KEY, PHASE_DISCOVERY),
+        StepDef(PHASE_ACCOUNT_COLLECT, "3. 账号采集", 300, "3", STEP_PLAN_KEY, PHASE_PROFILES),
+        StepDef(PHASE_COLLISION, "4. 关联碰撞", 400, "4", STEP_PLAN_KEY, PHASE_STREAM_VALIDATE),
+        StepDef(PHASE_CONTENT, "5. 内容采集", 500, "5", STEP_PLAN_KEY, PHASE_POSTS),
+        StepDef(PHASE_ANALYSIS_SHELL, "6. 深度研判", 600, "6", STEP_PLAN_KEY, PHASE_ANALYSIS),
+        StepDef(PHASE_REPORT_SHELL, "7. 报告生成", 700, "7", STEP_PLAN_KEY, PHASE_REPORT),
     )
 
 

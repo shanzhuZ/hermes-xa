@@ -56,13 +56,13 @@
     "created_at": "2026-07-10T05:52:21.769624+00:00",
     "created_by": null,
     "last_patched_at": null,
-    "last_used_at": "2026-07-23T10:40:40.234760+00:00",
-    "last_viewed_at": "2026-07-23T10:40:40.209403+00:00",
+    "last_used_at": "2026-07-23T12:09:41.892894+00:00",
+    "last_viewed_at": "2026-07-23T12:09:41.868592+00:00",
     "patch_count": 0,
     "pinned": false,
     "state": "active",
-    "use_count": 102,
-    "view_count": 102
+    "use_count": 104,
+    "view_count": 104
   },
   "account-intelligence-verification": {
     "archived_at": null,
