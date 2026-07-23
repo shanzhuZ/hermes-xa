@@ -12,10 +12,21 @@ import java.util.regex.Matcher;
 import java.util.regex.Pattern;
 
 /**
- * 04 账号画像写报 — 预建任务与 11 步步骤树。
+ * 04 账号画像写报 — 预建任务：step_plan + 八大阶段壳 + 业务子步。
  */
 @Service
 public class ReportTaskCreateService implements TaskCreateService {
+
+    public static final String STEP_PLAN = "step_plan";
+    public static final String STEP_ASSETS = "step_assets";
+    public static final String PHASE_LOCK_TARGET = "phase_lock_target";
+    public static final String PHASE_DISCOVERY = "phase_discovery";
+    public static final String PHASE_ACCOUNT_COLLECT = "phase_account_collect";
+    public static final String PHASE_COLLISION = "phase_collision";
+    public static final String PHASE_CONTENT = "phase_content";
+    public static final String PHASE_ASSETS = "phase_assets";
+    public static final String PHASE_ANALYSIS = "phase_analysis";
+    public static final String PHASE_REPORT = "phase_report";
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
@@ -127,30 +138,45 @@ public class ReportTaskCreateService implements TaskCreateService {
     }
 
     /**
-     * 写报 11 步根节点（Agent 风格标题，与 report_04/phases.py 一致）；step1/step2 初始 running。
+     * 插树：step_plan + 八大阶段壳 + 业务子步，全部 pending。
+     * 规划收口与启动 Agent 由 {@link ReportPlanBootstrap} / CollectSubmitService 负责。
      */
     private void insertReportSteps(String taskId, String seedPlatform) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", seedAgentTitle(seedPlatform));
-        collectTaskMapper.insertPhaseStep(taskId, "step2_maigret", null, 20, "2", "Maigret Agent 跨平台收集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_web_search", null, 30, "3", "网页检索 Agent 候选发现");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_profiles", null, 40, "4", "MCP/Apify Agent 候选主页采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_streams", null, 50, "5", "信息核验流 Agent 核查");
-        collectTaskMapper.insertPhaseStep(taskId, "step6_validated", null, 60, "6", "相似账号认定 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step7_posts", null, 70, "7", "跨平台发文采集 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step8_img_analysis", null, 80, "8", "图片流 Agent 分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step9_context_views", null, 90, "9", "观点与涉华分析 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step10_context_pii", null, 100, "10", "PII 与圈层分析 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step11_report", null, 110, "11", "画像报告 Agent");
-        collectTaskMapper.updateStepStatus(
-                taskId,
-                "step1_seed",
-                "running",
-                "等待种子 profile 采集…");
-        collectTaskMapper.updateStepStatus(
-                taskId,
-                "step2_maigret",
-                "running",
-                "等待 Maigret 跨平台发现…");
+        collectTaskMapper.insertPhaseStep(taskId, STEP_PLAN, null, 5, "0", "制定执行计划");
+
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_LOCK_TARGET, null, 100, "1", "1. 锁定目标");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_DISCOVERY, null, 200, "2", "2. 线索发现");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, null, 300, "3", "3. 账号采集");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, null, 400, "4", "4. 关联碰撞");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, null, 500, "5", "5. 内容采集");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ASSETS, null, 600, "6", "6. 资产沉淀");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, null, 700, "7", "7. 深度研判");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, null, 800, "8", "8. 报告生成");
+
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step1_seed", PHASE_LOCK_TARGET, 110, "1.1", seedAgentTitle(seedPlatform));
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step2_maigret", PHASE_DISCOVERY, 210, "2.1", "Maigret Agent 跨平台收集");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step3_web_search", PHASE_DISCOVERY, 220, "2.2", "网页检索 Agent 候选发现");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step4_profiles", PHASE_ACCOUNT_COLLECT, 310, "3.1", "MCP/Apify Agent 候选主页采集");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step5_streams", PHASE_COLLISION, 410, "4.1", "信息核验流 Agent 核查");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step6_validated", PHASE_COLLISION, 420, "4.2", "相似账号认定 Agent");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step7_posts", PHASE_CONTENT, 510, "5.1", "跨平台发文采集 Agent");
+        collectTaskMapper.insertPhaseStep(
+                taskId, STEP_ASSETS, PHASE_ASSETS, 610, "6.1", "图片资产入库与回填");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step8_img_analysis", PHASE_ANALYSIS, 710, "7.1", "图片流 Agent 分析");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step9_context_views", PHASE_ANALYSIS, 720, "7.2", "观点与涉华分析 Agent");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step10_context_pii", PHASE_ANALYSIS, 730, "7.3", "PII 与圈层分析 Agent");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step11_report", PHASE_REPORT, 810, "8.1", "画像报告 Agent");
     }
 
     private String seedAgentTitle(String platform) {

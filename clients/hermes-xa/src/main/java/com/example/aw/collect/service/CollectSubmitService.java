@@ -2,19 +2,38 @@ package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.registry.TaskTypeRegistry;
+import com.example.aw.collect.stream.ThoughtStreamHub;
 import com.example.aw.gateway.HermesGatewayClient;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
 import java.util.Map;
 import java.util.UUID;
+import java.util.concurrent.Executors;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.TimeUnit;
 
 /**
  * 编排：预建任务 + 异步调 Gateway（支持多 taskType）。
  */
 @Service
 public class CollectSubmitService {
+
+    private static final Logger log = LoggerFactory.getLogger(CollectSubmitService.class);
+
+    /** 写报：规划推完后异步等 SSE 再启 Agent，避免堵在 HTTP 响应前 */
+    private final ScheduledExecutorService reportStartScheduler = Executors.newSingleThreadScheduledExecutor(
+            new java.util.concurrent.ThreadFactory() {
+                @Override
+                public Thread newThread(Runnable r) {
+                    Thread t = new Thread(r, "report-plan-then-agent");
+                    t.setDaemon(true);
+                    return t;
+                }
+            });
 
     @Autowired
     private TaskCreateRegistry taskCreateRegistry;
@@ -24,6 +43,12 @@ public class CollectSubmitService {
 
     @Autowired
     private HermesGatewayClient hermesGatewayClient;
+
+    @Autowired
+    private ReportPlanBootstrap reportPlanBootstrap;
+
+    @Autowired
+    private ThoughtStreamHub thoughtStreamHub;
 
     public Map<String, Object> submitCollect(String sessionId, String taskId, String message, String taskType)
             throws Exception {
@@ -73,7 +98,28 @@ public class CollectSubmitService {
         taskCreateRegistry.resolve(typeDef.getFrontendType())
                 .createPendingTask(taskId, sessionId, gatewayMessage, payloadJson);
 
-        hermesGatewayClient.submitCollectAsync(sessionId, taskId, gatewayMessage);
+        if ("account_report".equals(typeDef.getDbTaskType())) {
+            // 1) 同步只推「思考中…」，立刻返回 taskId 让前端连 SSE
+            // 2) 后台慢推规划文案（约数秒）→ 再启 Agent
+            reportPlanBootstrap.beginPlanStream(taskId);
+            final String sid = sessionId;
+            final String tid = taskId;
+            final String msg = gatewayMessage;
+            reportStartScheduler.schedule(new Runnable() {
+                @Override
+                public void run() {
+                    try {
+                        thoughtStreamHub.awaitSubscriber(tid, 2500L);
+                        reportPlanBootstrap.finishPlanStreamPaced(tid);
+                        hermesGatewayClient.submitCollectAsync(sid, tid, msg);
+                    } catch (Exception e) {
+                        log.error("04 规划慢推或启动 Agent 失败 taskId={}", tid, e);
+                    }
+                }
+            }, 200L, TimeUnit.MILLISECONDS);
+        } else {
+            hermesGatewayClient.submitCollectAsync(sessionId, taskId, gatewayMessage);
+        }
         return buildAcceptedBody(sessionId, taskId, typeDef, newConversation);
     }
 

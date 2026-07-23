@@ -434,8 +434,7 @@ class TaskStore:
                         """,
                         (new_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
                     )
-        self.set_step_status(new_id, "step1_seed", "running", message="等待种子 profile 采集…")
-        self.set_step_status(new_id, "step2_maigret", "running", message="等待 Maigret 跨平台发现…")
+        # 建树保持 pending；业务步由 sink/工具触发后再 running（与 Java 规划门闩一致）
         logger.info("创建写报任务 task_id=%s session=%s", new_id, session_id)
         return new_id
 

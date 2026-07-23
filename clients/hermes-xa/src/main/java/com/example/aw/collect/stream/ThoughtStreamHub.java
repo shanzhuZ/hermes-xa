@@ -68,6 +68,40 @@ public class ThoughtStreamHub {
     }
 
     /**
+     * 当前是否已有前端订阅该任务思考流。
+     */
+    public boolean hasSubscribers(String taskId) {
+        if (taskId == null || taskId.trim().isEmpty()) {
+            return false;
+        }
+        TaskChannel channel = channels.get(taskId);
+        return channel != null && !channel.subscribers.isEmpty();
+    }
+
+    /**
+     * 等待至少一个 SSE 订阅者（便于规划事件被前端实时看到）；超时仍返回 false。
+     */
+    public boolean awaitSubscriber(String taskId, long timeoutMs) {
+        if (taskId == null || taskId.trim().isEmpty()) {
+            return false;
+        }
+        open(taskId);
+        long deadline = System.currentTimeMillis() + Math.max(0L, timeoutMs);
+        while (System.currentTimeMillis() < deadline) {
+            if (hasSubscribers(taskId)) {
+                return true;
+            }
+            try {
+                Thread.sleep(100L);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+                return hasSubscribers(taskId);
+            }
+        }
+        return hasSubscribers(taskId);
+    }
+
+    /**
      * Gateway 侧流结束（done / 异常）时调用。
      */
     public void complete(String taskId) {

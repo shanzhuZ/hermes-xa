@@ -1,4 +1,4 @@
-"""04 账号画像写报 — 深度模式 11 步定义（Agent 风格标题）。"""
+﻿"""04 账号画像写报 — 八大阶段壳 + 业务子步定义。"""
 
 from __future__ import annotations
 
@@ -19,6 +19,18 @@ PHASE_DONE = "done"
 
 TASK_TYPE = "account_report"
 SKILL_NAME = "account-intelligence-report"
+
+STEP_PLAN_KEY = "step_plan"
+STEP_ASSETS_KEY = "step_assets"
+
+PHASE_LOCK_TARGET = "phase_lock_target"
+PHASE_DISCOVERY_SHELL = "phase_discovery"
+PHASE_ACCOUNT_COLLECT = "phase_account_collect"
+PHASE_COLLISION = "phase_collision"
+PHASE_CONTENT = "phase_content"
+PHASE_ASSETS_SHELL = "phase_assets"
+PHASE_ANALYSIS_SHELL = "phase_analysis"
+PHASE_REPORT_SHELL = "phase_report"
 
 _MCP_SEED_PLATFORMS = frozenset({"twitter", "weibo", "youtube", "bilibili"})
 
@@ -82,21 +94,49 @@ def seed_agent_title(platform: Optional[str]) -> str:
     return f"Apify Agent · {label} 采集"
 
 
-def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
-    """完整 11 步根节点（平台子节点另按候选动态追加）。"""
+def phase_shell_steps() -> Tuple[StepDef, ...]:
+    """L1 八大阶段壳（展示父节点）。"""
     return (
-        StepDef("step1_seed", seed_agent_title(platform), 10, "1", None, PHASE_SEED),
-        StepDef("step2_maigret", "Maigret Agent 跨平台收集", 20, "2", None, PHASE_DISCOVERY),
-        StepDef("step3_web_search", "网页检索 Agent 候选发现", 30, "3", None, PHASE_DISCOVERY),
-        StepDef("step4_profiles", "MCP/Apify Agent 候选主页采集", 40, "4", None, PHASE_PROFILES),
-        StepDef("step5_streams", "信息核验流 Agent 核查", 50, "5", None, PHASE_STREAM_VALIDATE),
-        StepDef("step6_validated", "相似账号认定 Agent", 60, "6", None, PHASE_VALIDATED),
-        StepDef("step7_posts", "跨平台发文采集 Agent", 70, "7", None, PHASE_POSTS),
-        StepDef("step8_img_analysis", "图片流 Agent 分析", 80, "8", None, PHASE_ANALYSIS),
-        StepDef("step9_context_views", "观点与涉华分析 Agent", 90, "9", None, PHASE_ANALYSIS),
-        StepDef("step10_context_pii", "PII 与圈层分析 Agent", 100, "10", None, PHASE_ANALYSIS),
-        StepDef("step11_report", "画像报告 Agent", 110, "11", None, PHASE_REPORT),
+        StepDef(PHASE_LOCK_TARGET, "1. 锁定目标", 100, "1", None, PHASE_SEED),
+        StepDef(PHASE_DISCOVERY_SHELL, "2. 线索发现", 200, "2", None, PHASE_DISCOVERY),
+        StepDef(PHASE_ACCOUNT_COLLECT, "3. 账号采集", 300, "3", None, PHASE_PROFILES),
+        StepDef(PHASE_COLLISION, "4. 关联碰撞", 400, "4", None, PHASE_STREAM_VALIDATE),
+        StepDef(PHASE_CONTENT, "5. 内容采集", 500, "5", None, PHASE_POSTS),
+        StepDef(PHASE_ASSETS_SHELL, "6. 资产沉淀", 600, "6", None, PHASE_ANALYSIS),
+        StepDef(PHASE_ANALYSIS_SHELL, "7. 深度研判", 700, "7", None, PHASE_ANALYSIS),
+        StepDef(PHASE_REPORT_SHELL, "8. 报告生成", 800, "8", None, PHASE_REPORT),
     )
+
+
+def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
+    """业务执行步（挂在八大壳下；step_key 不变）。"""
+    return (
+        StepDef("step1_seed", seed_agent_title(platform), 110, "1.1", PHASE_LOCK_TARGET, PHASE_SEED),
+        StepDef("step2_maigret", "Maigret Agent 跨平台收集", 210, "2.1", PHASE_DISCOVERY_SHELL, PHASE_DISCOVERY),
+        StepDef("step3_web_search", "网页检索 Agent 候选发现", 220, "2.2", PHASE_DISCOVERY_SHELL, PHASE_DISCOVERY),
+        StepDef(
+            "step4_profiles",
+            "MCP/Apify Agent 候选主页采集",
+            310,
+            "3.1",
+            PHASE_ACCOUNT_COLLECT,
+            PHASE_PROFILES,
+        ),
+        StepDef("step5_streams", "信息核验流 Agent 核查", 410, "4.1", PHASE_COLLISION, PHASE_STREAM_VALIDATE),
+        StepDef("step6_validated", "相似账号认定 Agent", 420, "4.2", PHASE_COLLISION, PHASE_VALIDATED),
+        StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
+        StepDef(STEP_ASSETS_KEY, "图片资产入库与回填", 610, "6.1", PHASE_ASSETS_SHELL, PHASE_ANALYSIS),
+        StepDef("step8_img_analysis", "图片流 Agent 分析", 710, "7.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step9_context_views", "观点与涉华分析 Agent", 720, "7.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step10_context_pii", "PII 与圈层分析 Agent", 730, "7.3", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
+        StepDef("step11_report", "画像报告 Agent", 810, "8.1", PHASE_REPORT_SHELL, PHASE_REPORT),
+    )
+
+
+def root_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDef, ...]:
+    """完整预插树：规划 + 八壳 + 业务子步（平台动态子节点另追加）。"""
+    plan = StepDef(STEP_PLAN_KEY, "制定执行计划", 5, "0", None, None)
+    return (plan,) + phase_shell_steps() + execution_steps_for_platform(platform)
 
 
 # 兼容旧引用：默认按 twitter 种子生成标题
@@ -266,21 +306,21 @@ def post_step_title(platform: str, handle: str = "") -> str:
 
 
 def profile_step_order(platform: str) -> int:
-    return 400 + PLATFORM_STEP_INDEX.get(platform, 90)
+    return 310 + PLATFORM_STEP_INDEX.get(platform, 90)
 
 
 def post_step_order(platform: str) -> int:
-    return 700 + PLATFORM_STEP_INDEX.get(platform, 90)
+    return 510 + PLATFORM_STEP_INDEX.get(platform, 90)
 
 
 def profile_step_node(platform: str) -> str:
     idx = PLATFORM_STEP_INDEX.get(platform, 90)
-    return f"4.{idx}"
+    return f"3.1.{idx}"
 
 
 def post_step_node(platform: str) -> str:
     idx = PLATFORM_STEP_INDEX.get(platform, 90)
-    return f"7.{idx}"
+    return f"5.1.{idx}"
 
 
 def is_profile_platform_step(step_key: Optional[str]) -> bool:
@@ -302,7 +342,7 @@ def tool_collect_step_key(tool_name: str, platform: Optional[str]) -> str:
 
 
 def root_step_keys() -> List[str]:
-    return [s.step_key for s in ROOT_STEPS]
+    return [s.step_key for s in execution_steps_for_platform("twitter") if s.step_key != STEP_ASSETS_KEY]
 
 
 def initial_steps(platform: Optional[str] = None) -> List[StepDef]:

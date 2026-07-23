@@ -15,9 +15,9 @@ from report_04.phases import (
     POST_PARENT_STEP_KEY,
     POST_TOOLS,
     PROFILE_TOOLS,
-    ROOT_STEPS,
     STEP5_STREAM_TOOLS,
     WEB_SEARCH_TOOLS,
+    root_step_keys,
 )
 
 logger = logging.getLogger(__name__)
@@ -58,7 +58,8 @@ _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
     "step11_report": frozenset(),
 }
 
-_ROOT_ORDER = tuple(s.step_key for s in ROOT_STEPS)
+# 仅业务执行 key（不含 step_plan / 八大阶段壳）；壳长期 pending 不可参与门禁推断
+_ROOT_ORDER = tuple(root_step_keys())
 
 
 def infer_gate_step(task_id: str) -> str:
