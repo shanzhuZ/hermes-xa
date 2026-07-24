@@ -6,16 +6,34 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 将 MySQL 中的步骤、工具输出聚合成密塔式简易进度树 JSON。
  */
 @Service
 public class TaskTreeQueryService {
+
+    /** 04 写报七大阶段壳：进度条只在这些节点上按后代叶子终态占比现算。 */
+    private static final Set<String> REPORT_PHASE_SHELLS = new HashSet<String>(Arrays.asList(
+            "phase_lock_target",
+            "phase_discovery",
+            "phase_account_collect",
+            "phase_collision",
+            "phase_content",
+            "phase_analysis",
+            "phase_report"
+    ));
+
+    private static final Set<String> TERMINAL_STATUSES = new HashSet<String>(Arrays.asList(
+            "completed", "skipped", "failed"
+    ));
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
@@ -40,6 +58,10 @@ public class TaskTreeQueryService {
         Map<String, List<String>> toolNamesByStep = collectToolNamesByStep(tools);
         String taskType = stringVal(task.get("task_type"));
         List<Map<String, Object>> nodes = buildStepHierarchy(taskId, taskType, steps, toolNamesByStep);
+        // 04：七大壳 progressPct 现算写入响应；值变化时才回写 progress_pct，不进 Hook
+        if ("account_report".equals(taskType)) {
+            applyReportPhaseShellProgress(taskId, nodes);
+        }
 
         String rootTitle = userRow != null ? stringVal(userRow.get("content")) : "";
         if (rootTitle.length() > 200) {
@@ -198,6 +220,69 @@ public class TaskTreeQueryService {
             }
         }
         return roots;
+    }
+
+    /**
+     * 04 七大壳进度：后代叶子步骤中终态占比。
+     * 叶子 = 树中无子步骤的业务节点（含视频叶、未挂视频的发文叶等）。
+     * 同步回写库字段 progress_pct，便于直接查库或读 snake_case 字段的调用方。
+     */
+    private void applyReportPhaseShellProgress(String taskId, List<Map<String, Object>> nodes) {
+        if (nodes == null || nodes.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> node : nodes) {
+            applyReportPhaseShellProgress(taskId, childrenOf(node));
+            String stepKey = stringVal(node.get("stepKey"));
+            if (REPORT_PHASE_SHELLS.contains(stepKey)) {
+                // 前端只对带此标志的节点渲染进度条（七大壳）
+                node.put("showProgress", Boolean.TRUE);
+                int pct = calcReportShellProgressPct(node);
+                node.put("progressPct", Integer.valueOf(pct));
+                try {
+                    collectTaskMapper.updateStepProgressPctIfChanged(taskId, stepKey, pct);
+                } catch (Exception ignored) {
+                    // 回写失败不影响树接口；进度仍以响应 progressPct 为准
+                }
+            }
+        }
+    }
+
+    private int calcReportShellProgressPct(Map<String, Object> shellNode) {
+        String status = stringVal(shellNode.get("status"));
+        if ("completed".equals(status) || "skipped".equals(status)) {
+            return 100;
+        }
+        if ("failed".equals(status)) {
+            return 100;
+        }
+        List<Map<String, Object>> leaves = new ArrayList<Map<String, Object>>();
+        collectStepLeaves(childrenOf(shellNode), leaves);
+        if (leaves.isEmpty()) {
+            return "running".equals(status) ? 5 : 0;
+        }
+        int terminal = 0;
+        for (Map<String, Object> leaf : leaves) {
+            String st = stringVal(leaf.get("status"));
+            if (TERMINAL_STATUSES.contains(st)) {
+                terminal++;
+            }
+        }
+        return (int) Math.round(100.0 * terminal / leaves.size());
+    }
+
+    private void collectStepLeaves(List<Map<String, Object>> nodes, List<Map<String, Object>> out) {
+        if (nodes == null || nodes.isEmpty()) {
+            return;
+        }
+        for (Map<String, Object> node : nodes) {
+            List<Map<String, Object>> children = childrenOf(node);
+            if (children == null || children.isEmpty()) {
+                out.add(node);
+            } else {
+                collectStepLeaves(children, out);
+            }
+        }
     }
 
     private Map<String, Object> buildStepNode(

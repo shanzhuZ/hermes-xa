@@ -1030,21 +1030,54 @@ def _looks_like_report_meta_closing(text: str) -> bool:
 def _resolve_final_report_text(assistant: str, session_id: Optional[str]) -> Optional[str]:
     """当前轮是终稿则用当前轮；否则从 state.db 回扫真终稿（避免短收尾覆盖）。
 
-    返回已剥掉前缀元叙述的正文，便于落 summary / 回填。
+    返回已剥前缀并清洗脏行的正文，便于落 summary / 回填。
     """
-    from report_04.report_parser import extract_report_body
+    from report_04.report_parser import prepare_final_report_body
 
     text = (assistant or "").strip()
     if is_final_report(text):
-        return extract_report_body(text)
+        return prepare_final_report_body(text)
     from_state = _load_assistant_output_from_state(session_id or "")
     if from_state and is_final_report(from_state):
-        return extract_report_body(from_state)
+        return prepare_final_report_body(from_state)
     if text and not _looks_like_report_meta_closing(text):
         return None
     if from_state and is_final_report(from_state):
-        return extract_report_body(from_state)
+        return prepare_final_report_body(from_state)
     return from_state
+
+
+def _fail_forward_contaminated_report(
+    store: TaskStore,
+    task_id: str,
+    *,
+    reason: str = "终稿含管线元叙述，清洗后仍不合格",
+) -> None:
+    """拒收脏终稿时禁止 8～10/11 停在 running：分析跳过、报告失败、任务 failed。"""
+    for step_key in ANALYSIS_STEP_KEYS:
+        st = get_step_status(task_id, step_key)
+        if st not in {"completed", "skipped"}:
+            store.set_step_status(
+                task_id,
+                step_key,
+                "skipped",
+                message=reason[:180],
+            )
+    try:
+        store._maybe_complete_phase_shell(task_id, "step10_context_pii")
+    except Exception as exc:
+        logger.warning("脏终稿 fail-forward 收口 phase_analysis 失败 task=%s: %s", task_id, exc)
+    if get_step_status(task_id, "step11_report") not in {"completed", "skipped", "failed"}:
+        store.set_step_status(task_id, "step11_report", "failed", message=reason[:180])
+    try:
+        store._maybe_complete_phase_shell(task_id, "step11_report")
+    except Exception as exc:
+        logger.warning("脏终稿 fail-forward 收口 phase_report 失败 task=%s: %s", task_id, exc)
+    try:
+        store.mark_task_failed(task_id, reason[:500])
+    except Exception as exc:
+        logger.warning("脏终稿 fail-forward 标记任务失败异常 task=%s: %s", task_id, exc)
+    logger.warning("脏终稿 fail-forward 完成 task=%s reason=%s", task_id, reason[:120])
 
 
 def _complete_step11_from_report(
@@ -1054,13 +1087,14 @@ def _complete_step11_from_report(
     session_id: Optional[str],
 ) -> None:
     """先轻量落 summary / 收口 8～11，再可选 backfill 与 reconcile（防 Hook 120s 超时半截）。"""
-    from report_04.report_parser import extract_report_body
+    from report_04.report_parser import (
+        looks_like_report_attempt,
+        prepare_final_report_body,
+    )
 
     if get_step_status(task_id, "step11_report") == "completed":
         return
-    if not is_final_report(assistant):
-        return
-    # 视频未终态：不落 step11/summary，避免抢跑
+    # 视频未终态：不落 step11/summary，避免抢跑（也不 fail-forward，等视频终态后再判）
     inject_fn = None
     try:
         from report_04.video_report import can_write_report_after_videos, inject_video_into_report
@@ -1076,8 +1110,14 @@ def _complete_step11_from_report(
             return
     except Exception as exc:
         logger.warning("视频门禁检查失败 task=%s: %s", task_id, exc)
-    # 落库用剥前缀后的正文，避免 summary 带「跳过7.5」脏前缀
-    report_body = extract_report_body(assistant)
+
+    if not is_final_report(assistant):
+        if looks_like_report_attempt(assistant):
+            _fail_forward_contaminated_report(store, task_id)
+        return
+
+    # 落库用剥前缀 + 清洗后的正文，脏行不进 summary
+    report_body = prepare_final_report_body(assistant)
     if inject_fn is not None:
         try:
             report_body = inject_fn(report_body, task_id)
@@ -1759,6 +1799,16 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
                 store, task_id, report, session_id or payload.get("session_id")
             )
             return
+        # 像终稿但脏：走收口（内部会清洗或 fail-forward），禁止 8～10 永久 running
+        from report_04.report_parser import looks_like_report_attempt
+
+        if looks_like_report_attempt(assistant):
+            if get_step_status(task_id, "step6_validated") != "completed":
+                _maybe_advance_step67(store, task_id)
+            _complete_step11_from_report(
+                store, task_id, assistant, session_id or payload.get("session_id")
+            )
+            return
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
         _try_complete_profiles(store, task_id)
@@ -1851,8 +1901,15 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
                 _maybe_advance_step67(store, task_id)
             _complete_step11_from_report(store, task_id, assistant, session_id)
         elif assistant:
-            _try_parse_seed(store, task_id, assistant, user_message)
-            _try_step3_web_candidates(store, task_id, assistant)
+            from report_04.report_parser import looks_like_report_attempt
+
+            if looks_like_report_attempt(assistant):
+                if get_step_status(task_id, "step6_validated") != "completed":
+                    _maybe_advance_step67(store, task_id)
+                _complete_step11_from_report(store, task_id, assistant, session_id)
+            else:
+                _try_parse_seed(store, task_id, assistant, user_message)
+                _try_step3_web_candidates(store, task_id, assistant)
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
     try:

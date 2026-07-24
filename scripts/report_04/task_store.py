@@ -479,7 +479,7 @@ class TaskStore:
             return False
         is_report = is_final_report(text)
         if is_report:
-            from report_04.report_parser import extract_report_body
+            from report_04.report_parser import prepare_final_report_body
             from report_04.video_report import (
                 can_write_report_after_videos,
                 inject_video_into_report,
@@ -500,7 +500,7 @@ class TaskStore:
                     msg_type="assistant_reply",
                 )
                 return False
-            text = inject_video_into_report(extract_report_body(text), task_id)
+            text = inject_video_into_report(prepare_final_report_body(text), task_id)
         clipped = text[:65535]
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
@@ -1731,7 +1731,7 @@ class TaskStore:
             "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
             (task_id,),
         )
-        # 分析步已点亮却仍 running：禁止整任务 completed（否则步骤6永久卡住）
+        # 分析步已点亮却仍 running：先尝试用对话里的终稿清洗收口，再决定是否暂缓 completed
         analysis_running = False
         for ak in ANALYSIS_STEP_KEYS:
             if _step_status(task_id, ak) == "running":
@@ -1739,6 +1739,37 @@ class TaskStore:
                 break
         if not analysis_running and _step_status(task_id, "step11_report") == "running":
             analysis_running = True
+        if analysis_running and step11 not in {"completed", "skipped"} and not has_dialogue_summary:
+            try:
+                from report_04.report_parser import is_final_report, looks_like_report_attempt
+                from report_04.sink import _complete_step11_from_report
+
+                dlg = db.fetch_one(
+                    """
+                    SELECT content FROM hermes_user_dialogues
+                    WHERE task_id=%s AND msg_type IN ('thoughts_final', 'assistant_reply')
+                    ORDER BY id DESC LIMIT 1
+                    """,
+                    (task_id,),
+                )
+                raw = str((dlg or {}).get("content") or "")
+                if raw and (is_final_report(raw) or looks_like_report_attempt(raw)):
+                    sid = str((self.get_task(task_id) or {}).get("session_id") or "") or None
+                    _complete_step11_from_report(self, task_id, raw, sid)
+                    step11 = _step_status(task_id, "step11_report")
+                    has_dialogue_summary = db.fetch_one(
+                        "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
+                        (task_id,),
+                    )
+                    analysis_running = False
+                    for ak in ANALYSIS_STEP_KEYS:
+                        if _step_status(task_id, ak) == "running":
+                            analysis_running = True
+                            break
+                    if not analysis_running and _step_status(task_id, "step11_report") == "running":
+                        analysis_running = True
+            except Exception as exc:
+                logger.warning("finalize 脏/终稿兜底收口失败 task=%s: %s", task_id, exc)
         # 终稿已落库则任务可 completed（避免 step11 完成却 ready_done=false 永久 running）
         if step11 in {"completed", "skipped"} and has_dialogue_summary:
             ready_done = True

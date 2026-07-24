@@ -79,21 +79,21 @@ metadata:
 
 ## 步骤 7.5 图片入库与分析回填（硬门槛）
 
-步骤7发文工具全部结束后、进入步骤8之前必须执行：
+步骤7发文工具全部结束后、进入步骤8之前必须执行图片资产入库（或确认系统 Hook 已兜底完成）：
 
 1. 取得当前写报 `task_id`（Gateway `task:{uuid}` 或会话活跃任务）。
 2. **禁止**用 `search_files` / `web_search`「探测是否部署」；管线在仓库 `scripts/image_pipeline/`，**视为已部署**。
-3. 工作目录在 `scripts/`（或 `PYTHONPATH` 含 `scripts`），执行：
+3. 工作目录在 `scripts/`（或 `PYTHONPATH` 含 `scripts`），优先执行：
 
 ```bash
 python -m image_pipeline.run --task-id <taskId> --force-analyze
 ```
 
-4. 将 stdout JSON 摘要最多用 1 句进度说明；失败只记日志，**禁止**把整任务判失败，**禁止**跳过直接写步骤8～11。
-5. 步骤树**不新增**节点；系统 Hook 会在 7→8 / finalize 漏跑时兜底，但 **Agent 仍须主动执行本命令**。
+4. 将 stdout JSON 摘要最多用 **1 句进度**说明（写在思考/进度里，**禁止**写入终稿任一章节）；失败只记日志，**禁止**把整任务判失败，**禁止**跳过直接写步骤8～11。
+5. 步骤树**不新增**节点；系统 Hook 会在 7→8 / finalize 漏跑时兜底。Agent 宜主动执行本命令，但**即使命令失败也不准**把 `image_pipeline` / `collect_images` / `步骤7.5` 写进报告正文。
 
-**禁止在报告正文写**：步骤 7.5、图片管线、未部署、task_id、Hook 等元叙述。
-**禁止**因终端报错/找不到会话就自编「管线未找到 / 即席执行 / 跳过步骤 7.5」写进 stream 或终稿前缀；图片入库由系统 Hook 兜底。
+**禁止在报告正文（含「四、核查思路」）写**：步骤 7.5、图片管线、未部署、task_id、Hook、`image_pipeline`、`collect_images`、force-analyze 等任何管线/运维元叙述。
+**禁止**因终端报错/找不到会话就自编「管线未找到 / 即席执行 / 跳过步骤 7.5」写进 stream 或终稿；图片入库由系统 Hook 兜底。
 
 ## 步骤 2 Maigret（必须用 collect_accounts）
 

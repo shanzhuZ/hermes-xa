@@ -141,6 +141,13 @@ public interface CollectTaskMapper {
 
     List<Map<String, Object>> selectPhaseSteps(@Param("taskId") String taskId);
 
+    /**
+     * 仅更新进度百分比（值未变则 0 行），不碰 status / updated_at，避免与 Hook 抢写。
+     */
+    int updateStepProgressPctIfChanged(@Param("taskId") String taskId,
+                                       @Param("stepKey") String stepKey,
+                                       @Param("progressPct") int progressPct);
+
     List<Map<String, Object>> selectToolOutputs(@Param("taskId") String taskId);
 
     List<Map<String, Object>> selectSuccessToolOutputsByTaskAndPhase(

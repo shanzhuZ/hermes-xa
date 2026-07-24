@@ -1,4 +1,0 @@
-mime=image/jpeg
-url=https://yt3.ggpht.com/fkZ1HFtSart-qfnY_cQMbVlCfiXjCwmjql7rSqjXdYbG0eKywDJgV8Z2L7COWPPwf6nzPYvHDyQ=s88-c-k-c0x00ffffff-no-rj
-sha256=d3ecaebace25e4b304857f1b73921b1ae5c467510994b387ca5028fdebf20a95
-file_size=7538

@@ -311,6 +311,15 @@
         ORDER BY step_order ASC, step_key ASC
     </select>
 
+    <!-- 04 七大壳进度：树接口现算后回写，值相同则跳过 -->
+    <update id="updateStepProgressPctIfChanged">
+        UPDATE collect_phase_steps
+        SET progress_pct = #{progressPct}
+        WHERE task_id = #{taskId}
+          AND step_key = #{stepKey}
+          AND (progress_pct IS NULL OR progress_pct &lt;&gt; #{progressPct})
+    </update>
+
     <select id="selectToolOutputs" resultType="java.util.HashMap">
         SELECT id, tool_name, status, duration_ms, executed_at, phase
         FROM hermes_tool_outputs

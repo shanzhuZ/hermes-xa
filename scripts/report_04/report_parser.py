@@ -92,6 +92,28 @@ def has_report_dirty_meta(content: str) -> bool:
     return any(p.search(t) for p in _DIRTY_META_PATTERNS)
 
 
+def sanitize_report_dirty_meta(content: str) -> str:
+    """删除命中管线脏词的整行，保留业务章节；不关脏门禁，只做可落库清洗。"""
+    raw = content or ""
+    if not raw.strip():
+        return ""
+    if not has_report_dirty_meta(raw):
+        return raw.strip()
+    kept: List[str] = []
+    for line in raw.splitlines():
+        if any(p.search(line) for p in _DIRTY_META_PATTERNS):
+            continue
+        kept.append(line)
+    text = "\n".join(kept)
+    text = re.sub(r"\n{3,}", "\n\n", text).strip()
+    return text
+
+
+def prepare_final_report_body(content: str) -> str:
+    """剥前缀进度句 + 清洗管线脏行，得到可判定/可落库的终稿正文。"""
+    return sanitize_report_dirty_meta(extract_report_body(content))
+
+
 def starts_with_report_section1(content: str) -> bool:
     """终稿必须以「一、账号基本信息」开头（允许前导空白与可选 ##）。"""
     t = (content or "").lstrip()
@@ -104,21 +126,36 @@ def starts_with_report_section1(content: str) -> bool:
     return t.startswith(_SECTION1_HEAD)
 
 
-def is_final_report(content: str) -> bool:
-    """合法步骤11终稿：够长、含≥2个章节、以第一节开头、正文无管线脏数据。
+def _section_marker_hits(body: str) -> int:
+    text = (body or "").replace(" ", "").replace("\u3000", "")
+    return sum(1 for m in _FINAL_MARKERS if m in text)
 
-    允许 Agent 在第一节前写进度句；判定时先剥前缀再门禁。
+
+def looks_like_report_attempt(content: str) -> bool:
+    """不论是否脏：是否像在写四章终稿（用于 fail-forward，防 8～10 永久 running）。"""
+    body = extract_report_body(content)
+    if len(body) < 200:
+        return False
+    if not starts_with_report_section1(body):
+        return False
+    return _section_marker_hits(body) >= 2
+
+
+def is_final_report(content: str) -> bool:
+    """合法步骤11终稿：够长、含≥2个章节、以第一节开头；脏行先清洗再判定。
+
+    允许 Agent 在第一节前写进度句；判定时先剥前缀再清洗脏行。
+    清洗后仍含脏词或结构不够 → False（由调用方 fail-forward，禁止停在 running）。
     注意：步骤8/9/10 的独立块走 parse_standalone_analysis_blocks，不经过本函数。
     """
-    body = extract_report_body(content)
+    body = prepare_final_report_body(content)
     if len(body) < 200:
         return False
     if not starts_with_report_section1(body):
         return False
     if has_report_dirty_meta(body):
         return False
-    text = body.replace(" ", "").replace("\u3000", "")
-    return sum(1 for m in _FINAL_MARKERS if m in text) >= 2
+    return _section_marker_hits(body) >= 2
 
 
 def parse_standalone_analysis_blocks(text: str) -> Dict[str, str]:
@@ -150,12 +187,12 @@ def _extract_section(text: str, start_marker: str, end_markers: Tuple[str, ...])
 def backfill_analysis_from_report(text: str) -> Dict[str, str]:
     """从步骤十一终稿切片回填 8～10。
 
-    仅对 is_final_report 通过的干净终稿切片；脏数据/非第一节开头的正文不回填，
-    避免污染 display。步骤8/9/10 若已由 standalone 块写入则不受影响。
+    仅对 is_final_report 通过的（已清洗）终稿切片；不合格不回填，避免污染 display。
+    步骤8/9/10 若已由 standalone 块写入则不受影响。
     """
-    body = extract_report_body(text)
-    if not is_final_report(body):
+    if not is_final_report(text):
         return {}
+    body = prepare_final_report_body(text)
     s8_parts: List[str] = []
     s1 = _extract_section(body, "一、账号基本信息", ("二、", "## 二"))
     if s1:

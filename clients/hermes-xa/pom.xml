@@ -12,6 +12,8 @@
         <project.build.sourceEncoding>UTF-8</project.build.sourceEncoding>
         <project.reporting.outputEncoding>UTF-8</project.reporting.outputEncoding>
         <spring-boot.version>2.6.13</spring-boot.version>
+        <!-- 无 spring-boot-starter-parent 时显式指定，避免 spring-boot:run 找不到主类 -->
+        <start-class>com.example.aw.AwApplication</start-class>
     </properties>
     <dependencies>
         <dependency>
@@ -153,7 +155,10 @@
                 <artifactId>spring-boot-maven-plugin</artifactId>
                 <version>${spring-boot.version}</version>
                 <configuration>
-                    <mainClass>com.example.aw.AwApplication</mainClass>
+                    <mainClass>${start-class}</mainClass>
+                    <!-- 先编再跑，避免 target/classes 被清掉后直接 run 报「找不到主类」 -->
+                    <fork>true</fork>
+                    <jvmArguments>-Dfile.encoding=UTF-8</jvmArguments>
                 </configuration>
                 <executions>
                     <execution>
