@@ -101,10 +101,31 @@ def normalize_published_at(value: Any) -> Optional[str]:
     支持：
     - 2026-06-28T01:00:29Z / 带毫秒 / 带时区偏移
     - Wed Jul 22 05:19:47 +0000 2026（Twitter）
+    - Unix 秒/毫秒时间戳（int 或数字字符串）
     """
+    if value is None or value == "":
+        return None
+    # Unix 时间戳（秒 / 毫秒）
+    if isinstance(value, (int, float)) and not isinstance(value, bool):
+        ts = float(value)
+        if ts > 1e12:  # 毫秒
+            ts = ts / 1000.0
+        if 1e9 <= ts < 1e11:
+            try:
+                return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+            except Exception:
+                return None
     text = first_str(value)
     if not text:
         return None
+    if re.match(r"^\d{10,13}$", text):
+        try:
+            ts = float(text)
+            if ts > 1e12:
+                ts = ts / 1000.0
+            return datetime.utcfromtimestamp(ts).strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            return None
     # 已是 MySQL 友好格式
     if re.match(r"^\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}$", text):
         return text
@@ -130,6 +151,37 @@ def normalize_published_at(value: Any) -> Optional[str]:
         return dt.strftime("%Y-%m-%d %H:%M:%S")
     except Exception:
         return None
+
+
+def published_at_from_item(item: Dict[str, Any], *extra_keys: str) -> Optional[str]:
+    """从发文原始字段中提取发布时间（多平台字段名兜底）。"""
+    if not isinstance(item, dict):
+        return None
+    keys = (
+        "published_at",
+        "publishedAt",
+        "created_at",
+        "createdAt",
+        "date",
+        "datetime",
+        "time",
+        "timestamp",
+        "takenAt",
+        "taken_at",
+        "createTime",
+        "create_time",
+        "created_time",
+        "publishTime",
+        "pushedAt",
+        "updatedAt",
+    ) + tuple(extra_keys)
+    for key in keys:
+        if key not in item:
+            continue
+        parsed = normalize_published_at(item.get(key))
+        if parsed:
+            return parsed
+    return None
 
 
 def profile_row(

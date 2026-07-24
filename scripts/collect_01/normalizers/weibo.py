@@ -4,7 +4,14 @@ from __future__ import annotations
 
 from typing import Any, Dict, List, Optional
 
-from collect_01.normalizers.base import first_str, parse_fuzzy_count, post_row, profile_row, safe_int
+from collect_01.normalizers.base import (
+    first_str,
+    parse_fuzzy_count,
+    post_row,
+    profile_row,
+    published_at_from_item,
+    safe_int,
+)
 
 
 def normalize_profile(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -69,7 +76,7 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 content_type=content_type,
                 content_text=text,
                 content_url=f"https://m.weibo.cn/detail/{content_id}",
-                published_at=first_str(item.get("created_at")),
+                published_at=published_at_from_item(item, "created_at", "created_at_str"),
                 like_count=safe_int(item.get("attitudes_count")),
                 comment_count=safe_int(item.get("comments_count")),
                 repost_count=safe_int(item.get("reposts_count")),

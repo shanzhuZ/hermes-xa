@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from collect_01.normalizers.base import first_str, post_row, profile_row, safe_int
+from collect_01.normalizers.base import first_str, post_row, profile_row, published_at_from_item, safe_int
 
 
 def normalize_profile(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -78,7 +78,7 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 content_id=str(tid),
                 content_text=first_str(item.get("full_text"), item.get("text")),
                 content_url=f"https://twitter.com/i/status/{tid}",
-                published_at=first_str(item.get("created_at"), item.get("date")),
+                published_at=published_at_from_item(item, "created_at", "date"),
                 like_count=safe_int(item.get("favorite_count") if item.get("favorite_count") is not None else item.get("likes")),
                 repost_count=safe_int(item.get("retweet_count") if item.get("retweet_count") is not None else item.get("retweets")),
                 raw=item,

@@ -1088,7 +1088,10 @@ class TaskStore:
                 logger.warning("展示层双写 candidate 失败: %s", exc)
 
     def save_post_rows(self, rows: List[Dict[str, Any]], *, step_key: str = POST_PARENT_STEP_KEY) -> None:
+        from collect_01.normalizers.base import normalize_published_at
+
         for row in rows:
+            row = {**row, "published_at": normalize_published_at(row.get("published_at"))}
             db.execute(
                 """
                 INSERT INTO collect_posts
@@ -1103,7 +1106,8 @@ class TaskStore:
                 ON DUPLICATE KEY UPDATE
                   content_text=VALUES(content_text), view_count=VALUES(view_count),
                   like_count=VALUES(like_count), comment_count=VALUES(comment_count),
-                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json)
+                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json),
+                  published_at=COALESCE(VALUES(published_at), published_at)
                 """,
                 row,
             )

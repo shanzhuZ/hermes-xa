@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Any, Dict, List
 
-from collect_01.normalizers.base import first_str, post_row, profile_row, safe_int
+from collect_01.normalizers.base import first_str, post_row, profile_row, published_at_from_item, safe_int
 
 
 def youtube_channel_id_ok(channel_id: str) -> bool:
@@ -64,7 +64,7 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 title=first_str(item.get("title")),
                 content_text=first_str(item.get("description")),
                 content_url=f"https://www.youtube.com/watch?v={vid}",
-                published_at=first_str(item.get("publishedAt"), item.get("published_at")),
+                published_at=published_at_from_item(item, "publishedAt", "published_at"),
                 view_count=safe_int(item.get("viewCount")),
                 like_count=safe_int(item.get("likeCount")),
                 comment_count=safe_int(item.get("commentCount")),

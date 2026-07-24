@@ -6,7 +6,14 @@ import hashlib
 import re
 from typing import Any, Dict, List, Optional
 
-from collect_01.normalizers.base import first_str, parse_fuzzy_count, post_row, profile_row, safe_int
+from collect_01.normalizers.base import (
+    first_str,
+    parse_fuzzy_count,
+    post_row,
+    profile_row,
+    published_at_from_item,
+    safe_int,
+)
 
 # Apify Actor 工具 → 平台（与 phases.APIFY_TOOL_PLATFORM 一致）
 APIFY_TOOL_PLATFORM: Dict[str, str] = {
@@ -205,14 +212,10 @@ def _guess_platform(ctx: Dict[str, Any], items: List[Any]) -> str:
 
 
 def _normalize_published_at(value: Any) -> Optional[str]:
-    """ISO8601 → MySQL DATETIME 可接受字符串。"""
-    text = first_str(value)
-    if not text:
-        return None
-    text = text.replace("T", " ").replace("Z", "").strip()
-    if "." in text:
-        text = text.split(".", 1)[0]
-    return text[:19] if text else None
+    """兼容旧调用；统一走 base.normalize_published_at。"""
+    from collect_01.normalizers.base import normalize_published_at
+
+    return normalize_published_at(value)
 
 
 def _short_content_url(url: Optional[str], limit: int = 512) -> Optional[str]:
@@ -328,9 +331,7 @@ def _instagram_items(ctx: Dict[str, Any], items: List[Any]):
                 content_url=_short_content_url(
                     first_str(item.get("url"), item.get("displayUrl"))
                 ),
-                published_at=_normalize_published_at(
-                    first_str(item.get("timestamp"), item.get("takenAt"))
-                ),
+                published_at=published_at_from_item(item, "timestamp", "takenAt"),
                 like_count=safe_int(item.get("likesCount")),
                 comment_count=safe_int(item.get("commentsCount")),
                 raw=item,
@@ -373,6 +374,7 @@ def _tiktok_items(ctx: Dict[str, Any], items: List[Any]):
                     content_id=str(pid),
                     content_type="video",
                     content_text=first_str(item.get("text"), item.get("desc")),
+                    published_at=published_at_from_item(item, "createTime", "create_time"),
                     view_count=safe_int(item.get("playCount")),
                     like_count=safe_int(item.get("diggCount")),
                     comment_count=safe_int(item.get("commentCount")),
@@ -420,7 +422,10 @@ def _telegram_items(ctx: Dict[str, Any], items: List[Any]):
                     account_id=channel or "unknown",
                     content_id=str(pid),
                     content_text=first_str(item.get("text"), item.get("message")),
+                    content_url=first_str(item.get("url")),
+                    published_at=published_at_from_item(item, "date", "datetime", "time"),
                     view_count=safe_int(item.get("views")),
+                    like_count=safe_int(item.get("reactions")),
                     raw=item,
                 )
             )
@@ -492,6 +497,9 @@ def _facebook_items(ctx: Dict[str, Any], items: List[Any]):
                 content_id=str(post_id),
                 content_text=first_str(item.get("message")),
                 content_url=first_str(item.get("url")),
+                published_at=published_at_from_item(
+                    item, "timestamp", "time", "created_time", "publish_time"
+                ),
                 like_count=safe_int(reactions.get("total_reactions")),
                 comment_count=safe_int(comments.get("total_comments")),
                 raw=item,
@@ -546,6 +554,9 @@ def _github_items(ctx: Dict[str, Any], items: List[Any]):
                     title=repo_name,
                     content_text=first_str(repo.get("description")),
                     content_url=first_str(repo.get("url"), f"https://github.com/{username}/{repo_name}"),
+                    published_at=published_at_from_item(
+                        repo, "createdAt", "pushedAt", "updatedAt", "created_at"
+                    ),
                     like_count=safe_int(repo.get("stars")),
                     comment_count=safe_int(repo.get("openIssues")),
                     repost_count=safe_int(repo.get("forks")),

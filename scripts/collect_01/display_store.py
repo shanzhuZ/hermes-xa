@@ -248,7 +248,7 @@ def sync_post_display(row: Dict[str, Any], *, step_key: str) -> None:
         """
         SELECT id, task_id, platform, account_id, content_id, content_type, title,
                content_text, content_url, published_at, view_count, like_count,
-               comment_count, repost_count, created_at
+               comment_count, repost_count, created_at, raw_json
         FROM collect_posts
         WHERE task_id=%s AND platform=%s AND account_id=%s AND content_id=%s
         """,
@@ -257,6 +257,30 @@ def sync_post_display(row: Dict[str, Any], *, step_key: str) -> None:
     if not ref:
         return
     payload = dict(ref)
+    # 列为空时从 raw_json 兜底发布时间，保证展示层有「发布时间」
+    if not payload.get("published_at") and payload.get("raw_json"):
+        try:
+            import json
+
+            from collect_01.normalizers.base import published_at_from_item
+
+            raw = payload.get("raw_json")
+            obj = json.loads(raw) if isinstance(raw, str) else raw
+            if isinstance(obj, dict):
+                pub = published_at_from_item(obj)
+                if pub:
+                    payload["published_at"] = pub
+                    # 同步回填业务表，避免下次再空
+                    db.execute(
+                        """
+                        UPDATE collect_posts SET published_at=%s
+                        WHERE id=%s AND published_at IS NULL
+                        """,
+                        (pub, ref["id"]),
+                    )
+        except Exception:
+            pass
+    payload.pop("raw_json", None)
     platform = str(ref.get("platform") or "")
     upsert_display_record(
         task_id=str(ref["task_id"]),
