@@ -11,6 +11,7 @@ from typing import Any, Dict, List, Optional
 from analyze import analyze_frames, summarize_video_from_frame_texts
 from config import (
     default_frame_interval_sec,
+    hermes_home,
     max_analyze_duration_sec,
     suggested_max_videos_per_task,
     video_root_dir,
@@ -21,6 +22,36 @@ from frames import extract_frames_by_interval
 import mysql_store
 
 logger = logging.getLogger(__name__)
+
+
+def _put_frame_to_hbase(task_id: str, local_path: str) -> Dict[str, Any]:
+    """上传抽帧 jpg 到 HBase（frm: 前缀）；成功返回 row_key，失败不抛死。"""
+    import hashlib
+    import sys
+
+    scripts = str((hermes_home() / "scripts").resolve())
+    if scripts not in sys.path:
+        sys.path.insert(0, scripts)
+    from image_pipeline.hbase_store import put_frame  # noqa: WPS433
+
+    p = Path(local_path)
+    if not p.is_file():
+        return {"ok": False, "error": "frame_file_missing"}
+    raw = p.read_bytes()
+    sha = hashlib.sha256(raw).hexdigest()
+    try:
+        row_key = put_frame(
+            task_id,
+            sha,
+            raw,
+            mime_type="image/jpeg",
+            origin_url=str(p),
+            file_size=len(raw),
+        )
+        return {"ok": True, "hbase_row_key": row_key, "content_sha256": sha, "file_size": len(raw)}
+    except Exception as exc:
+        logger.warning("抽帧 HBase 上传失败 path=%s err=%s", local_path, exc)
+        return {"ok": False, "error": str(exc), "content_sha256": sha, "file_size": len(raw)}
 
 
 def _task_video_dir(task_id: str, video_id: str) -> Path:
@@ -202,25 +233,46 @@ def run_video_pipeline(
             idx = int(fr["frame_index"])
             is_preview = 1 if idx in preview_idxs else 0
             sort_order = (sorted(preview_idxs).index(idx) + 1) if is_preview else None
-            frame_db_rows.append(
-                {
-                    "frame_id": mysql_store.make_frame_id(video_id, idx),
-                    "platform": platform,
-                    "account_id": account_id,
-                    "post_id": post_id,
-                    "frame_index": idx,
-                    "timestamp_sec": fr["timestamp_sec"],
-                    "is_preview": is_preview,
-                    "sort_order": sort_order,
-                    "local_path": path,
-                    "mime_type": "image/jpeg",
-                    "width": fr.get("width"),
-                    "height": fr.get("height"),
-                    "analyze_status": "completed" if success else "failed",
-                    "vision_text": desc,
-                    "analysis_json": {"error": err} if err else {"description": desc},
-                }
-            )
+            row = {
+                "frame_id": mysql_store.make_frame_id(video_id, idx),
+                "platform": platform,
+                "account_id": account_id,
+                "post_id": post_id,
+                "frame_index": idx,
+                "timestamp_sec": fr["timestamp_sec"],
+                "is_preview": is_preview,
+                "sort_order": sort_order,
+                "local_path": path,
+                "mime_type": "image/jpeg",
+                "width": fr.get("width"),
+                "height": fr.get("height"),
+                "analyze_status": "completed" if success else "failed",
+                "vision_text": desc,
+                "analysis_json": {"error": err} if err else {"description": desc},
+                "storage_status": "pending",
+                "hbase_row_key": None,
+            }
+            # 抽帧进 HBase；成功则删本地 jpg（mp4 保留）
+            put = _put_frame_to_hbase(task_id, path)
+            if put.get("ok") and put.get("hbase_row_key"):
+                row["hbase_row_key"] = put["hbase_row_key"]
+                row["storage_status"] = "stored"
+                row["content_sha256"] = put.get("content_sha256")
+                row["file_size"] = put.get("file_size")
+                try:
+                    fp = Path(path)
+                    if fp.is_file():
+                        fp.unlink()
+                    row["local_path"] = None
+                except Exception as unlink_exc:
+                    logger.warning("删除本地抽帧失败 path=%s err=%s", path, unlink_exc)
+            else:
+                row["storage_status"] = "failed"
+                if put.get("content_sha256"):
+                    row["content_sha256"] = put.get("content_sha256")
+                if put.get("file_size"):
+                    row["file_size"] = put.get("file_size")
+            frame_db_rows.append(row)
 
         if persist:
             mysql_store.replace_frames(video_id, task_id, frame_db_rows)
@@ -242,12 +294,13 @@ def run_video_pipeline(
                 video_analysis_json = {"source": "frame_text_summary", "ok": False, "error": summary.get("error")}
 
         analyzed_cnt = sum(1 for x in analysis_list if x.get("success"))
+        stored_cnt = sum(1 for r in frame_db_rows if r.get("storage_status") == "stored")
         if persist:
             mysql_store.mark_video_analyzed(
                 video_id,
                 frame_extracted_cnt=len(frame_rows_raw),
                 frame_analyzed_cnt=analyzed_cnt,
-                frame_stored_cnt=len(frame_rows_raw),
+                frame_stored_cnt=stored_cnt,
                 analysis_json=analysis_list,
                 video_analysis_text=video_analysis_text,
                 video_analysis_json=video_analysis_json,

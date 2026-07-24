@@ -3,13 +3,24 @@ package com.example.aw.collect.service;
 import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectImageMapper;
 import com.example.aw.collect.mapper.CollectTaskMapper;
+import com.example.aw.collect.mapper.CollectVideoMapper;
 import com.example.aw.collect.registry.TaskTypeRegistry;
+import org.slf4j.Logger;
+import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
+import org.springframework.beans.factory.annotation.Value;
 import org.springframework.http.HttpStatus;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 import org.springframework.web.server.ResponseStatusException;
 
+import java.io.IOException;
+import java.nio.file.FileVisitResult;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.Paths;
+import java.nio.file.SimpleFileVisitor;
+import java.nio.file.attribute.BasicFileAttributes;
 import java.util.ArrayList;
 import java.util.LinkedHashMap;
 import java.util.List;
@@ -41,6 +52,8 @@ import java.util.Map;
 @Service
 public class HistoryQaQueryService {
 
+    private static final Logger log = LoggerFactory.getLogger(HistoryQaQueryService.class);
+
     /**
      * 列表里「终稿预览」最大字符数。
      * 超过则截断并加省略号，避免列表接口把整篇报告拖回来。
@@ -54,6 +67,9 @@ public class HistoryQaQueryService {
 
     /** 历史详情里单张嵌入 dataUrl 的最大字节数（约 1.5MB）；超过只留 imageUrl */
     private static final int DETAIL_IMAGE_MAX_BYTES = 1536 * 1024;
+
+    /** 历史详情里单帧嵌入 dataUrl 的最大字节数 */
+    private static final int DETAIL_FRAME_MAX_BYTES = 1536 * 1024;
 
     /** 任务 / 对话 / 账号 / 发文 等综合 Mapper */
     @Autowired
@@ -69,6 +85,18 @@ public class HistoryQaQueryService {
      */
     @Autowired
     private ImageAssetQueryService imageAssetQueryService;
+
+    /** 视频 + 抽帧（HBase dataUrl） */
+    @Autowired
+    private VideoAssetQueryService videoAssetQueryService;
+
+    /** 视频 / 抽帧表删除 */
+    @Autowired
+    private CollectVideoMapper collectVideoMapper;
+
+    /** 本地视频根目录，对应 hermes.video.local-dir */
+    @Value("${hermes.video.local-dir:D:/hermes-xa/data/video_bytes}")
+    private String videoLocalDir;
 
     /**
      * 复用终稿查询：优先 summary，否则 assistant_reply；都没有则 ready=false。
@@ -210,6 +238,10 @@ public class HistoryQaQueryService {
         List<Map<String, Object>> images = imageAssetQueryService.listTaskImagesWithDataUrl(
                 taskId.trim(), DETAIL_IMAGE_LIMIT, DETAIL_IMAGE_MAX_BYTES);
 
+        // ---------- 6b. 视频列表（mp4 静态 URL + 抽帧 HBase dataUrl + 分析正文） ----------
+        List<Map<String, Object>> videos = videoAssetQueryService.listTaskVideosWithFrames(
+                taskId.trim(), DETAIL_FRAME_MAX_BYTES);
+
         // ---------- 7. 数量统计（与数组长度可能不一致：图片超过单页上限时） ----------
         long profileCount = profiles.size();
         long postCount = posts.size();
@@ -221,11 +253,13 @@ public class HistoryQaQueryService {
             postCount = collectTaskMapper.countPostsByTaskId(taskId.trim());
         }
         long imageCount = collectImageMapper.countByTask(taskId.trim(), null, null, null);
+        long videoCount = videoAssetQueryService.countVideosByTask(taskId.trim());
 
         Map<String, Object> counts = new LinkedHashMap<String, Object>();
         counts.put("profiles", Long.valueOf(profileCount));
         counts.put("posts", Long.valueOf(postCount));
         counts.put("images", Long.valueOf(imageCount));
+        counts.put("videos", Long.valueOf(videoCount));
 
         // ---------- 8. 组装详情响应 ----------
         Map<String, Object> body = new LinkedHashMap<String, Object>();
@@ -245,6 +279,7 @@ public class HistoryQaQueryService {
         body.put("profiles", profiles);
         body.put("posts", posts);
         body.put("images", images);
+        body.put("videos", videos);
         return body;
     }
 
@@ -506,24 +541,15 @@ public class HistoryQaQueryService {
     }
 
     /**
-     * 判断任务状态是否允许出现在历史问答接口中。
-     * 当前与列表 SQL 的 IN ('pending','running','completed') 保持一致。
-     */
-    /**
-     * 按 taskId 删除该任务在 MySQL 中的全部关联数据（含 hermes_tasks 自身）。
+     * 按 taskId 删除历史任务：MySQL 关联数据 + 本地 video_bytes/{taskId}。
      * <p>
-     * <b>删除范围（当前库含 task_id 的表）：</b>
-     * collect_images、collect_display_records、collect_identity_streams、
-     * collect_phase_steps、collect_posts、collect_profiles、collect_task_summaries、
-     * collect_validated_accounts、cross_platform_candidates、hermes_tool_outputs、
-     * hermes_user_dialogues，最后 hermes_tasks。
+     * 仅允许 {@code completed}/{@code failed}/{@code running}；其它状态（含 pending）返回 409。
+     * 不删 HBase。本地目录删除失败不影响 MySQL（{@code videoFilesDeleted=false}）。
      * <p>
-     * <b>注意：</b>HBase 中图片二进制（collect_image_bytes）不会随本接口删除。
-     * <p>
-     * 同一事务内执行，任一 DELETE 失败则全部回滚。
+     * 删除顺序：抽帧 → 视频 → 图片等子表 → … → hermes_tasks；再尽力删本地目录。
      *
      * @param taskId 任务 ID
-     * @return ok=true、taskId、deleted（各表实际删除行数）
+     * @return ok=true、taskId、deleted、videoFilesDeleted
      */
     @Transactional(rollbackFor = Exception.class)
     public Map<String, Object> deleteHistoryTask(String taskId) {
@@ -536,8 +562,15 @@ public class HistoryQaQueryService {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task_not_found");
         }
 
-        // 先删有 FK 的子表 collect_images，再删其余业务表，最后删主表
+        String status = str(task.get("status"));
+        if (!isDeletableHistoryStatus(status)) {
+            throw new ResponseStatusException(HttpStatus.CONFLICT, "task_status_not_deletable");
+        }
+
+        // 先删有 FK/依赖的子表，再删主表
         Map<String, Object> deleted = new LinkedHashMap<String, Object>();
+        deleted.put("videoFrames", Integer.valueOf(collectVideoMapper.deleteFramesByTaskId(tid)));
+        deleted.put("videos", Integer.valueOf(collectVideoMapper.deleteVideosByTaskId(tid)));
         deleted.put("images", Integer.valueOf(collectTaskMapper.deleteCollectImagesByTaskId(tid)));
         deleted.put("displayRecords", Integer.valueOf(collectTaskMapper.deleteCollectDisplayRecordsByTaskId(tid)));
         deleted.put("identityStreams", Integer.valueOf(collectTaskMapper.deleteCollectIdentityStreamsByTaskId(tid)));
@@ -551,11 +584,55 @@ public class HistoryQaQueryService {
         deleted.put("dialogues", Integer.valueOf(collectTaskMapper.deleteHermesUserDialoguesByTaskId(tid)));
         deleted.put("task", Integer.valueOf(collectTaskMapper.deleteHermesTaskById(tid)));
 
+        boolean videoFilesDeleted = deleteLocalVideoTaskDir(tid);
+
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("ok", Boolean.TRUE);
         body.put("taskId", tid);
         body.put("deleted", deleted);
+        body.put("videoFilesDeleted", Boolean.valueOf(videoFilesDeleted));
         return body;
+    }
+
+    /** 允许删除：completed / failed / running */
+    private static boolean isDeletableHistoryStatus(String status) {
+        return "completed".equals(status)
+                || "failed".equals(status)
+                || "running".equals(status);
+    }
+
+    /**
+     * 删除本地 {@code videoLocalDir/taskId} 目录；目录不存在视为成功。
+     * 失败只打日志，返回 false，不抛异常。
+     */
+    private boolean deleteLocalVideoTaskDir(String taskId) {
+        String root = videoLocalDir == null ? "D:/hermes-xa/data/video_bytes" : videoLocalDir.trim();
+        Path dir = Paths.get(root, taskId);
+        if (!Files.exists(dir)) {
+            return true;
+        }
+        try {
+            Files.walkFileTree(dir, new SimpleFileVisitor<Path>() {
+                @Override
+                public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) throws IOException {
+                    Files.deleteIfExists(file);
+                    return FileVisitResult.CONTINUE;
+                }
+
+                @Override
+                public FileVisitResult postVisitDirectory(Path directory, IOException exc) throws IOException {
+                    if (exc != null) {
+                        throw exc;
+                    }
+                    Files.deleteIfExists(directory);
+                    return FileVisitResult.CONTINUE;
+                }
+            });
+            return true;
+        } catch (Exception e) {
+            log.warn("删除本地视频目录失败 taskId={} dir={}: {}", taskId, dir, e.toString());
+            return false;
+        }
     }
 
     private static boolean isHistoryVisibleStatus(String status) {

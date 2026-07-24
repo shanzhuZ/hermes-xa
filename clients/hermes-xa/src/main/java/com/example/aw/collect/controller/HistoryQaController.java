@@ -144,17 +144,22 @@ public class HistoryQaController {
     }
 
     /**
-     * 删除历史任务及其在 MySQL 中的全部关联数据（含 hermes_tasks）。
+     * 删除历史任务：MySQL 关联表 + 本地视频目录；不删 HBase。
      * <p>
      * <b>请求示例：</b>
      * <pre>
      * DELETE /api/history/tasks/6d33a223-aad7-4d05-811e-8df53a3f9bd4
      * </pre>
      * <p>
-     * <b>成功响应：</b>{@code ok=true}、{@code taskId}、{@code deleted}（各表删除行数）。
-     * <b>不删</b> HBase 中的图片二进制。
+     * <b>成功响应：</b>{@code ok=true}、{@code taskId}、{@code deleted}（各表删除行数）、
+     * {@code videoFilesDeleted}（本地 video_bytes 目录是否删成功；失败不影响 MySQL 删除结果）。
+     * <b>不删</b> HBase 中的图片/抽帧二进制。
      * <p>
-     * <b>异常约定：</b>404 任务不存在；400 taskId 为空；500 删除失败。
+     * <b>异常约定：</b>
+     * 400 taskId 为空；
+     * 404 任务不存在；
+     * 409 状态非 completed/failed/running（如 pending），error=task_status_not_deletable；
+     * 500 删除失败。
      *
      * @param taskId 路径参数，任务唯一 ID
      * @return 200 + 删除结果；或 4xx/5xx + {error, detail}

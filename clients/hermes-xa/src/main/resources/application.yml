@@ -65,3 +65,8 @@ hermes:
     fail-cooldown-ms: ${HERMES_HBASE_FAIL_COOLDOWN_MS:60000}
     # 与 Python image_pipeline 本地双写目录一致
     local-dir: ${HERMES_IMAGE_LOCAL_DIR:D:/hermes-xa/data/image_bytes}
+  # 视频：mp4 本地静态映射；抽帧进 HBase（frm: 前缀，同 collect_image_bytes）
+  video:
+    public-base-url: ${HERMES_VIDEO_PUBLIC_BASE_URL:http://192.168.100.39:4377}
+    local-dir: ${HERMES_VIDEO_LOCAL_DIR:D:/hermes-xa/data/video_bytes}
+    url-prefix: ${HERMES_VIDEO_URL_PREFIX:/video-files}

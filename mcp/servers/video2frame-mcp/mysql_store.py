@@ -112,24 +112,29 @@ def mark_analyze_running(video_id: str) -> None:
 
 
 def replace_frames(video_id: str, task_id: str, frames: List[Dict[str, Any]]) -> None:
-    """覆盖写入该视频的全部帧行。"""
+    """覆盖写入该视频的全部帧行（含 hbase_row_key / storage_status）。"""
     dbutil.execute("DELETE FROM collect_video_frames WHERE video_id=%s", (video_id,))
     for fr in frames:
-        path = fr["local_path"]
-        p = Path(path)
-        size = p.stat().st_size if p.is_file() else None
-        sha = file_sha256(path) if p.is_file() else None
+        path = fr.get("local_path")
+        p = Path(path) if path else None
+        size = fr.get("file_size")
+        sha = fr.get("content_sha256")
+        if p is not None and p.is_file():
+            size = p.stat().st_size
+            sha = file_sha256(str(p))
         dbutil.execute(
             """
             INSERT INTO collect_video_frames (
                 frame_id, video_id, task_id, platform, account_id, post_id,
                 frame_index, timestamp_sec, is_preview, sort_order,
-                local_path, mime_type, file_size, width, height, content_sha256,
+                local_path, hbase_row_key, storage_status,
+                mime_type, file_size, width, height, content_sha256,
                 analyze_status, vision_text, analysis_json
             ) VALUES (
                 %s,%s,%s,%s,%s,%s,
                 %s,%s,%s,%s,
-                %s,%s,%s,%s,%s,%s,
+                %s,%s,%s,
+                %s,%s,%s,%s,%s,
                 %s,%s,%s
             )
             """,
@@ -145,6 +150,8 @@ def replace_frames(video_id: str, task_id: str, frames: List[Dict[str, Any]]) ->
                 int(fr.get("is_preview") or 0),
                 fr.get("sort_order"),
                 path,
+                fr.get("hbase_row_key"),
+                fr.get("storage_status") or "pending",
                 fr.get("mime_type") or "image/jpeg",
                 size,
                 fr.get("width"),

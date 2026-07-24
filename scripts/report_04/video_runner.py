@@ -81,7 +81,7 @@ def run_one(
     account_id: str = "",
     post_id: str = "",
     timeout_sec: int = 600,
-    max_duration_sec: float = 500.0,
+    max_duration_sec: float = 180.0,
     frame_interval_sec: float = 3.0,
 ) -> Dict[str, Any]:
     result_holder: Dict[str, Any] = {}
@@ -161,7 +161,7 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--account-id", default="")
     parser.add_argument("--post-id", default="")
     parser.add_argument("--timeout-sec", type=int, default=600)
-    parser.add_argument("--max-duration-sec", type=float, default=500.0)
+    parser.add_argument("--max-duration-sec", type=float, default=180.0)
     parser.add_argument("--frame-interval-sec", type=float, default=3.0)
     args = parser.parse_args(argv)
 

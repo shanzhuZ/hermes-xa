@@ -34,8 +34,8 @@ from report_04.phases import (
 
 logger = logging.getLogger(__name__)
 
-# 分析参数：只取前 500 秒、3 秒一帧（runner 内再传）
-VIDEO_MAX_DURATION_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_MAX_DURATION_SEC", "500"))
+# 分析参数：只取前 180 秒（3 分钟）、3 秒一帧（runner 内再传）
+VIDEO_MAX_DURATION_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_MAX_DURATION_SEC", "180"))
 VIDEO_FRAME_INTERVAL_SEC = float(os.environ.get("HERMES_REPORT_VIDEO_FRAME_INTERVAL_SEC", "3"))
 # 墙钟默认 10 分钟
 VIDEO_WALL_TIMEOUT_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_TIMEOUT_SEC", "600"))

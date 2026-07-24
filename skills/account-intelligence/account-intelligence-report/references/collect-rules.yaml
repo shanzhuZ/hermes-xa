@@ -101,7 +101,7 @@ steps:
       - 微博→get_user_feeds
       - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
       全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11
-      说明：各平台发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点并后台分析（每平台最多1条、只取前500秒、3秒一帧）；禁止调用 mcp_video2frame_*。
+      说明：各平台发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点并后台分析（每平台最多1条、只取前180秒、3秒一帧）；禁止调用 mcp_video2frame_*。
     forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video]
 
   "7_5_image_assets":

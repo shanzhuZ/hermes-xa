@@ -36,6 +36,11 @@ def build_row_key(task_id: str, sha256: str) -> str:
     return f"img:{task_id}:{sha256[:16]}"
 
 
+def build_frame_row_key(task_id: str, sha256: str) -> str:
+    """视频抽帧 RowKey: frm:{taskId}:{sha256前16}（与 img: 同表、不冲突）"""
+    return f"frm:{task_id}:{sha256[:16]}"
+
+
 def _local_path(row_key: str, base_dir: str) -> Path:
     safe = row_key.replace(":", "_")
     return Path(base_dir) / f"{safe}.bin"
@@ -172,7 +177,44 @@ def put_image(
     1) 若启用 HBase：调 HTTP insert；再用 getHbaseData 校验；失败则记警告并依赖本地兜底
     2) **始终写本地回退目录**（Java 读 HBase 空时也可回退），避免「MySQL 已 stored 但两端都读不到」
     """
-    row_key = build_row_key(task_id, sha256)
+    return _put_bytes(
+        build_row_key(task_id, sha256),
+        content=content,
+        mime_type=mime_type,
+        origin_url=origin_url,
+        sha256=sha256,
+        file_size=file_size,
+    )
+
+
+def put_frame(
+    task_id: str,
+    sha256: str,
+    content: bytes,
+    mime_type: str = "image/jpeg",
+    origin_url: str = "",
+    file_size: int = 0,
+) -> str:
+    """写入视频抽帧图，返回 frm: RowKey（同表 collect_image_bytes）。"""
+    return _put_bytes(
+        build_frame_row_key(task_id, sha256),
+        content=content,
+        mime_type=mime_type or "image/jpeg",
+        origin_url=origin_url or "",
+        sha256=sha256,
+        file_size=file_size or len(content),
+    )
+
+
+def _put_bytes(
+    row_key: str,
+    *,
+    content: bytes,
+    mime_type: str,
+    origin_url: str,
+    sha256: str,
+    file_size: int,
+) -> str:
     payload = {
         "bytes": content,
         "mime_type": mime_type,
