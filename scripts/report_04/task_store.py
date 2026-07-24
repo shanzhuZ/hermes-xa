@@ -299,7 +299,7 @@ class TaskStore:
             """
             UPDATE hermes_tasks
             SET status='failed', error_message=%s, finished_at=NOW(3), updated_at=NOW(3)
-            WHERE task_id=%s AND status NOT IN ('failed', 'completed')
+            WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
             """,
             (error_message[:2000], task_id),
         )
@@ -1824,12 +1824,12 @@ class TaskStore:
                 logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
         if ready_done:
             db.execute(
-                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed')",
+                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed', 'cancelled')",
                 (PHASE_DONE, task_id),
             )
         else:
             current_phase = PHASE_REPORT if not step5_ok else PHASE_POSTS
             db.execute(
-                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s AND status NOT IN ('failed', 'completed')",
+                "UPDATE hermes_tasks SET status='running', current_phase=%s, finished_at=NULL, updated_at=NOW(3) WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')",
                 (current_phase, task_id),
             )

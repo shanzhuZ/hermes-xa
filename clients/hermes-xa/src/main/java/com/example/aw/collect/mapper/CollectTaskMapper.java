@@ -73,8 +73,14 @@ public interface CollectTaskMapper {
 
     void markTaskFailed(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
 
-    /** 任务置为 completed（不覆盖 failed） */
+    /** 任务置为 completed（不覆盖 failed / cancelled） */
     int markTaskCompleted(@Param("taskId") String taskId, @Param("phase") String phase);
+
+    /**
+     * 用户结束：仅 pending/running → cancelled。
+     * @return 影响行数，0 表示状态不允许或任务不存在
+     */
+    int markTaskCancelled(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
 
     /** 思考终稿（msg_type=thoughts_final） */
     Map<String, Object> selectThoughtsFinal(@Param("taskId") String taskId);

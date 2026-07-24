@@ -225,7 +225,7 @@ public class HermesGatewayClient {
     }
 
     /**
-     * 若 hermes_tasks.status=failed，断开 SSE 并发布 run.failed。
+     * 若 hermes_tasks.status 为 failed 或 cancelled，断开 SSE 并发布终态事件。
      *
      * @return true 表示已中止读流
      */
@@ -236,25 +236,43 @@ public class HermesGatewayClient {
                 return false;
             }
             Object st = task.get("status");
-            if (st == null || !"failed".equals(String.valueOf(st))) {
+            if (st == null) {
+                return false;
+            }
+            String status = String.valueOf(st);
+            boolean failed = "failed".equals(status);
+            boolean cancelled = "cancelled".equals(status);
+            if (!failed && !cancelled) {
                 return false;
             }
             Object err = task.get("error_message");
-            String msg = err == null || String.valueOf(err).trim().isEmpty()
-                    ? "任务已失败，已中止 Agent"
-                    : String.valueOf(err).trim();
-            Map<String, Object> failed = new LinkedHashMap<String, Object>();
-            failed.put("content", truncateErr(msg));
-            failed.put("success", Boolean.FALSE);
-            failed.put("reason", "business_task_failed");
-            thoughtStreamHub.publish(taskId, "run.failed", failed);
+            String msg;
+            if (cancelled) {
+                msg = err == null || String.valueOf(err).trim().isEmpty()
+                        ? "用户已结束任务，已中止 Agent"
+                        : String.valueOf(err).trim();
+            } else {
+                msg = err == null || String.valueOf(err).trim().isEmpty()
+                        ? "任务已失败，已中止 Agent"
+                        : String.valueOf(err).trim();
+            }
+            Map<String, Object> payload = new LinkedHashMap<String, Object>();
+            payload.put("content", truncateErr(msg));
+            payload.put("success", Boolean.FALSE);
+            if (cancelled) {
+                payload.put("reason", "user_cancelled");
+                thoughtStreamHub.publish(taskId, "run.cancelled", payload);
+            } else {
+                payload.put("reason", "business_task_failed");
+                thoughtStreamHub.publish(taskId, "run.failed", payload);
+            }
             thoughtStreamHub.complete(taskId);
             try {
                 conn.disconnect();
             } catch (Exception ignore) {
                 // ignore
             }
-            log.info("业务任务已 failed，断开 Gateway SSE taskId={}", taskId);
+            log.info("业务任务已 {}，断开 Gateway SSE taskId={}", status, taskId);
             return true;
         } catch (Exception e) {
             log.warn("检查任务失败状态异常 taskId={}: {}", taskId, e.getMessage());

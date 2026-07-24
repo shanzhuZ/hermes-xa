@@ -202,6 +202,7 @@
             finished_at = NOW(3),
             updated_at = NOW(3)
         WHERE task_id = #{taskId}
+          AND status NOT IN ('completed', 'cancelled')
     </update>
 
     <update id="markTaskCompleted">
@@ -211,7 +212,18 @@
             finished_at = COALESCE(finished_at, NOW(3)),
             updated_at = NOW(3)
         WHERE task_id = #{taskId}
-          AND status NOT IN ('failed')
+          AND status NOT IN ('failed', 'cancelled')
+    </update>
+
+    <!-- 用户结束：仅 pending/running 可转 cancelled，避免覆盖 completed/failed -->
+    <update id="markTaskCancelled">
+        UPDATE hermes_tasks
+        SET status = 'cancelled',
+            error_message = #{errorMessage},
+            finished_at = NOW(3),
+            updated_at = NOW(3)
+        WHERE task_id = #{taskId}
+          AND status IN ('pending', 'running')
     </update>
 
     <!-- 任务首条用户提问（历史详情 question；含 payload_json） -->
@@ -225,13 +237,13 @@
 
     <!--
       历史问答专用 SQL（供 HistoryQaQueryService 使用）
-      - 仅包含 pending / running / completed
+      - 含 pending / running / completed / cancelled
       - 列表通过子查询附带用户提问、payload、summary 预览，避免 N+1
     -->
-    <!-- 历史问答：仅 pending/running/completed；可选按业务类型、单一状态再筛 -->
+    <!-- 历史问答：pending/running/completed/cancelled；可选按业务类型、单一状态再筛 -->
     <sql id="historyTaskWhere">
         FROM hermes_tasks t
-        WHERE t.status IN ('pending', 'running', 'completed')
+        WHERE t.status IN ('pending', 'running', 'completed', 'cancelled')
         <if test="dbTaskType != null and dbTaskType != ''">
             AND t.task_type = #{dbTaskType}
         </if>

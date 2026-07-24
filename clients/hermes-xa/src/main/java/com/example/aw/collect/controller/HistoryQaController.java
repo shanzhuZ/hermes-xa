@@ -51,7 +51,8 @@ public class HistoryQaController {
      * 历史任务分页列表。
      * <p>
      * <b>业务含义：</b>返回「进行中 + 已完成」的任务，每条对应 hermes_tasks 一行。
-     * 默认状态范围：{@code pending}（待开始）、{@code running}（进行中）、{@code completed}（已完成）。
+     * 默认状态范围：{@code pending}（待开始）、{@code running}（进行中）、
+     * {@code completed}（已完成）、{@code cancelled}（已取消）。
      * <b>不包含</b> {@code failed}（失败任务），如需纳入请改 Service/SQL。
      * <p>
      * <b>请求示例：</b>
@@ -66,7 +67,7 @@ public class HistoryQaController {
      *   <li>{@code pageSize} —— 每页条数，默认 20，Service 内上限 200</li>
      *   <li>{@code taskType} —— 可选业务类型筛选：
      *       前端短码 collect/expand/verify/report，或库内 account_collect 等</li>
-     *   <li>{@code status} —— 可选再筛单一状态：pending / running / completed；
+     *   <li>{@code status} —— 可选再筛单一状态：pending / running / completed / cancelled；
      *       不传则三种状态都返回</li>
      * </ul>
      * <p>
@@ -125,7 +126,7 @@ public class HistoryQaController {
      * <ul>
      *   <li>优先用 images[].dataUrl；没有则用 images[].imageUrl 调
      *       {@code GET /api/images/{imageId}/bytes}</li>
-     *   <li>仅允许历史可见状态（pending/running/completed）；failed 返回 409</li>
+     *   <li>仅允许历史可见状态（pending/running/completed/cancelled）；failed 返回 409</li>
      *   <li>任务不存在返回 404</li>
      * </ul>
      *
@@ -158,7 +159,7 @@ public class HistoryQaController {
      * <b>异常约定：</b>
      * 400 taskId 为空；
      * 404 任务不存在；
-     * 409 状态非 completed/failed/running（如 pending），error=task_status_not_deletable；
+     * 409 状态非 completed/failed/running/cancelled（如 pending），error=task_status_not_deletable；
      * 500 删除失败。
      *
      * @param taskId 路径参数，任务唯一 ID

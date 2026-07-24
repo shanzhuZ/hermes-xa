@@ -278,7 +278,7 @@ def _try_finalize_report(store: Any, task_id: str, *, light_only: bool) -> None:
             UPDATE hermes_tasks
             SET status='completed', current_phase=%s,
                 finished_at=COALESCE(finished_at, NOW(3)), updated_at=NOW(3)
-            WHERE task_id=%s AND status NOT IN ('failed')
+            WHERE task_id=%s AND status NOT IN ('failed', 'cancelled')
             """,
             (PHASE_DONE, task_id),
         )

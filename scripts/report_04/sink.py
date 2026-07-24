@@ -524,7 +524,8 @@ def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False)
 
 def _task_is_terminal(store: TaskStore, task_id: str) -> bool:
     task = store.get_task(task_id) or {}
-    return str(task.get("status") or "") in {"failed", "completed"}
+    # cancelled：用户结束，禁止 Hook 继续推进写报（勿覆盖为 completed/running）
+    return str(task.get("status") or "") in {"failed", "completed", "cancelled"}
 
 
 def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:

@@ -187,12 +187,13 @@ public class ThoughtStreamHub {
     /**
      * 规范化 Gateway 原始事件后发布；旁路落库终稿与粗同步步骤。
      * <p>
-     * 任务已 failed：丢弃后续 tool/assistant 事件（流程图已 skip，stream 不得继续展示自主工具）。
+     * 任务已 failed/cancelled：丢弃后续 tool/assistant 事件（stream 不得继续展示自主工具）。
      */
     public void publishGatewayEvent(String taskId, String gatewayEvent, String dataJson) {
-        if (isBusinessTaskFailed(taskId) && !ThoughtEventNormalizer.isTerminal(gatewayEvent)
-                && !"run.failed".equals(gatewayEvent)) {
-            log.debug("任务已 failed，丢弃 Gateway 事件 taskId={} event={}", taskId, gatewayEvent);
+        if (isBusinessTaskStopped(taskId) && !ThoughtEventNormalizer.isTerminal(gatewayEvent)
+                && !"run.failed".equals(gatewayEvent)
+                && !"run.cancelled".equals(gatewayEvent)) {
+            log.debug("任务已终止，丢弃 Gateway 事件 taskId={} event={}", taskId, gatewayEvent);
             return;
         }
         Map<String, Object> normalized = ThoughtEventNormalizer.normalize(taskId, gatewayEvent, dataJson);
@@ -225,7 +226,7 @@ public class ThoughtStreamHub {
         }
     }
 
-    private boolean isBusinessTaskFailed(String taskId) {
+    private boolean isBusinessTaskStopped(String taskId) {
         if (taskId == null || taskId.trim().isEmpty() || collectTaskMapper == null) {
             return false;
         }
@@ -235,7 +236,11 @@ public class ThoughtStreamHub {
                 return false;
             }
             Object st = task.get("status");
-            return st != null && "failed".equals(String.valueOf(st));
+            if (st == null) {
+                return false;
+            }
+            String status = String.valueOf(st);
+            return "failed".equals(status) || "cancelled".equals(status);
         } catch (Exception e) {
             return false;
         }

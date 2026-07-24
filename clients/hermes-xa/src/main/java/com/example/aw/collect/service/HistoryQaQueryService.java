@@ -534,7 +534,7 @@ public class HistoryQaQueryService {
             return null;
         }
         String s = status.trim().toLowerCase(Locale.ROOT);
-        if ("pending".equals(s) || "running".equals(s) || "completed".equals(s)) {
+        if ("pending".equals(s) || "running".equals(s) || "completed".equals(s) || "cancelled".equals(s)) {
             return s;
         }
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_status");
@@ -543,7 +543,7 @@ public class HistoryQaQueryService {
     /**
      * 按 taskId 删除历史任务：MySQL 关联数据 + 本地 video_bytes/{taskId}。
      * <p>
-     * 仅允许 {@code completed}/{@code failed}/{@code running}；其它状态（含 pending）返回 409。
+     * 仅允许 {@code completed}/{@code failed}/{@code running}/{@code cancelled}；pending 返回 409。
      * 不删 HBase。本地目录删除失败不影响 MySQL（{@code videoFilesDeleted=false}）。
      * <p>
      * 删除顺序：抽帧 → 视频 → 图片等子表 → … → hermes_tasks；再尽力删本地目录。
@@ -594,11 +594,12 @@ public class HistoryQaQueryService {
         return body;
     }
 
-    /** 允许删除：completed / failed / running */
+    /** 允许删除：completed / failed / running / cancelled */
     private static boolean isDeletableHistoryStatus(String status) {
         return "completed".equals(status)
                 || "failed".equals(status)
-                || "running".equals(status);
+                || "running".equals(status)
+                || "cancelled".equals(status);
     }
 
     /**
@@ -636,7 +637,10 @@ public class HistoryQaQueryService {
     }
 
     private static boolean isHistoryVisibleStatus(String status) {
-        return "pending".equals(status) || "running".equals(status) || "completed".equals(status);
+        return "pending".equals(status)
+                || "running".equals(status)
+                || "completed".equals(status)
+                || "cancelled".equals(status);
     }
 
     /**
@@ -655,6 +659,9 @@ public class HistoryQaQueryService {
         }
         if ("failed".equals(status)) {
             return "失败";
+        }
+        if ("cancelled".equals(status)) {
+            return "已取消";
         }
         return status;
     }

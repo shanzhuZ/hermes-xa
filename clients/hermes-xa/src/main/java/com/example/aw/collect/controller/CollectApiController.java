@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import com.example.aw.collect.registry.TaskTypeRegistry;
 import com.example.aw.collect.service.CollectSubmitService;
+import com.example.aw.collect.service.TaskEndService;
 import com.example.aw.collect.service.TaskFinalAnswerQueryService;
 import com.example.aw.collect.service.TaskStepDataQueryService;
 import com.example.aw.collect.service.TaskStepToolsQueryService;
@@ -67,6 +68,9 @@ public class CollectApiController {
 
     @Autowired
     private TaskTypeRegistry taskTypeRegistry;
+
+    @Autowired
+    private TaskEndService taskEndService;
 
     /**
      * 新对话：向 Hermes 申请 session_id。
@@ -207,6 +211,33 @@ public class CollectApiController {
         body.put("thoughtsUrl", "/api/tasks/" + taskId + "/thoughts");
         body.put("thoughtsStreamUrl", "/api/tasks/" + taskId + "/thoughts/stream");
         return ResponseEntity.ok(body);
+    }
+
+    /**
+     * 用户结束任务：pending/running → cancelled；步骤树不动。
+     * <p>
+     * Agent 由 Gateway 读流发现 cancelled 后断 SSE（与 failed 同路径）。
+     * 不杀视频等后台子进程。
+     * <p>
+     * 200：ok/taskId/status/statusLabel；404 不存在；409 状态不可结束。
+     */
+    @PostMapping("/tasks/{taskId}/end")
+    public ResponseEntity<?> endTask(@PathVariable String taskId) {
+        try {
+            return ResponseEntity.ok(taskEndService.endTask(taskId));
+        } catch (ResponseStatusException e) {
+            HttpStatus status = e.getStatus();
+            String reason = e.getReason() == null ? status.getReasonPhrase() : e.getReason();
+            Map<String, Object> err = new LinkedHashMap<String, Object>();
+            err.put("error", reason);
+            err.put("detail", reason);
+            return ResponseEntity.status(status).body(err);
+        } catch (Exception e) {
+            Map<String, Object> err = new LinkedHashMap<String, Object>();
+            err.put("error", "end_task_failed");
+            err.put("detail", e.getMessage());
+            return ResponseEntity.status(HttpStatus.INTERNAL_SERVER_ERROR).body(err);
+        }
     }
 
     /**
