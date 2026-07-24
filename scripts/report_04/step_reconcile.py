@@ -598,9 +598,11 @@ def reconcile_step7_from_post_tools(store: Any, task_id: str) -> int:
 
 
 def ensure_step7_parent_active(store: Any, task_id: str) -> int:
-    """步骤六完成后，纠正 step7_posts 被误标 skipped 的情况。
+    """步骤六完成后，纠正 step7_posts 与子节点不一致。
 
-    注意：仅有 pending 子节点时不得把父节点点成 running（等首个发文工具）。
+    - 误标 skipped 时按子节点回正
+    - 父已 completed 但仍有 pending/running 子节点时回开（晚到平台补采）
+    - 仅有 pending 子节点时不得把父节点点成 running（等首个发文工具）—— 晚到 pending 除外用 pending 回开
     """
     if get_step_status(task_id, "step6_validated") != "completed":
         return 0
@@ -614,6 +616,22 @@ def ensure_step7_parent_active(store: Any, task_id: str) -> int:
     has_running = any(str(r.get("status") or "") == "running" for r in rows)
     has_done = any(str(r.get("status") or "") == "completed" for r in rows)
     has_open_pending = any(str(r.get("status") or "") == "pending" for r in rows)
+    # 晚到子节点：父已收口后仍有未终态子步 → 必须回开（对齐 step4 ensure_step4_parent_not_premature）
+    if cur == "completed" and (has_running or has_open_pending):
+        store.set_step_status(
+            task_id,
+            "step7_posts",
+            "running" if has_running else "pending",
+            message="发文采集中（晚到补采）" if has_running else "等待发文采集（晚到子节点）",
+            force_reopen=True,
+        )
+        logger.info(
+            "step7 晚到子节点，回开父步骤 task=%s running=%s pending=%s",
+            task_id,
+            has_running,
+            has_open_pending,
+        )
+        return 1
     if cur == "skipped" and (has_running or has_done):
         if has_running or has_open_pending:
             store.set_step_status(task_id, "step7_posts", "running" if has_running else "pending", message="发文采集中" if has_running else "等待发文采集")
@@ -710,15 +728,26 @@ def reconcile_step4_and_step7_children(store: Any, task_id: str) -> int:
         plat = step_key.replace("step7_post_", "", 1)
         cnt = post_counts.get(plat, 0)
         if cnt > 0 and cur != "completed":
-            store.set_step_status(
+            from report_04.video_job import finalize_post_platform_after_posts
+
+            finalize_post_platform_after_posts(
+                store,
                 task_id,
-                step_key,
-                "completed",
-                message=f"已入库发文 {cnt} 条",
+                plat,
+                post_count=cnt,
                 force_reopen=(cur == "skipped"),
             )
             updated += 1
             continue
+        # 发文子步仍 running（等视频）：视频已终态则补收口
+        if cnt > 0 and cur == "running":
+            from report_04.video_job import complete_post_after_video
+
+            before = get_step_status(task_id, step_key)
+            complete_post_after_video(store, task_id, plat)
+            if get_step_status(task_id, step_key) != before:
+                updated += 1
+                continue
         if _maybe_skip_step7_actor_stale(store, task_id, plat, cur):
             updated += 1
             continue

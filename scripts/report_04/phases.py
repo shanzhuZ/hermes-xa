@@ -322,12 +322,34 @@ def post_step_node(platform: str) -> str:
     return f"5.1.{idx}"
 
 
+def video_step_key(platform: str) -> str:
+    """发文平台视频子节点：5.1.x.1 → step7_video_{platform}。"""
+    return f"step7_video_{platform}"
+
+
+def video_step_title(platform: str) -> str:
+    label = PLATFORM_LABELS.get(platform, platform)
+    return f"{label}视频分析"
+
+
+def video_step_order(platform: str) -> int:
+    return post_step_order(platform) + 1
+
+
+def video_step_node(platform: str) -> str:
+    return f"{post_step_node(platform)}.1"
+
+
 def is_profile_platform_step(step_key: Optional[str]) -> bool:
     return bool(step_key) and str(step_key).startswith("step4_profile_")
 
 
 def is_post_platform_step(step_key: Optional[str]) -> bool:
     return bool(step_key) and str(step_key).startswith("step7_post_")
+
+
+def is_video_platform_step(step_key: Optional[str]) -> bool:
+    return bool(step_key) and str(step_key).startswith("step7_video_")
 
 
 def tool_collect_step_key(tool_name: str, platform: Optional[str]) -> str:
@@ -383,6 +405,6 @@ def step_phase(step_key: str) -> Optional[str]:
             return s.current_phase
     if is_profile_platform_step(step_key):
         return PHASE_PROFILES
-    if is_post_platform_step(step_key):
+    if is_post_platform_step(step_key) or is_video_platform_step(step_key):
         return PHASE_POSTS
     return None

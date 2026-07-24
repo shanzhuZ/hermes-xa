@@ -162,15 +162,22 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
             continue
         cnt = post_counts.get(platform, 0)
         if cnt > 0:
-            store.set_step_status(
-                task_id,
-                step_key,
-                "completed",
-                message=f"已采集 {platform} 发文 {cnt} 条",
-                payload={"post_count": cnt},
+            from report_04.video_job import finalize_post_platform_after_posts
+
+            finalize_post_platform_after_posts(
+                store, task_id, platform, post_count=cnt
             )
             updated += 1
             continue
+        # 等视频中的 running：视频终态后补 completed
+        if cur == "running":
+            from report_04.video_job import complete_post_after_video
+
+            before = cur
+            complete_post_after_video(store, task_id, platform)
+            if str(get_step_status(task_id, step_key) or "") != before:
+                updated += 1
+                continue
         attempted = _post_collect_attempted(task_id, platform)
         if not attempted:
             if _post_actor_without_dataset(task_id, platform):
@@ -470,8 +477,31 @@ class TaskStore:
         text = (content or "").strip()
         if not text or not task_id or text == "(empty)":
             return False
-        clipped = text[:65535]
         is_report = is_final_report(text)
+        if is_report:
+            from report_04.report_parser import extract_report_body
+            from report_04.video_report import (
+                can_write_report_after_videos,
+                inject_video_into_report,
+            )
+
+            gate = can_write_report_after_videos(task_id)
+            if not gate.get("ok"):
+                logger.warning(
+                    "画像终稿被视频门禁拦截 task=%s open=%s",
+                    task_id,
+                    gate.get("open"),
+                )
+                self.save_dialogue(
+                    task_id,
+                    session_id,
+                    "assistant",
+                    text[:65535],
+                    msg_type="assistant_reply",
+                )
+                return False
+            text = inject_video_into_report(extract_report_body(text), task_id)
+        clipped = text[:65535]
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
             existing = db.fetch_one(
@@ -491,7 +521,7 @@ class TaskStore:
                     """,
                     (session_id, clipped, existing["id"]),
                 )
-                logger.info("已更新扩建终稿 task=%s len=%d", task_id, len(text))
+                logger.info("已更新写报终稿 task=%s len=%d", task_id, len(text))
                 return True
         dup = db.fetch_one(
             """
@@ -900,6 +930,33 @@ class TaskStore:
                 VALUES (%s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (task_id, step_key, POST_PARENT_STEP_KEY, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
+            )
+            return
+        if step_key.startswith("step7_video_"):
+            from report_04.phases import (
+                video_step_node,
+                video_step_order,
+                video_step_title,
+            )
+
+            platform = step_key.replace("step7_video_", "", 1)
+            parent = post_platform_step_key(platform)
+            # 先确保发文父步存在
+            self.ensure_step_row(task_id, parent)
+            db.execute(
+                """
+                INSERT IGNORE INTO collect_phase_steps
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                """,
+                (
+                    task_id,
+                    step_key,
+                    parent,
+                    video_step_order(platform),
+                    video_step_node(platform),
+                    video_step_title(platform),
+                ),
             )
             return
         if step_key.startswith("step4_profile_"):
@@ -1558,10 +1615,21 @@ class TaskStore:
         if not can_advance_to_step7(task_id).get("ok"):
             return False
         self.prepare_step7_children_pending(task_id)
-        if get_step_status(task_id, "step7_posts") in {"pending", None}:
+        cur = get_step_status(task_id, "step7_posts")
+        if cur in {"pending", None}:
             self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
             return True
-        return get_step_status(task_id, "step7_posts") == "running"
+        # 父已收口后仍有晚到发文工具：回开，避免「父 completed + 子 running」
+        if cur == "completed":
+            self.set_step_status(
+                task_id,
+                "step7_posts",
+                "running",
+                message="发文采集中（晚到补采）",
+                force_reopen=True,
+            )
+            return True
+        return cur == "running"
 
     def save_analysis_display(
         self,

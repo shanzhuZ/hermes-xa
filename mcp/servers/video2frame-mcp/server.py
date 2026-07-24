@@ -34,7 +34,7 @@ from config import (
     video_root_dir,
     vlm_config,
 )
-from download import download_video
+from download import download_video as do_download_video
 from frames import extract_frames_by_interval
 import mysql_store
 from pipeline import run_video_pipeline as do_run_video_pipeline
@@ -101,7 +101,11 @@ def download_video(
             "UPDATE collect_videos SET storage_status='downloading', updated_at=CURRENT_TIMESTAMP(3) WHERE video_id=%s",
             (video_id,),
         )
-        meta = download_video(origin_url, base / "source")
+        meta = do_download_video(
+            origin_url,
+            base / "source",
+            max_duration_sec=max_analyze_duration_sec(),
+        )
         mysql_store.mark_video_stored(video_id, meta)
         return _json({"status": "stored", "tip": tip, "video_id": video_id, **meta})
     except Exception as exc:

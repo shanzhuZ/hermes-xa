@@ -101,7 +101,8 @@ steps:
       - 微博→get_user_feeds
       - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
       全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11
-    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告]
+      说明：各平台发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点并后台分析（每平台最多1条、只取前500秒、3秒一帧）；禁止调用 mcp_video2frame_*。
+    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video]
 
   "7_5_image_assets":
     require_before: [7_posts]
@@ -156,8 +157,8 @@ steps:
       - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
       终稿正文必须以「一、账号基本信息」或「## 一、账号基本信息」开头，禁止前置进度句/管线摘要
     section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
-    section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式
-    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---]
+    section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式；有视频分析成功结果时须含「### 视频观察」
+    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---, mcp_video2frame]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]

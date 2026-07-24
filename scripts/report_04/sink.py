@@ -1060,8 +1060,29 @@ def _complete_step11_from_report(
         return
     if not is_final_report(assistant):
         return
+    # 视频未终态：不落 step11/summary，避免抢跑
+    inject_fn = None
+    try:
+        from report_04.video_report import can_write_report_after_videos, inject_video_into_report
+
+        inject_fn = inject_video_into_report
+        gate = can_write_report_after_videos(task_id)
+        if not gate.get("ok"):
+            logger.info(
+                "终稿等待视频终态 task=%s open=%s",
+                task_id,
+                gate.get("open"),
+            )
+            return
+    except Exception as exc:
+        logger.warning("视频门禁检查失败 task=%s: %s", task_id, exc)
     # 落库用剥前缀后的正文，避免 summary 带「跳过7.5」脏前缀
     report_body = extract_report_body(assistant)
+    if inject_fn is not None:
+        try:
+            report_body = inject_fn(report_body, task_id)
+        except Exception as exc:
+            logger.warning("终稿并入视频观察失败 task=%s: %s", task_id, exc)
 
     # —— 轻量路径：立刻终态，避免超时停在 running ——
     backfill = backfill_analysis_from_report(report_body)
@@ -1195,12 +1216,14 @@ def _sync_platform_collect_steps(
     if in_step7:
         store.ensure_step_row(task_id, post_key)
         if n_post > 0:
+            from report_04.video_job import finalize_post_platform_after_posts
+
             cur_post = get_step_status(task_id, post_key)
-            store.set_step_status(
+            finalize_post_platform_after_posts(
+                store,
                 task_id,
-                post_key,
-                "completed",
-                message=f"已入库发文 {n_post} 条",
+                platform,
+                post_count=n_post,
                 force_reopen=(cur_post == "skipped"),
             )
         elif apify_actor and tool_ok:
@@ -1292,7 +1315,11 @@ def _sync_platform_collect_steps(
     if can_run_step7_collect(task_id):
         store.ensure_step_row(task_id, post_key)
         if n_post > 0:
-            store.set_step_status(task_id, post_key, "completed", message=f"已入库发文 {n_post} 条")
+            from report_04.video_job import finalize_post_platform_after_posts
+
+            finalize_post_platform_after_posts(
+                store, task_id, platform, post_count=n_post
+            )
         elif tool_name in POST_TOOLS and tool_ok:
             cur = get_step_status(task_id, post_key)
             if n_post == 0 and tool_name == "mcp_apify_get_dataset_items":
@@ -1310,7 +1337,11 @@ def _sync_platform_collect_steps(
             has_post = int((row or {}).get("c") or 0) > 0
             cur = get_step_status(task_id, post_key)
             if has_post:
-                store.set_step_status(task_id, post_key, "completed", message=f"已入库发文 {int(row['c'])} 条")
+                from report_04.video_job import finalize_post_platform_after_posts
+
+                finalize_post_platform_after_posts(
+                    store, task_id, platform, post_count=int(row["c"])
+                )
             elif cur not in {"completed", "skipped"}:
                 store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中（等待重试）…")
         elif tool_name in POST_TOOLS:

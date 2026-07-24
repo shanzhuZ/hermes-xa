@@ -119,7 +119,12 @@ def step4_profiles_terminal(task_id: str) -> bool:
 
 
 def step4_profile_collect_started(task_id: str) -> bool:
-    """是否已真正开始步骤四主页采集（排除仅种子主页复用 completed）。"""
+    """是否已真正开始步骤四主页采集。
+
+    只认步骤树状态，不认 hermes_tool_outputs.phase：
+    步骤二/三未完时越序 Apify 常被误标 phase=step4_*，若按工具相位判定会
+    在步骤3期间误拦 web_search，并把 Agent 提前推进步骤4。
+    """
     parent = get_step_status(task_id, "step4_profiles")
     if parent in {"running", "completed", "skipped"}:
         return True
@@ -130,17 +135,7 @@ def step4_profile_collect_started(task_id: str) -> bool:
         """,
         (task_id, PROFILE_PARENT_STEP_KEY),
     )
-    if any(str(r.get("status") or "") == "running" for r in rows):
-        return True
-    row = db.fetch_one(
-        """
-        SELECT COUNT(*) AS c FROM hermes_tool_outputs
-        WHERE task_id=%s AND status='success'
-          AND (phase LIKE 'step4_profile_%%' OR phase='step4_profiles')
-        """,
-        (task_id,),
-    )
-    return int((row or {}).get("c") or 0) > 0
+    return any(str(r.get("status") or "") == "running" for r in rows)
 
 
 def seconds_since_last_tool(

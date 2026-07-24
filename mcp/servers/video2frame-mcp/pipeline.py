@@ -106,8 +106,14 @@ def run_video_pipeline(
                     (video_id,),
                 )
             dest = base / "source"
-            dl_meta = download_video(origin_url, dest)
+            dl_meta = download_video(origin_url, dest, max_duration_sec=max_dur)
             local_video = Path(dl_meta["local_path"])
+            logger.info(
+                "下载完成 size=%s section=%s path=%s",
+                dl_meta.get("file_size"),
+                dl_meta.get("download_section_sec"),
+                str(local_video)[:160],
+            )
         else:
             local_video = Path(video_path).resolve()
             if not local_video.is_file():

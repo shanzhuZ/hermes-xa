@@ -183,8 +183,16 @@ def sys_executable() -> str:
     return sys.executable
 
 
-def download_with_ytdlp(url: str, dest_path: Path) -> Dict[str, Any]:
-    """用 yt-dlp 下载页面视频（YouTube / Twitter 等）。"""
+def download_with_ytdlp(
+    url: str,
+    dest_path: Path,
+    *,
+    max_duration_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """用 yt-dlp 下载页面视频（YouTube / Twitter 等）。
+
+    max_duration_sec>0 时只下载前 N 秒（--download-sections），避免整片 20 分钟全量拉取。
+    """
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
         raise ValueError(f"仅支持 http(s): {url[:120]}")
@@ -194,8 +202,9 @@ def download_with_ytdlp(url: str, dest_path: Path) -> Dict[str, Any]:
     dest_path.parent.mkdir(parents=True, exist_ok=True)
     # yt-dlp 输出模板（扩展名由合并器决定）
     outtmpl = str(dest_path.parent / f"{dest_path.stem}.%(ext)s")
+    section_end = float(max_duration_sec) if max_duration_sec and float(max_duration_sec) > 0 else 0.0
 
-    def _build_cmd(*, use_cookies_file: bool, use_browser: bool) -> list[str]:
+    def _build_cmd(*, use_cookies_file: bool, use_browser: bool) -> list:
         c = _ytdlp_cmd() + [
             "--no-playlist",
             "--no-warnings",
@@ -213,6 +222,15 @@ def download_with_ytdlp(url: str, dest_path: Path) -> Dict[str, Any]:
             "--retries",
             str(int(cfg["max_retries"])),
         ]
+        # 只下前 N 秒，与抽帧/分析上限对齐
+        if section_end > 0:
+            c.extend(
+                [
+                    "--download-sections",
+                    f"*0-{section_end:g}",
+                    "--force-keyframes-at-cuts",
+                ]
+            )
         cookies_file = str(cfg.get("ytdlp_cookies") or "").strip()
         cookies_browser = str(cfg.get("ytdlp_cookies_from_browser") or "").strip()
         if use_cookies_file and cookies_file and Path(cookies_file).is_file():
@@ -238,7 +256,12 @@ def download_with_ytdlp(url: str, dest_path: Path) -> Dict[str, Any]:
         if use_browser and not str(cfg.get("ytdlp_cookies_from_browser") or "").strip():
             continue
         cmd = _build_cmd(use_cookies_file=use_file, use_browser=use_browser)
-        logger.info("yt-dlp 下载(%s): %s", name, url[:160])
+        logger.info(
+            "yt-dlp 下载(%s) section=%s: %s",
+            name,
+            f"0-{section_end:g}s" if section_end > 0 else "full",
+            url[:160],
+        )
         proc = subprocess.run(
             cmd,
             capture_output=True,
@@ -293,17 +316,23 @@ def download_with_ytdlp(url: str, dest_path: Path) -> Dict[str, Any]:
         "mime_type": mime,
         "origin_url": url,
         "downloader": "yt-dlp",
+        "download_section_sec": section_end if section_end > 0 else None,
     }
 
 
-def download_video(url: str, dest_path: Path) -> Dict[str, Any]:
-    """自动选择直链或 yt-dlp。"""
+def download_video(
+    url: str,
+    dest_path: Path,
+    *,
+    max_duration_sec: Optional[float] = None,
+) -> Dict[str, Any]:
+    """自动选择直链或 yt-dlp。max_duration_sec 仅对 yt-dlp 生效（按时长截断下载）。"""
     url = (url or "").strip()
     if needs_ytdlp(url):
-        return download_with_ytdlp(url, dest_path)
+        return download_with_ytdlp(url, dest_path, max_duration_sec=max_duration_sec)
     try:
         return download_direct_video(url, dest_path)
     except Exception as direct_err:
         # 直链失败时，若像页面则回退 yt-dlp
         logger.warning("直链失败，尝试 yt-dlp: %s", direct_err)
-        return download_with_ytdlp(url, dest_path)
+        return download_with_ytdlp(url, dest_path, max_duration_sec=max_duration_sec)

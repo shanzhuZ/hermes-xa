@@ -87,6 +87,9 @@ def build_agent_context(task_id: str) -> Optional[str]:
     elif gate == "step7_posts":
         lines.append("步骤7：仅允许各平台发文 MCP/Apify；子步完成后系统自动关父节点。")
         lines.append(
+            "发文入库后若有可下载视频，Hook 会挂 5.1.x.1 并后台分析；禁止同步 mcp_video2frame_*；发文子步会等视频终态。"
+        )
+        lines.append(
             "步骤7全部发文子步终态后必须先跑图片资产管线，再进步骤8："
             "python -m image_pipeline.run --task-id <taskId> --force-analyze"
         )
@@ -137,6 +140,7 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
     from report_04.step_reconcile import (
         close_collect_parent_if_ready,
         ensure_step4_parent_not_premature,
+        ensure_step7_parent_active,
         ensure_step7_parent_not_premature,
         maybe_close_abandoned_step4,
     )
@@ -144,6 +148,8 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
     try:
         ensure_step4_parent_not_premature(store, task_id)
         ensure_step7_parent_not_premature(store, task_id)
+        # 晚到发文子节点时回开已 completed 的 step7_posts（及 phase_content 壳）
+        ensure_step7_parent_active(store, task_id)
     except Exception as exc:
         logger.warning("engine ensure parent 失败 task=%s: %s", task_id, exc)
 
