@@ -16,8 +16,14 @@ import java.util.Map;
 @Service
 public class TaskStepDataQueryService {
 
+    /** 步骤详情里单帧嵌入 dataUrl 上限（约 1.5MB） */
+    private static final int STEP_FRAME_MAX_BYTES = 1536 * 1024;
+
     @Autowired
     private CollectTaskMapper collectTaskMapper;
+
+    @Autowired
+    private VideoAssetQueryService videoAssetQueryService;
 
     /**
      * 查询某一步骤对应的业务表数据。
@@ -35,7 +41,14 @@ public class TaskStepDataQueryService {
 
         String status = stringVal(step.get("status"));
         String dataType = resolveDataType(stepKey);
-        List<Map<String, Object>> records = loadDisplayRecords(taskId, stepKey);
+
+        List<Map<String, Object>> records;
+        if ("collect_videos".equals(dataType)) {
+            String platform = resolveVideoPlatform(stepKey);
+            records = videoAssetQueryService.listTaskVideosWithFrames(taskId, platform, STEP_FRAME_MAX_BYTES);
+        } else {
+            records = loadDisplayRecords(taskId, stepKey);
+        }
 
         Map<String, Object> out = new LinkedHashMap<String, Object>();
         out.put("taskId", taskId);
@@ -45,7 +58,7 @@ public class TaskStepDataQueryService {
         out.put("statusLabel", statusLabel(status));
         out.put("message", step.get("message"));
         out.put("dataType", dataType);
-        out.put("recordCount", records.size());
+        out.put("recordCount", Integer.valueOf(records.size()));
         out.put("records", records);
         return out;
     }
@@ -93,6 +106,12 @@ public class TaskStepDataQueryService {
      * 告诉前端当前 records 来自哪类业务数据，便于选择展示组件。
      */
     private String resolveDataType(String stepKey) {
+        if (stepKey == null) {
+            return "unknown";
+        }
+        if (stepKey.startsWith("step6_video_") || stepKey.startsWith("step7_video_")) {
+            return "collect_videos";
+        }
         if ("step1_input_accounts".equals(stepKey)) {
             return "input_accounts";
         }
@@ -110,10 +129,25 @@ public class TaskStepDataQueryService {
         if ("step5_validated".equals(stepKey)) {
             return "collect_validated_accounts";
         }
-        if (stepKey.startsWith("step3_post_") || "step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")) {
+        if (stepKey.startsWith("step3_post_") || "step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")
+                || "step7_posts".equals(stepKey) || stepKey.startsWith("step7_post_")) {
             return "collect_posts";
         }
         return "unknown";
+    }
+
+    /** step6_video_twitter / step7_video_youtube → platform */
+    private static String resolveVideoPlatform(String stepKey) {
+        if (stepKey == null) {
+            return "";
+        }
+        if (stepKey.startsWith("step7_video_")) {
+            return stepKey.substring("step7_video_".length());
+        }
+        if (stepKey.startsWith("step6_video_")) {
+            return stepKey.substring("step6_video_".length());
+        }
+        return "";
     }
 
     private Map<String, Object> notFound(String error, String taskId, String stepKey) {

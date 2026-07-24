@@ -16,6 +16,10 @@ public interface CollectVideoMapper {
 
     List<Map<String, Object>> selectVideosByTask(@Param("taskId") String taskId);
 
+    /** 按任务 + 平台查视频（流程图视频子步用） */
+    List<Map<String, Object>> selectVideosByTaskAndPlatform(@Param("taskId") String taskId,
+                                                            @Param("platform") String platform);
+
     List<Map<String, Object>> selectFramesByVideoId(@Param("videoId") String videoId);
 
     /** 按任务删抽帧行（先于 collect_videos） */

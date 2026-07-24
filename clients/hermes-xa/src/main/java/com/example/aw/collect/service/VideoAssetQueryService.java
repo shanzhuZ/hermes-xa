@@ -44,6 +44,13 @@ public class VideoAssetQueryService {
      * 历史详情：任务下全部视频 + 帧（有 hbase_row_key 则尽力填 dataUrl；老帧无 key 不回填）。
      */
     public List<Map<String, Object>> listTaskVideosWithFrames(String taskId, int maxBytesPerFrame) {
+        return listTaskVideosWithFrames(taskId, null, maxBytesPerFrame);
+    }
+
+    /**
+     * 任务下视频 + 帧；platform 非空时只返回该平台（流程图 step*_video_{platform}）。
+     */
+    public List<Map<String, Object>> listTaskVideosWithFrames(String taskId, String platform, int maxBytesPerFrame) {
         if (taskId == null || taskId.trim().isEmpty()) {
             throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "taskId_required");
         }
@@ -51,7 +58,13 @@ public class VideoAssetQueryService {
             maxBytesPerFrame = 64 * 1024;
         }
         String tid = taskId.trim();
-        List<Map<String, Object>> videos = collectVideoMapper.selectVideosByTask(tid);
+        List<Map<String, Object>> videos;
+        String plat = platform == null ? "" : platform.trim();
+        if (plat.isEmpty()) {
+            videos = collectVideoMapper.selectVideosByTask(tid);
+        } else {
+            videos = collectVideoMapper.selectVideosByTaskAndPlatform(tid, plat);
+        }
         List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
         if (videos == null) {
             return out;

@@ -18,6 +18,18 @@
         ORDER BY created_at ASC, video_id ASC
     </select>
 
+    <select id="selectVideosByTaskAndPlatform" resultType="java.util.HashMap">
+        SELECT video_id, task_id, platform, account_id, post_id, origin_url, local_path,
+               storage_status, analyze_status, duration_sec, width, height,
+               frame_extracted_cnt, frame_analyzed_cnt, frame_stored_cnt,
+               video_analysis_text, video_analysis_json, error_message,
+               created_at, analyzed_at
+        FROM collect_videos
+        WHERE task_id = #{taskId}
+          AND platform = #{platform}
+        ORDER BY created_at ASC, video_id ASC
+    </select>
+
     <select id="selectFramesByVideoId" resultType="java.util.HashMap">
         SELECT frame_id, video_id, task_id, platform, post_id,
                frame_index, timestamp_sec, is_preview, sort_order,
