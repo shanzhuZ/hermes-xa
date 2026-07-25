@@ -721,7 +721,20 @@ def reconcile_step4_and_step7_children(store: Any, task_id: str) -> int:
         if not step_key.startswith("step7_post_"):
             continue
         if not step7_collect_active(task_id):
+            # 父节点尚未真正开始发文时，仅回开「过早误 skip」；
+            # 会话收口产生的 skip（未尝试/未采集到）必须保留，否则会卡死在 pending。
             if cur == "skipped" and get_step_status(task_id, "step7_posts") == "pending":
+                msg = str(row.get("message") or "")
+                if any(
+                    key in msg
+                    for key in (
+                        "未尝试发文采集",
+                        "未采集到发文",
+                        "未在步骤七尝试发文采集",
+                        "Actor 已完成但未拉取发文 dataset",
+                    )
+                ):
+                    continue
                 store.set_step_status(task_id, step_key, "pending", message=None)
                 updated += 1
             continue
@@ -1094,7 +1107,13 @@ def ensure_step7_parent_not_premature(store: Any, task_id: str) -> int:
         step_key = str(row.get("step_key") or "")
         st = str(row.get("status") or "")
         if st in {"running", "completed", "skipped"}:
-            store.set_step_status(task_id, step_key, "pending", message=None)
+            # 回开时清空旧 message，避免留下「未采集到发文」却仍 pending 的假象
+            store.set_step_status(
+                task_id,
+                step_key,
+                "pending",
+                message="",
+            )
             updated += 1
     return updated
 
@@ -1151,9 +1170,11 @@ def _normalize_stored_mcp_tool_names(task_id: str) -> int:
     return n
 
 
-def _fail_forward_step5_pending_images(store: Any, task_id: str, *, reason: str = "会话结束兜底：未完成 vision") -> int:
-    """步骤五卡在等待 OCR/Vision 时，兜底关闭剩余 pending 图片流并 completed。"""
+def _fail_forward_step5_pending_images(store: Any, task_id: str, *, reason: str = "会话结束兜底：未完成图片核验") -> int:
+    """步骤五卡住时：收口身份流 pending，并兜底 4.1.1/4.1.2 后 rollup 父壳。"""
     from report_04.gates import step4_profiles_terminal
+    from report_04.phases import STREAM_IMAGE_STEP_KEY, STREAM_TEXT_STEP_KEY
+    from report_04.stream_steps import ensure_stream_child_steps, rollup_step5_parent
 
     if not step4_profiles_terminal(task_id):
         return 0
@@ -1162,32 +1183,43 @@ def _fail_forward_step5_pending_images(store: Any, task_id: str, *, reason: str 
     s5 = get_step_status(task_id, "step5_streams")
     if s5 not in {"pending", "running"}:
         return 0
-    if is_stream_compare_ready(task_id):
-        n_img = count_image_streams(task_id)
-        msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
-        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-        return 0
+
+    ensure_stream_child_steps(store, task_id)
     n_skip = 0
     if hasattr(store, "mark_remaining_image_streams_failed"):
         n_skip = int(store.mark_remaining_image_streams_failed(task_id, reason) or 0)
-    n_img = count_image_streams(task_id)
-    if n_skip or n_img == 0 or is_stream_compare_ready(task_id):
-        msg = (
-            "无头像图片流，跳过图片比对"
-            if n_img == 0
-            else f"图片流比对结束（兜底跳过 {n_skip} 条）"
+
+    text_st = get_step_status(task_id, STREAM_TEXT_STEP_KEY)
+    if text_st in {"pending", "running", None, ""}:
+        store.set_step_status(
+            task_id,
+            STREAM_TEXT_STEP_KEY,
+            "skipped",
+            message=reason[:200],
+            payload={"text_compare_done": True},
         )
-        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-        logger.info("step5 图片流兜底收口 task=%s skipped=%s reason=%s", task_id, n_skip, reason)
-        try:
-            if get_step_status(task_id, "step6_validated") != "completed":
-                store.run_validated_accounts(task_id)
-            # 仅预建子节点，不点亮步骤7 running
-            if get_step_status(task_id, "step6_validated") == "completed":
-                store.prepare_step7_children_pending(task_id)
-                reconcile_step4_and_step7_children(store, task_id)
-        except Exception as exc:
-            logger.warning("step5 兜底后 validated/step7 失败 task=%s: %s", task_id, exc)
+    img_st = get_step_status(task_id, STREAM_IMAGE_STEP_KEY)
+    if img_st in {"pending", "running", None, ""}:
+        from report_04.image_assets import count_stored_images
+
+        stored = count_stored_images(task_id)
+        store.set_step_status(
+            task_id,
+            STREAM_IMAGE_STEP_KEY,
+            "completed" if stored > 0 else "skipped",
+            message=(f"会话结束兜底：已有图片 {stored}" if stored > 0 else reason[:200]),
+            payload={"stored": stored, "fail_forward": True},
+        )
+    rollup_step5_parent(store, task_id)
+    logger.info("step5 子节点兜底收口 task=%s identity_skipped=%s", task_id, n_skip)
+    try:
+        if get_step_status(task_id, "step6_validated") != "completed":
+            store.run_validated_accounts(task_id)
+        if get_step_status(task_id, "step6_validated") == "completed":
+            store.prepare_step7_children_pending(task_id)
+            reconcile_step4_and_step7_children(store, task_id)
+    except Exception as exc:
+        logger.warning("step5 兜底后 validated/step7 失败 task=%s: %s", task_id, exc)
     return n_skip
 
 
@@ -1208,15 +1240,15 @@ def maybe_fail_forward_stale_step5(
         return 0
     if not can_advance_to_step5(task_id).get("ok"):
         return 0
+    from report_04.phases import STREAM_IMAGE_STEP_KEY
+    from report_04.stream_steps import rollup_step5_parent
+
     s5 = get_step_status(task_id, "step5_streams")
     if s5 != "running":
         return 0
-    if is_stream_compare_ready(task_id):
-        n_img = count_image_streams(task_id)
-        msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
-        store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-        if get_step_status(task_id, "step6_validated") != "completed":
-            store.run_validated_accounts(task_id)
+    # 图片子步已终态则只 rollup，不再用 vision 直接完成父壳
+    if get_step_status(task_id, STREAM_IMAGE_STEP_KEY) in {"completed", "failed", "skipped"}:
+        rollup_step5_parent(store, task_id)
         return 0
 
     row = db.fetch_one(
@@ -1311,15 +1343,10 @@ def reconcile_stuck_pipeline(store: Any, task_id: str) -> None:
     _fail_forward_step5_pending_images(store, task_id)
 
     if can_advance_to_step5(task_id).get("ok"):
+        from report_04.stream_steps import rollup_step5_parent
+
         store.kickoff_step5_if_ready(task_id)
-        # 会话收口：图片流已齐则允许完成步骤5（不再等 settle）
-        if (
-            is_stream_compare_ready(task_id)
-            and get_step_status(task_id, "step5_streams") == "running"
-        ):
-            n_img = count_image_streams(task_id)
-            msg = "无头像图片流，跳过图片比对" if n_img == 0 else "图片流 Vision 完成"
-            store.set_step_status(task_id, "step5_streams", "completed", message=msg)
+        rollup_step5_parent(store, task_id)
         if (
             get_step_status(task_id, "step5_streams") in {"completed", "skipped"}
             and get_step_status(task_id, "step6_validated") != "completed"

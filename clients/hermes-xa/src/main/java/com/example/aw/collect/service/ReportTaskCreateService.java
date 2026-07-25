@@ -163,6 +163,10 @@ public class ReportTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertPhaseStep(
                 taskId, "step5_streams", PHASE_COLLISION, 410, "4.1", "信息核验流 Agent 核查");
         collectTaskMapper.insertPhaseStep(
+                taskId, "step5_stream_text", "step5_streams", 411, "4.1.1", "文本流核验 Agent");
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step5_stream_image", "step5_streams", 412, "4.1.2", "图片流核验 Agent");
+        collectTaskMapper.insertPhaseStep(
                 taskId, "step6_validated", PHASE_COLLISION, 420, "4.2", "相似账号认定 Agent");
         collectTaskMapper.insertPhaseStep(
                 taskId, "step7_posts", PHASE_CONTENT, 510, "5.1", "跨平台发文采集 Agent");

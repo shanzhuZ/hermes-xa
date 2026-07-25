@@ -812,6 +812,15 @@ class TaskStore:
         ):
             logger.info("拒绝 step7_posts completed→running task=%s", task_id)
             return
+        # 4.1 父壳：两子收口后禁止再被 vision 等打回 running
+        if (
+            step_key == "step5_streams"
+            and status == "running"
+            and cur_status == "completed"
+            and not force_reopen
+        ):
+            logger.info("拒绝 step5_streams completed→running task=%s", task_id)
+            return
 
         fields = ["status=%s"]
         params: List[Any] = [status]
@@ -1250,24 +1259,39 @@ class TaskStore:
             from collect_01.display_store import sync_streams_for_task
 
             sync_streams_for_task(task_id, step_key="step5_streams", stream_type="image")
+            from report_04.phases import STREAM_IMAGE_STEP_KEY
+
+            sync_streams_for_task(task_id, step_key=STREAM_IMAGE_STEP_KEY, stream_type="image")
         except Exception as exc:
             logger.warning("展示层双写 image streams 失败: %s", exc)
         return n
 
     def _step5_payload(self, task_id: str) -> Dict[str, Any]:
-        row = db.fetch_one(
-            "SELECT payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key='step5_streams'",
-            (task_id,),
-        )
-        try:
-            payload = json.loads((row or {}).get("payload_json") or "{}")
-        except Exception:
-            payload = {}
-        return payload if isinstance(payload, dict) else {}
+        """兼容：优先读 4.1.1 payload，否则读父壳。"""
+        from report_04.phases import STREAM_TEXT_STEP_KEY
+
+        for key in (STREAM_TEXT_STEP_KEY, "step5_streams"):
+            row = db.fetch_one(
+                "SELECT payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+                (task_id, key),
+            )
+            try:
+                payload = json.loads((row or {}).get("payload_json") or "{}")
+            except Exception:
+                payload = {}
+            if isinstance(payload, dict) and payload:
+                return payload
+        return {}
 
     def run_stream_validation(self, task_id: str) -> None:
-        """步骤五：文本/图片流与种子比对。"""
-        from report_04.gates import can_advance_to_step5, count_image_streams, is_stream_compare_ready
+        """步骤五：文本流规则比对 → 收口 4.1.1；并触发 4.1.2 图片管线。"""
+        from report_04.gates import can_advance_to_step5
+        from report_04.phases import STREAM_PARENT_STEP_KEY, STREAM_TEXT_STEP_KEY
+        from report_04.stream_steps import (
+            ensure_stream_child_steps,
+            rollup_step5_parent,
+            start_step5_image_pipeline,
+        )
 
         gate = can_advance_to_step5(task_id)
         if not gate.get("ok"):
@@ -1277,52 +1301,29 @@ class TaskStore:
         if not task:
             return
 
+        ensure_stream_child_steps(self, task_id)
         existing = self._step5_payload(task_id)
-        # 文本已比对且仍等图片：禁止反复整段重跑（会闪 message + 清超时计时）
-        if existing.get("text_compare_done") and _step_status(task_id, "step5_streams") == "running":
-            n_img = count_image_streams(task_id)
-            if is_stream_compare_ready(task_id):
-                matched = int(existing.get("matched") or 0)
-                total = int(existing.get("total") or 0)
-                self.set_step_status(
-                    task_id,
-                    "step5_streams",
-                    "completed",
-                    message=(
-                        f"图片流 Vision 完成 ({n_img}/{n_img})"
-                        if n_img > 0
-                        else f"文本流比对完成，通过 {matched}/{total} 条"
-                    ),
-                    payload={
-                        "matched": matched,
-                        "total": total,
-                        "text_compare_done": True,
-                        "image_pending": 0,
-                    },
-                )
-                self.run_validated_accounts(task_id)
-                return
-            matched = int(existing.get("matched") or 0)
-            total = int(existing.get("total") or 0)
-            wait_since = existing.get("wait_images_since") or datetime.now().isoformat(timespec="seconds")
-            self.set_step_status(
-                task_id,
-                "step5_streams",
-                "running",
-                message=f"文本流比对完成（通过 {matched}/{total}）；等待图片流 OCR/Vision",
-                payload={
-                    "matched": matched,
-                    "total": total,
-                    "image_pending": n_img,
-                    "text_compare_done": True,
-                    "wait_images_since": wait_since,
-                },
-                touch_updated_at=False,
-            )
+        text_st = _step_status(task_id, STREAM_TEXT_STEP_KEY)
+        # 文本已收口：只补跑图片管线 / rollup
+        if existing.get("text_compare_done") and text_st in {"completed", "skipped"}:
+            start_step5_image_pipeline(self, task_id)
+            rollup_step5_parent(self, task_id)
             return
 
-        if _step_status(task_id, "step5_streams") != "completed":
-            self.set_step_status(task_id, "step5_streams", "running", message="文本流规则比对中")
+        self.set_step_status(
+            task_id,
+            STREAM_PARENT_STEP_KEY,
+            "running",
+            message="文本/图片流核查中",
+        )
+        if text_st not in {"completed", "skipped"}:
+            self.set_step_status(
+                task_id,
+                STREAM_TEXT_STEP_KEY,
+                "running",
+                message="文本流规则比对中",
+            )
+
         seed = {}
         try:
             seed = json.loads(task.get("seed_json") or "{}")
@@ -1344,11 +1345,16 @@ class TaskStore:
         if not seed_text:
             self.set_step_status(
                 task_id,
-                "step5_streams",
-                "pending",
-                message=f"种子平台 {seed_platform} 无文本流，跳过自动比对（需先入库种子 profile）",
+                STREAM_TEXT_STEP_KEY,
+                "skipped",
+                message=f"种子平台 {seed_platform} 无文本流，跳过文本核验",
+                payload={"text_compare_done": True, "matched": 0, "total": 0},
             )
+            self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
+            start_step5_image_pipeline(self, task_id)
+            rollup_step5_parent(self, task_id)
             return
+
         all_text = db.fetch_all(
             "SELECT * FROM collect_identity_streams WHERE task_id=%s AND stream_type='text'",
             (task_id,),
@@ -1363,7 +1369,6 @@ class TaskStore:
             if platform == seed_platform:
                 status = "pass"
             elif field == "account_handle":
-                # handle 仅允许精确匹配，禁止子串误伤（如 tiktok 空号同名 handle）
                 status = "pass" if seed_handle and text.lstrip("@") == seed_handle else "fail"
             elif field in ("display_name", "bio"):
                 seed_vals = [
@@ -1392,77 +1397,56 @@ class TaskStore:
         try:
             from collect_01.display_store import sync_streams_for_task
 
-            sync_streams_for_task(task_id, step_key="step5_streams", stream_type="text")
+            sync_streams_for_task(task_id, step_key=STREAM_TEXT_STEP_KEY, stream_type="text")
         except Exception as exc:
             logger.warning("展示层双写 text streams 失败: %s", exc)
 
-        n_img = count_image_streams(task_id)
-        # 仍有待处理图片流时不得提前 completed，等 OCR/Vision（Skill 步骤5 硬要求）
-        if n_img > 0 and not is_stream_compare_ready(task_id):
-            wait_since = existing.get("wait_images_since") or datetime.now().isoformat(timespec="seconds")
-            self.set_step_status(
-                task_id,
-                "step5_streams",
-                "running",
-                message=f"文本流比对完成（通过 {matched}/{len(all_text)}）；等待图片流 OCR/Vision",
-                payload={
-                    "matched": matched,
-                    "total": len(all_text),
-                    "image_pending": n_img,
-                    "text_compare_done": True,
-                    "wait_images_since": wait_since,
-                },
-            )
-            self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
-            return
+        total = len(all_text)
+        rule_conclusion = f"文本流规则比对完成：通过 {matched}/{total} 条（种子平台 {seed_platform}）。"
+        # 系统模型核验：产出「经过…所以…」推理结论与逐条理由
+        model_payload: Dict[str, Any] = {}
+        try:
+            from report_04.stream_verify import run_text_model_verify
 
-        if n_img > 0 and is_stream_compare_ready(task_id):
-            self.set_step_status(
-                task_id,
-                "step5_streams",
-                "completed",
-                message=f"图片流 Vision 完成 ({n_img}/{n_img})",
-                payload={
-                    "matched": matched,
-                    "total": len(all_text),
-                    "text_compare_done": True,
-                    "image_pending": 0,
-                },
-            )
-            self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
-            self.run_validated_accounts(task_id)
-            return
-
+            model_payload = run_text_model_verify(task_id) or {}
+        except Exception as exc:
+            logger.warning("文本模型核验失败 task=%s: %s", task_id, exc)
+            model_payload = {"ok": False, "error": str(exc)[:300]}
+        conclusion = str(model_payload.get("conclusion") or rule_conclusion)
+        source = "model_verify" if model_payload.get("source") == "model_verify" else "rule_compare"
         self.set_step_status(
             task_id,
-            "step5_streams",
+            STREAM_TEXT_STEP_KEY,
             "completed",
-            message=f"文本流比对完成，通过 {matched}/{len(all_text)} 条",
+            message=f"文本流核验完成，规则通过 {matched}/{total} 条",
             payload={
                 "matched": matched,
-                "total": len(all_text),
+                "total": total,
                 "text_compare_done": True,
-                "image_pending": 0,
+                "conclusion": conclusion,
+                "modelAnalysis": str(model_payload.get("modelAnalysis") or conclusion),
+                "ruleConclusion": rule_conclusion,
+                "source": source,
             },
         )
+        self.set_task_phase(task_id, PHASE_STREAM_VALIDATE)
+        start_step5_image_pipeline(self, task_id)
+        rollup_step5_parent(self, task_id)
 
     def kickoff_step5_if_ready(self, task_id: str) -> bool:
-        """步骤四收口后立刻启动步骤五：先做文本流规则比对；有待处理图片流则保持 running 等 OCR/Vision。"""
-        from report_04.gates import can_advance_to_step5, is_stream_compare_ready
+        """步骤四收口后启动 4.1：文本比对 + 图片管线；父壳等两子终态。"""
+        from report_04.gates import can_advance_to_step5
+        from report_04.stream_steps import ensure_stream_child_steps, rollup_step5_parent, start_step5_image_pipeline
 
         gate = can_advance_to_step5(task_id)
         if not gate.get("ok"):
             return False
+        ensure_stream_child_steps(self, task_id)
         cur5 = _step_status(task_id, "step5_streams")
         if cur5 not in {"completed", "skipped"}:
-            payload = self._step5_payload(task_id)
-            if payload.get("text_compare_done"):
-                # 已比对过：只刷新等待态，禁止在此 completed→级联步骤6/7
-                if is_stream_compare_ready(task_id):
-                    self.run_stream_validation(task_id)
-            else:
-                self.run_stream_validation(task_id)
-        # 步骤6/7 由 sink 在 vision settle 后推进，禁止 kickoff 抢跑
+            self.run_stream_validation(task_id)
+            start_step5_image_pipeline(self, task_id)
+            rollup_step5_parent(self, task_id)
         return True
 
     def run_validated_accounts(self, task_id: str) -> None:
@@ -1668,12 +1652,13 @@ class TaskStore:
             payload={"source": source, "length": len(content)},
         )
 
-    def finalize_task(self, task_id: str) -> None:
+    def finalize_task(self, task_id: str, *, session_ended: bool = True) -> None:
+        """收口任务。session_ended=True（默认，on_session_end）：stream 结束则流程必须终态，禁止再标 running。"""
         from report_04.engine import full_reconcile_enabled, run_session_finalize_light
 
         task = self.get_task(task_id) or {}
-        if str(task.get("status") or "") == "failed":
-            # 种子失败等硬失败终态：不再 reconcile 改回 running
+        if str(task.get("status") or "") in {"failed", "cancelled", "completed"}:
+            # 已终态：不再 reconcile 改回 running
             return
 
         if full_reconcile_enabled():
@@ -1682,10 +1667,12 @@ class TaskStore:
             reconcile_stuck_pipeline(self, task_id)
             _reconcile_report_post_child_steps(self, task_id)
             self.reconcile_collect_child_steps(task_id)
-            from report_04.step_reconcile import close_collect_parent_if_ready, ensure_step7_parent_active
+            from report_04.step_reconcile import close_collect_parent_if_ready
+            from report_04.orchestrator import close_open_steps_for_session_end
 
-            ensure_step7_parent_active(self, task_id)
             close_collect_parent_if_ready(self, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+            if session_ended:
+                close_open_steps_for_session_end(self, task_id)
         else:
             run_session_finalize_light(self, task_id)
 
@@ -1711,27 +1698,40 @@ class TaskStore:
         step5 = _step_status(task_id, "step6_validated")
         step2_ok = step2 in {"completed", "skipped"}
         step5_ok = step5 in {"completed", "skipped"}
+        # stream 结束：再兜底一次，确保无 pending/running 步骤残留
+        if session_ended:
+            try:
+                from report_04.orchestrator import close_open_steps_for_session_end
+
+                close_open_steps_for_session_end(self, task_id)
+            except Exception as exc:
+                logger.warning("finalize session_end 步骤收口失败 task=%s: %s", task_id, exc)
         post_children = _report_post_step_rows(task_id)
-        post_children_ok = all(str(r.get("status") or "") in {"completed", "skipped", "failed"} for r in post_children)
-        legacy_step6 = _step_status(task_id, "step7_posts")
-        if legacy_step6 == "pending":
-            if vc > 0 or post_children:
-                self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
-            else:
-                self.set_step_status(
-                    task_id,
-                    "step7_posts",
-                    "skipped",
-                    message="无可信账号，跳过发文采集",
-                )
+        # 会话未结束才可把发文父节点点回 running；session_end 时 stream 已死禁止空挂
+        if not session_ended:
+            legacy_step6 = _step_status(task_id, "step7_posts")
+            if legacy_step6 == "pending":
+                if vc > 0 or post_children:
+                    self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
+                else:
+                    self.set_step_status(
+                        task_id,
+                        "step7_posts",
+                        "skipped",
+                        message="无可信账号，跳过发文采集",
+                    )
         step7_st = _step_status(task_id, "step7_posts")
-        step7_ok = step7_st in {"completed", "skipped"}
+        step7_ok = step7_st in {"completed", "skipped", "failed"}
+        post_children = _report_post_step_rows(task_id)
+        post_children_ok = all(
+            str(r.get("status") or "") in {"completed", "skipped", "failed"} for r in post_children
+        )
         step11 = _step_status(task_id, "step11_report")
         has_dialogue_summary = db.fetch_one(
             "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
             (task_id,),
         )
-        # 分析步已点亮却仍 running：先尝试用对话里的终稿清洗收口，再决定是否暂缓 completed
+        # 分析步已点亮却仍 running：先尝试用对话里的终稿清洗收口
         analysis_running = False
         for ak in ANALYSIS_STEP_KEYS:
             if _step_status(task_id, ak) == "running":
@@ -1761,29 +1761,39 @@ class TaskStore:
                         "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
                         (task_id,),
                     )
-                    analysis_running = False
-                    for ak in ANALYSIS_STEP_KEYS:
-                        if _step_status(task_id, ak) == "running":
-                            analysis_running = True
-                            break
-                    if not analysis_running and _step_status(task_id, "step11_report") == "running":
-                        analysis_running = True
             except Exception as exc:
                 logger.warning("finalize 脏/终稿兜底收口失败 task=%s: %s", task_id, exc)
-        # 终稿已落库则任务可 completed（避免 step11 完成却 ready_done=false 永久 running）
+            # session 结束：仍无终稿则强制 skip 分析/报告空转
+            if session_ended:
+                from report_04.orchestrator import close_open_steps_for_session_end
+
+                close_open_steps_for_session_end(self, task_id)
+                analysis_running = False
+                step11 = _step_status(task_id, "step11_report")
+                step7_st = _step_status(task_id, "step7_posts")
+                step7_ok = step7_st in {"completed", "skipped", "failed"}
+
+        # 终稿已落库 → completed；会话结束则流程必须终态（有终稿 completed，否则 failed）
         if step11 in {"completed", "skipped"} and has_dialogue_summary:
             ready_done = True
+        elif session_ended:
+            ready_done = False
         else:
-            # 禁止：已有部分发文就标任务 completed，却留下 step7_posts=running
             ready_done = step2_ok and step5_ok and step7_ok and (
                 poc > 0 or post_children_ok or not post_children
             )
-        if analysis_running:
-            ready_done = False
-            logger.info(
-                "finalize 暂缓 completed：分析/报告步仍 running task=%s",
-                task_id,
-            )
+            if analysis_running:
+                ready_done = False
+                logger.info(
+                    "finalize 暂缓 completed：分析/报告步仍 running task=%s",
+                    task_id,
+                )
+
+        summary_ok = f"写报完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
+        summary_partial = (
+            f"会话结束收口：step2={step2}，step6={step5}，step7={step7_st}，"
+            f"step11={step11}；当前 {pc} 条资料，{poc} 条发文（未产出终稿）"
+        )
         db.execute(
             """
             INSERT INTO collect_task_summaries
@@ -1803,15 +1813,11 @@ class TaskStore:
                 pc,
                 poc,
                 db.json_dumps(platforms),
-                (
-                    f"写报完成：{vc} 个可信账号，{pc} 条资料，{poc} 条发文"
-                    if ready_done
-                    else f"写报未收口：step2={step2}，step6={step5}，发文子步骤未结束，当前 {pc} 条资料，{poc} 条发文"
-                ),
+                summary_ok if ready_done else summary_partial,
             ),
         )
         # 图片资产兜底：Agent 在 7→8 已跑则跳过；漏跑则补一次（失败不拖垮任务）
-        if ready_done or step7_ok:
+        if ready_done or step7_ok or session_ended:
             try:
                 from report_04.image_assets import run_image_pipeline_for_report
 
@@ -1824,9 +1830,28 @@ class TaskStore:
                 logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
         if ready_done:
             db.execute(
-                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)) WHERE task_id=%s AND status NOT IN ('failed', 'cancelled')",
+                "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)), error_message=NULL WHERE task_id=%s AND status NOT IN ('failed', 'cancelled')",
                 (PHASE_DONE, task_id),
             )
+        elif session_ended:
+            # stream 已结束：流程一并终态，禁止继续 running 空等
+            db.execute(
+                """
+                UPDATE hermes_tasks
+                SET status='failed',
+                    current_phase=%s,
+                    error_message=%s,
+                    finished_at=COALESCE(finished_at, NOW(3)),
+                    updated_at=NOW(3)
+                WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
+                """,
+                (
+                    PHASE_DONE,
+                    "会话结束：Agent stream 已结束，流程已收口（未产出终稿）",
+                    task_id,
+                ),
+            )
+            logger.info("finalize session_ended → failed（无终稿） task=%s", task_id)
         else:
             current_phase = PHASE_REPORT if not step5_ok else PHASE_POSTS
             db.execute(

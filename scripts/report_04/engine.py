@@ -55,7 +55,24 @@ def build_agent_context(task_id: str) -> Optional[str]:
     gate = infer_gate_step(task_id)
     lines: List[str] = [f"【04引擎 {ENGINE_VERSION}】当前编排步骤：{gate}"]
 
-    if gate == "step5_streams":
+    if gate == "step4_profiles":
+        pend = None
+        try:
+            from report_04.gates import _step4_profile_children_pending
+
+            pend = _step4_profile_children_pending(task_id)
+        except Exception:
+            pend = "step4_profile_*"
+        lines.append(
+            "步骤4：请继续完成/跳过剩余主页子步"
+            + (f"（当前未终态：{pend}）" if pend else "")
+            + "；禁止发文工具；禁止结束会话空等系统。"
+        )
+        lines.append(
+            "步骤4全部终态后系统会自动跑 4.1 文本/图片核验与步骤6；放行 step7_posts 后再采发文。"
+        )
+
+    elif gate == "step5_streams":
         from report_04.sink import _pending_image_stream_lines  # noqa: PLC0415 — 复用既有 URL 列表
 
         pending = _pending_image_stream_lines(task_id)
@@ -82,10 +99,27 @@ def build_agent_context(task_id: str) -> Optional[str]:
             lines.append("步骤5：图片流已齐，系统将自动 completed 并进入步骤6。")
 
     elif gate == "step6_validated":
-        lines.append("步骤6：系统正在/即将收敛可信账号，禁止发文工具。")
+        lines.append("步骤6：系统正在/即将收敛可信账号，禁止发文工具；禁止结束会话，等进入 step7_posts 后立刻采发文。")
 
     elif gate == "step7_posts":
+        # 列出仍未终态的发文子步，避免 Agent 误以为「只能等」而结束 stream
+        open_posts = db.fetch_all(
+            """
+            SELECT step_key, status FROM collect_phase_steps
+            WHERE task_id=%s AND parent_step_key=%s
+              AND status IN ('pending', 'running')
+            ORDER BY step_order, step_key
+            """,
+            (task_id, POST_PARENT_STEP_KEY),
+        )
+        open_keys = [str(r.get("step_key") or "") for r in (open_posts or [])]
         lines.append("步骤7：仅允许各平台发文 MCP/Apify；子步完成后系统自动关父节点。")
+        if open_keys:
+            lines.append(
+                "仍有未完成发文子步："
+                + ", ".join(open_keys[:12])
+                + "。必须继续采集，禁止结束会话空等。"
+            )
         lines.append(
             "发文入库后若有可下载视频，Hook 会挂 5.1.x.1 并后台分析；禁止同步 mcp_video2frame_*；发文子步会等视频终态。"
         )
@@ -197,16 +231,16 @@ def run_pre_llm_auto(store: Any, task_id: str) -> None:
 
 
 def run_session_finalize_light(store: Any, task_id: str) -> None:
-    """session_end / finalize 默认路径（无 FULL_RECONCILE）。"""
+    """session_end：与 stream 一并结束流程（收口未终态步骤，禁止新开分析 running）。"""
     from report_04.task_store import _reconcile_report_post_child_steps
     from report_04.step_reconcile import (
         close_collect_parent_if_ready,
-        ensure_step7_parent_active,
         reconcile_step4_and_step7_children,
         reconcile_step7_from_post_tools,
     )
-    from report_04.orchestrator import advance_to_analysis_phase
+    from report_04.orchestrator import close_open_steps_for_session_end
 
+    _auto_step5_step6(store, task_id)
     _reconcile_report_post_child_steps(store, task_id)
     try:
         reconcile_step7_from_post_tools(store, task_id)
@@ -215,20 +249,16 @@ def run_session_finalize_light(store: Any, task_id: str) -> None:
         logger.warning("engine session reconcile children 失败 task=%s: %s", task_id, exc)
 
     store.reconcile_collect_child_steps(task_id)
-    ensure_step7_parent_active(store, task_id)
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
-
-    if get_step_status(task_id, "step11_report") == "completed":
-        advance_to_analysis_phase(store, task_id, "会话结束收口")
-    elif get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+    # stream 已结束：未终态步骤全部收口，不再 advance_to_analysis（否则会空挂 running）
+    close_open_steps_for_session_end(store, task_id)
+    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
         try:
             from report_04.image_assets import run_image_pipeline_for_report
 
             run_image_pipeline_for_report(task_id, force_analyze=True, skip_if_stored=True)
         except Exception as exc:
             logger.warning("session_finalize 图片管线兜底失败 task=%s: %s", task_id, exc)
-
-    _auto_step5_step6(store, task_id)
 
 
 def _auto_step5_step6(store: Any, task_id: str) -> None:

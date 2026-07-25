@@ -1,4 +1,4 @@
-"""从已有 OCR/Vision 工具输出回填分析结果（第一期不直接调模型）。"""
+"""图片分析：优先回填 OCR/Vision 工具输出；无匹配时直连 VLM。"""
 
 from __future__ import annotations
 
@@ -7,7 +7,7 @@ import logging
 import re
 from typing import Any, Dict, List, Optional, Tuple
 
-from image_pipeline import mysql_store
+from image_pipeline import hbase_store, mysql_store
 
 logger = logging.getLogger(__name__)
 
@@ -194,6 +194,8 @@ def _match_for_image(
 def build_analysis_json(
     ocr_text: Optional[str],
     vision_text: Optional[str],
+    *,
+    source: str = "tool_output_backfill",
 ) -> Dict[str, Any]:
     summary = (vision_text or ocr_text or "").strip()
     if len(summary) > 500:
@@ -215,8 +217,27 @@ def build_analysis_json(
         "topics": [],
         "sensitiveSignals": [],
         "confidence": 0.5 if summary else 0.0,
-        "source": "tool_output_backfill",
+        "source": source,
     }
+
+
+def _analyze_via_vlm(row: Dict[str, Any]) -> Tuple[Optional[str], Optional[str]]:
+    """从本地回退字节直连 VLM；失败返回 (None, error)。"""
+    row_key = str(row.get("hbase_row_key") or "").strip()
+    if not row_key:
+        return None, "缺少 hbase_row_key，无法读图分析"
+    blob = hbase_store.get_image(row_key)
+    if not blob or not blob.get("bytes"):
+        return None, "本地无图字节，无法 VLM 分析"
+    from image_pipeline.vlm import analyze_image_bytes
+
+    result = analyze_image_bytes(
+        blob["bytes"],
+        mime_type=str(blob.get("mime_type") or row.get("mime_type") or "image/jpeg"),
+    )
+    if result.get("success") and result.get("description"):
+        return str(result["description"]).strip(), None
+    return None, str(result.get("error") or "vlm_failed")[:500]
 
 
 def analyze_image_row(
@@ -243,14 +264,19 @@ def analyze_image_row(
     try:
         mysql_store.mark_analyze_running(image_id)
         ocr_text, vision_text, tool_id = _match_for_image(row.get("origin_url") or "", indexed)
+        source = "tool_output_backfill"
         if not ocr_text and not vision_text:
-            mysql_store.mark_analyze_skipped(
-                image_id,
-                "暂无匹配的 OCR/Vision 工具输出；请由 Skill 调用分析工具后重跑 --force-analyze",
-            )
-            return "skipped"
+            vision_text, vlm_err = _analyze_via_vlm(row)
+            if not vision_text:
+                mysql_store.mark_analyze_failed(
+                    image_id,
+                    vlm_err or "无工具输出且 VLM 分析失败",
+                )
+                return "failed"
+            source = "vlm_direct"
+            tool_id = None
 
-        analysis = build_analysis_json(ocr_text, vision_text)
+        analysis = build_analysis_json(ocr_text, vision_text, source=source)
         mysql_store.mark_analyze_completed(
             image_id,
             ocr_text=ocr_text,

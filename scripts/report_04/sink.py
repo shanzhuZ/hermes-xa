@@ -140,24 +140,39 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
     """步骤五/六未完成时禁止发文类工具。返回拦截原因，允许则 None。"""
     if can_run_step7_collect(task_id):
         return None
+    s4 = get_step_status(task_id, "step4_profiles")
     s5 = get_step_status(task_id, "step5_streams")
     s6 = get_step_status(task_id, "step6_validated")
-    # MCP 发文工具：一律拦截
+    # MCP 发文工具：一律拦截（文案必须按真实 gate 指引，禁止误导为空等）
     if tool_name in POST_TOOLS and tool_name != "mcp_apify_get_dataset_items":
+        if s4 not in {"completed", "skipped"}:
+            pend = None
+            try:
+                from report_04.gates import _step4_profile_children_pending
+
+                pend = _step4_profile_children_pending(task_id)
+            except Exception:
+                pend = "step4_profile_*"
+            return (
+                f"步骤7发文尚未开放：当前仍在步骤4（未完成 {pend or '主页子步'}）。"
+                "禁止 get_user_tweets / 发文类工具。"
+                "请立刻继续完成或跳过剩余主页采集，禁止结束会话空等；"
+                "步骤4全部终态后系统会自动跑 4.1/步骤6，放行后再采发文。"
+            )
         return (
             f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
-            "请先完成全部图片流 vision，再等步骤6收敛可信账号后，才允许 get_user_tweets / "
-            "analyze_channel_videos / get_user_feeds / Apify 发文。"
+            "禁止发文类工具。请勿结束会话；等待本回合后系统收口步骤5/6，"
+            "下一轮编排变为 step7_posts 后立即补采各平台发文。"
         )
     # 步骤四已收口后的 Apify：只可能是抢跑步骤7
     apify_like = (
         tool_name in APIFY_POST_TOOLS
         or tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}
     )
-    if apify_like and get_step_status(task_id, "step4_profiles") in {"completed", "skipped"}:
+    if apify_like and s4 in {"completed", "skipped"}:
         return (
             f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
-            "禁止提前用 Apify 采发文；请先完成步骤5全部 vision，再进入步骤6。"
+            "禁止提前用 Apify 采发文；请勿结束会话空等，待步骤6完成后立即采发文。"
         )
     return None
 
@@ -632,8 +647,13 @@ def _enter_step5(store: TaskStore, task_id: str) -> None:
     if not gate.get("ok"):
         logger.info("进入 step5 跳过 task=%s: %s", task_id, gate.get("message"))
         return
+    from report_04.stream_steps import ensure_stream_child_steps, start_step5_image_pipeline
+
+    ensure_stream_child_steps(store, task_id)
     if get_step_status(task_id, "step5_streams") == "pending":
         store.set_step_status(task_id, "step5_streams", "running", message="文本/图片流核查中")
+    store.kickoff_step5_if_ready(task_id)
+    start_step5_image_pipeline(store, task_id)
 
 
 def _prepare_enter_step5(store: TaskStore, task_id: str) -> None:
@@ -642,14 +662,15 @@ def _prepare_enter_step5(store: TaskStore, task_id: str) -> None:
 
 
 def _maybe_advance_step67(store: TaskStore, task_id: str) -> None:
-    """仅在步骤5真正 completed 后推进步骤6；步骤7父节点等发文工具再点亮。"""
+    """仅在步骤5父壳 completed 后推进步骤6；步骤7父节点等发文工具再点亮。"""
+    from report_04.stream_steps import rollup_step5_parent
+
     gate5 = can_advance_to_step5(task_id)
     if not gate5.get("ok"):
         return
-    _try_complete_step5_if_settled(store, task_id)
     if get_step_status(task_id, "step5_streams") != "completed":
         store.kickoff_step5_if_ready(task_id)
-        _try_complete_step5_if_settled(store, task_id)
+        rollup_step5_parent(store, task_id)
     if (
         get_step_status(task_id, "step5_streams") == "completed"
         and get_step_status(task_id, "step6_validated") != "completed"
@@ -658,32 +679,12 @@ def _maybe_advance_step67(store: TaskStore, task_id: str) -> None:
 
 
 def _try_complete_step5_if_settled(store: TaskStore, task_id: str) -> bool:
-    """图片流已齐且 vision 安静期过后，才 completed 步骤5。"""
-    from report_04.gates import count_image_streams, count_image_streams_processed
+    """兼容旧调用：改为子节点 rollup（4.1.2 由图片管线收口，不再等 vision settle）。"""
+    from report_04.stream_steps import rollup_step5_parent
 
     if not can_advance_to_step5(task_id).get("ok"):
         return False
-    if get_step_status(task_id, "step5_streams") in {"completed", "skipped"}:
-        return False
-    if not is_stream_compare_ready(task_id):
-        return False
-    n_img = count_image_streams(task_id)
-    n_done = count_image_streams_processed(task_id)
-    if not _vision_settle_ready(task_id):
-        store.set_step_status(
-            task_id,
-            "step5_streams",
-            "running",
-            message=f"图片流已齐 {n_done}/{n_img}，等待 vision 轮次结束…",
-            payload={"text_compare_done": True, "image_pending": 0, "vision_ready": True},
-            touch_updated_at=False,
-        )
-        return False
-    msg = "无头像图片流，跳过图片比对" if n_img == 0 else f"图片流 Vision 完成 ({n_done}/{n_img})"
-    store.set_step_status(task_id, "step5_streams", "completed", message=msg)
-    if get_step_status(task_id, "step6_validated") != "completed":
-        store.run_validated_accounts(task_id)
-    return True
+    return rollup_step5_parent(store, task_id)
 
 
 def _on_step5_tool_after(
@@ -694,7 +695,9 @@ def _on_step5_tool_after(
     *,
     success: bool,
 ) -> None:
-    # 方案3：步骤5已收口则忽略迟到 vision（pre_tool 应已 block；此处双保险不回开）
+    """Vision/OCR 仍可更新身份流；4.1.2 收口改由 image_pipeline，此处只 rollup。"""
+    from report_04.stream_steps import rollup_step5_parent
+
     if tool_name in _STEP5_STREAM_TOOLS and get_step_status(task_id, "step5_streams") in {
         "completed",
         "skipped",
@@ -702,62 +705,17 @@ def _on_step5_tool_after(
         logger.info("步骤5已收口，忽略迟到 vision/OCR task=%s tool=%s", task_id, tool_name)
         return
 
-    matched = False
     if tool_name in _STEP5_STREAM_TOOLS:
         matched = bool(store.mark_image_stream_progress(task_id, tool_name, tool_args, success=success))
-        if tool_name == "mcp_ocr_perform_ocr" and not success:
-            logger.info("step5 OCR 失败/无字，继续 vision task=%s matched=%s", task_id, matched)
-        elif tool_name in {"mcp_vision_analyze", "vision_analyze"} and not matched:
-            logger.warning(
-                "step5 vision 未匹配库内图片流，不计入进度 task=%s",
-                task_id,
-            )
+        if tool_name in {"mcp_vision_analyze", "vision_analyze"} and not matched:
+            logger.warning("step5 vision 未匹配库内图片流 task=%s", task_id)
 
     gate = can_advance_to_step5(task_id)
     if not gate.get("ok"):
-        logger.info("step5 工具跳过状态推进 task=%s: %s", task_id, gate.get("message"))
         return
-    from report_04.gates import count_image_streams, count_image_streams_processed
-
-    n_img = count_image_streams(task_id)
-    n_done = count_image_streams_processed(task_id)
-    payload = store._step5_payload(task_id)
-    wait_since = payload.get("wait_images_since")
-    patch = {
-        "image_pending": max(n_img - n_done, 0),
-        "text_compare_done": bool(payload.get("text_compare_done")),
-        "wait_images_since": wait_since,
-    }
-    if get_step_status(task_id, "step5_streams") == "pending":
-        store.set_step_status(
-            task_id,
-            "step5_streams",
-            "running",
-            message=f"图片流比对中 {n_done}/{n_img}",
-            payload=patch,
-        )
-    if not is_stream_compare_ready(task_id):
-        if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
-            store.set_step_status(
-                task_id,
-                "step5_streams",
-                "running",
-                message=f"图片流比对中 {n_done}/{n_img}",
-                payload=patch,
-                touch_updated_at=False,
-            )
-        return
-    # 已齐：短 settle 后 completed→步骤6（不再因迟到 vision 回开）
-    if get_step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
-        store.set_step_status(
-            task_id,
-            "step5_streams",
-            "running",
-            message=f"图片流已齐 {n_done}/{n_img}，批次收口中…",
-            payload={**patch, "image_pending": 0, "vision_ready": True},
-        )
-    _try_complete_step5_if_settled(store, task_id)
-    if is_stream_compare_ready(task_id) and get_step_status(task_id, "step5_streams") == "completed":
+    _enter_step5(store, task_id)
+    rollup_step5_parent(store, task_id)
+    if get_step_status(task_id, "step5_streams") == "completed":
         _maybe_advance_step67(store, task_id)
 
 
@@ -1812,6 +1770,13 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             return
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
+        try:
+            from report_04.stream_steps import apply_text_conclusion_from_assistant
+
+            if apply_text_conclusion_from_assistant(store, task_id, assistant):
+                _maybe_advance_step67(store, task_id)
+        except Exception as exc:
+            logger.warning("解析文本核验结论失败 task=%s: %s", task_id, exc)
         _try_complete_profiles(store, task_id)
         # 中途兜底：回放已成功的 vision；若长时间空等 Vision 则 fail-forward 解开 step5
         try:
@@ -1917,7 +1882,8 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         from report_04.orchestrator import run_full_reconcile_if_requested
 
         run_full_reconcile_if_requested(store, task_id)
-        store.finalize_task(task_id)
+        # stream.end / session_end：流程与 stream 一并终态
+        store.finalize_task(task_id, session_ended=True)
     except DbError as exc:
         logger.warning("%s", exc)
 

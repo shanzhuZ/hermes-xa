@@ -43,6 +43,12 @@ ANALYSIS_STEP_KEYS = (
 
 PROFILE_PARENT_STEP_KEY = "step4_profiles"
 POST_PARENT_STEP_KEY = "step7_posts"
+STREAM_PARENT_STEP_KEY = "step5_streams"
+STREAM_TEXT_STEP_KEY = "step5_stream_text"
+STREAM_IMAGE_STEP_KEY = "step5_stream_image"
+
+# Agent 文本核验结论标记（Hook 解析）
+STREAM_TEXT_CONCLUSION_MARKER = "[文本核验结论]"
 
 
 @dataclass(frozen=True)
@@ -123,6 +129,22 @@ def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDe
             PHASE_PROFILES,
         ),
         StepDef("step5_streams", "信息核验流 Agent 核查", 410, "4.1", PHASE_COLLISION, PHASE_STREAM_VALIDATE),
+        StepDef(
+            STREAM_TEXT_STEP_KEY,
+            "文本流核验 Agent",
+            411,
+            "4.1.1",
+            STREAM_PARENT_STEP_KEY,
+            PHASE_STREAM_VALIDATE,
+        ),
+        StepDef(
+            STREAM_IMAGE_STEP_KEY,
+            "图片流核验 Agent",
+            412,
+            "4.1.2",
+            STREAM_PARENT_STEP_KEY,
+            PHASE_STREAM_VALIDATE,
+        ),
         StepDef("step6_validated", "相似账号认定 Agent", 420, "4.2", PHASE_COLLISION, PHASE_VALIDATED),
         StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
         StepDef("step8_img_analysis", "图片流 Agent 分析", 610, "6.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),

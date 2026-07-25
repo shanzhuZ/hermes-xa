@@ -22,8 +22,14 @@ public class TaskStepDataQueryService {
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
+    /** 步骤详情里单张图片嵌入 dataUrl 上限 */
+    private static final int STEP_IMAGE_MAX_BYTES = 1536 * 1024;
+
     @Autowired
     private VideoAssetQueryService videoAssetQueryService;
+
+    @Autowired
+    private ImageAssetQueryService imageAssetQueryService;
 
     /**
      * 查询某一步骤对应的业务表数据。
@@ -46,6 +52,16 @@ public class TaskStepDataQueryService {
         if ("collect_videos".equals(dataType)) {
             String platform = resolveVideoPlatform(stepKey);
             records = videoAssetQueryService.listTaskVideosWithFrames(taskId, platform, STEP_FRAME_MAX_BYTES);
+        } else if ("step5_stream_text".equals(stepKey) || "step5_streams".equals(stepKey)) {
+            // 4.1 / 4.1.1：直接返回身份流比对明细（非仅结论摘要）
+            String streamType = "step5_stream_text".equals(stepKey) ? "text" : "";
+            records = loadIdentityStreamRecords(taskId, streamType);
+            if (records.isEmpty()) {
+                records = loadDisplayRecords(taskId, stepKey);
+            }
+        } else if ("collect_images".equals(dataType)) {
+            records = imageAssetQueryService.listTaskImagesWithDataUrl(
+                    taskId, 100, STEP_IMAGE_MAX_BYTES);
         } else {
             records = loadDisplayRecords(taskId, stepKey);
         }
@@ -60,7 +76,126 @@ public class TaskStepDataQueryService {
         out.put("dataType", dataType);
         out.put("recordCount", Integer.valueOf(records.size()));
         out.put("records", records);
+        // 4.1.1：模型推理结论 + 规则摘要；并把结论前置到 records 便于前端直接渲染
+        if ("step5_stream_text".equals(stepKey)) {
+            Map<String, Object> payload = parsePayloadMap(step.get("payload_json"));
+            if (!payload.isEmpty()) {
+                out.put("summary", payload);
+            }
+            String modelAnalysis = firstNonEmpty(
+                    stringVal(payload.get("modelAnalysis")),
+                    stringVal(payload.get("conclusion")),
+                    stringVal(step.get("message")));
+            out.put("modelAnalysis", modelAnalysis);
+            if (!modelAnalysis.isEmpty()) {
+                List<Map<String, Object>> withConclusion = new ArrayList<Map<String, Object>>();
+                Map<String, Object> head = new LinkedHashMap<String, Object>();
+                head.put("recordKind", "model_conclusion");
+                head.put("conclusion", modelAnalysis);
+                head.put("modelAnalysis", modelAnalysis);
+                head.put("source", payload.get("source"));
+                head.put("matched", payload.get("matched"));
+                head.put("total", payload.get("total"));
+                withConclusion.add(head);
+                withConclusion.addAll(records);
+                records = withConclusion;
+                out.put("records", records);
+                out.put("recordCount", Integer.valueOf(records.size()));
+            }
+        }
+        // 4.1.2：图片资产 + 分析结果 + 图片流对比结果
+        if ("step5_stream_image".equals(stepKey) && "collect_images".equals(dataType)) {
+            Map<String, Object> payload = parsePayloadMap(step.get("payload_json"));
+            List<Map<String, Object>> streamRows = loadIdentityStreamRecords(taskId, "image");
+            out.put("streamRecordCount", Integer.valueOf(streamRows.size()));
+            out.put("streamRecords", streamRows);
+            String compareConclusion = firstNonEmpty(
+                    stringVal(payload.get("compareConclusion")),
+                    stringVal(payload.get("modelAnalysis")));
+            if (compareConclusion.isEmpty() && payload.get("compare") instanceof Map) {
+                @SuppressWarnings("unchecked")
+                Map<String, Object> cmp = (Map<String, Object>) payload.get("compare");
+                compareConclusion = firstNonEmpty(
+                        stringVal(cmp.get("conclusion")),
+                        stringVal(cmp.get("modelAnalysis")));
+            }
+            out.put("compareConclusion", compareConclusion);
+            out.put("modelAnalysis", compareConclusion);
+            if (!payload.isEmpty()) {
+                out.put("summary", payload);
+            }
+        }
         return out;
+    }
+
+    private static String firstNonEmpty(String... values) {
+        if (values == null) {
+            return "";
+        }
+        for (String v : values) {
+            if (v != null && !v.trim().isEmpty()) {
+                return v.trim();
+            }
+        }
+        return "";
+    }
+
+    /** 身份流比对明细（collect_identity_streams） */
+    private List<Map<String, Object>> loadIdentityStreamRecords(String taskId, String streamType) {
+        List<Map<String, Object>> rows;
+        if (streamType == null || streamType.isEmpty()) {
+            rows = collectTaskMapper.selectIdentityStreams(taskId);
+        } else {
+            rows = collectTaskMapper.selectIdentityStreamsByType(taskId, streamType);
+        }
+        if (rows == null || rows.isEmpty()) {
+            return new ArrayList<Map<String, Object>>();
+        }
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("streamId", row.get("stream_id"));
+            item.put("streamType", row.get("stream_type"));
+            item.put("platform", row.get("source_platform"));
+            item.put("accountId", row.get("source_account_id"));
+            item.put("sourceField", row.get("source_field"));
+            item.put("payloadText", row.get("payload_text"));
+            item.put("payloadUrl", row.get("payload_url"));
+            item.put("validationStatus", row.get("validation_status"));
+            item.put("validationDetail", row.get("validation_detail"));
+            item.put("createdAt", row.get("created_at"));
+            item.put("updatedAt", row.get("updated_at"));
+            out.add(item);
+        }
+        return out;
+    }
+
+    private Map<String, Object> parsePayloadMap(Object raw) {
+        if (raw == null) {
+            return new LinkedHashMap<String, Object>();
+        }
+        if (raw instanceof Map) {
+            @SuppressWarnings("unchecked")
+            Map<String, Object> m = (Map<String, Object>) raw;
+            return m;
+        }
+        if (raw instanceof String) {
+            String text = ((String) raw).trim();
+            if (text.isEmpty()) {
+                return new LinkedHashMap<String, Object>();
+            }
+            try {
+                Object parsed = JSON.parse(text);
+                if (parsed instanceof Map) {
+                    @SuppressWarnings("unchecked")
+                    Map<String, Object> m = (Map<String, Object>) parsed;
+                    return m;
+                }
+            } catch (Exception ignore) {
+                // ignore
+            }
+        }
+        return new LinkedHashMap<String, Object>();
     }
 
     /**
@@ -111,6 +246,17 @@ public class TaskStepDataQueryService {
         }
         if (stepKey.startsWith("step6_video_") || stepKey.startsWith("step7_video_")) {
             return "collect_videos";
+        }
+        if ("step5_stream_text".equals(stepKey)) {
+            // 文本流规则/模型比对明细（collect_identity_streams）
+            return "collect_identity_streams";
+        }
+        if ("step5_stream_image".equals(stepKey)) {
+            // 图片资产（含 visionText）；streamRecords 另附身份流
+            return "collect_images";
+        }
+        if ("step5_streams".equals(stepKey)) {
+            return "collect_identity_streams";
         }
         if ("step1_input_accounts".equals(stepKey)) {
             return "input_accounts";

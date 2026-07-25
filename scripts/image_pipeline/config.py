@@ -103,3 +103,27 @@ def download_config() -> Dict[str, Any]:
             "(KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
         ),
     }
+
+
+def vlm_config() -> Dict[str, Any]:
+    """与 video2frame-mcp 共用 VLM 环境变量，供 4.1.2 直连分析。"""
+    load_env()
+    api_key = (
+        os.environ.get("HERMES_VIDEO_VLM_API_KEY")
+        or os.environ.get("PERPLEXITY_API_KEY")
+        or ""
+    ).strip()
+    return {
+        "api_url": os.environ.get(
+            "HERMES_VIDEO_VLM_API_URL",
+            "https://api.perplexity.ai/chat/completions",
+        ),
+        "model": os.environ.get("HERMES_VIDEO_VLM_MODEL", "sonar"),
+        "api_key": api_key,
+        "prompt": os.environ.get(
+            "HERMES_IMAGE_VLM_PROMPT",
+            os.environ.get("HERMES_VIDEO_VLM_PROMPT", "请详细说明图片内容，并提取可见文字"),
+        ),
+        "max_tokens": int(os.environ.get("HERMES_VIDEO_VLM_MAX_TOKENS", "800")),
+        "timeout": int(os.environ.get("HERMES_VIDEO_VLM_TIMEOUT", "120")),
+    }

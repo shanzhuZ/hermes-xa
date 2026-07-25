@@ -12,8 +12,12 @@ from report_04.phases import (
     ANALYSIS_STEP_KEYS,
     APIFY_POST_TOOLS,
     PHASE_ANALYSIS,
+    PHASE_ANALYSIS_SHELL,
+    PHASE_CONTENT,
+    PHASE_REPORT_SHELL,
     POST_PARENT_STEP_KEY,
     POST_TOOLS,
+    PROFILE_PARENT_STEP_KEY,
     PROFILE_TOOLS,
     STEP5_STREAM_TOOLS,
     WEB_SEARCH_TOOLS,
@@ -214,15 +218,67 @@ def on_post_tool_step7_close_parent(store: Any, task_id: str) -> None:
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
 
 
-def session_end_light(store: Any, task_id: str) -> None:
-    """会话结束轻量收口：step7 子步 + 父节点 + 分析阶段触发，不跑全库 reconcile。"""
+def close_open_steps_for_session_end(
+    store: Any,
+    task_id: str,
+    *,
+    reason: str = "会话结束：Agent stream 已结束",
+) -> int:
+    """stream/session 结束时：所有仍 pending/running 的步骤一律终态，禁止流程空转。
+
+    - 发文子步 / 分析步 / 报告步 / 各阶段壳：skipped（或已有完成保持）
+    - 不点亮新的分析 running（没有 Agent 再跑）
+    """
+    from report_04.step_reconcile import close_collect_parent_if_ready
     from report_04.task_store import _reconcile_report_post_child_steps
 
+    updated = 0
     _reconcile_report_post_child_steps(store, task_id)
     store.reconcile_collect_child_steps(task_id)
-    from report_04.step_reconcile import close_collect_parent_if_ready
-
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status, parent_step_key FROM collect_phase_steps
+        WHERE task_id=%s AND status IN ('pending', 'running')
+        ORDER BY step_order ASC, id ASC
+        """,
+        (task_id,),
+    )
+    msg = reason[:200]
+    for row in rows:
+        step_key = str(row.get("step_key") or "")
+        if not step_key:
+            continue
+        # 父壳稍后统一收口；业务子步先 skip
+        store.set_step_status(task_id, step_key, "skipped", message=msg)
+        updated += 1
+
+    # 再关一次父节点 / 阶段壳
+    for parent in (
+        PROFILE_PARENT_STEP_KEY,
+        POST_PARENT_STEP_KEY,
+        "step5_streams",
+        PHASE_CONTENT,
+        PHASE_ANALYSIS_SHELL,
+        PHASE_REPORT_SHELL,
+    ):
+        try:
+            if get_step_status(task_id, parent) in {"pending", "running"}:
+                store.set_step_status(task_id, parent, "skipped", message=msg)
+                updated += 1
+        except Exception:
+            pass
+    close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+    close_collect_parent_if_ready(store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕")
+    if updated:
+        logger.info("session_end 收口未终态步骤 task=%s n=%s", task_id, updated)
+    return updated
+
+
+def session_end_light(store: Any, task_id: str) -> None:
+    """会话结束轻量收口：与 stream 一并结束流程，不新开分析步。"""
+    close_open_steps_for_session_end(store, task_id)
 
 
 def run_full_reconcile_if_requested(store: Any, task_id: str) -> None:

@@ -28,6 +28,8 @@ DATA_TYPE_BY_STEP = {
     "step4_text_compare": "collect_identity_streams",
     "step4_image_compare": "collect_identity_streams",
     "step5_streams": "collect_identity_streams",
+    "step5_stream_text": "collect_identity_streams",
+    "step5_stream_image": "collect_identity_streams",
     "step5_validated": "collect_validated_accounts",
     "step6_validated": "collect_validated_accounts",
     "step6_posts": "collect_posts",
