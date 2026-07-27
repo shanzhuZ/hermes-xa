@@ -8,9 +8,11 @@ from typing import Any, Dict, FrozenSet, Optional
 
 from collect_01 import db
 from report_04.gates import get_step_status
+from report_04.osint_es import is_osint_es_tool
 from report_04.phases import (
     ANALYSIS_STEP_KEYS,
     APIFY_POST_TOOLS,
+    OSINT_ES_STEP_KEY,
     PHASE_ANALYSIS,
     PHASE_ANALYSIS_SHELL,
     PHASE_CONTENT,
@@ -55,6 +57,16 @@ _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
     | APIFY_POST_TOOLS,
     "step5_streams": STEP5_STREAM_TOOLS,
     "step6_validated": frozenset(),  # 收敛账号，禁止采集类工具
+    "step6_osint_es": frozenset(
+        {
+            "mcp_es_search_search_country_wise",
+            "mcp_es-search_search_country_wise",
+            "mcp_es_search_list_es_indices",
+            "mcp_es_search_es_cluster_health",
+            "mcp_es-search_list_es_indices",
+            "mcp_es-search_es_cluster_health",
+        }
+    ),
     "step7_posts": POST_TOOLS | APIFY_POST_TOOLS | frozenset({"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}),
     "step8_img_analysis": frozenset(),
     "step9_context_views": frozenset(),
@@ -68,6 +80,16 @@ _ROOT_ORDER = tuple(root_step_keys())
 
 def infer_gate_step(task_id: str) -> str:
     """推断当前应处根的步骤（用于白名单）。"""
+    # 仍有 validated 未调发文工具：强制停留步骤7（即使父节点被误标 completed）
+    try:
+        from report_04.gates import can_run_step7_collect
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        if can_run_step7_collect(task_id) and list_unattempted_post_platforms(task_id):
+            return "step7_posts"
+    except Exception:
+        pass
+
     # 步骤7 已收口 → 分析或报告
     s7 = get_step_status(task_id, "step7_posts")
     if s7 in {"completed", "skipped"}:
@@ -90,6 +112,8 @@ def infer_gate_step(task_id: str) -> str:
 def _allow_late_step7_post_collect(task_id: str, tool_name: str, phase: Optional[str]) -> bool:
     """步骤7 父节点已 completed 后允许补采发文（只入库，编排层禁止回开父节点）。"""
     if get_step_status(task_id, "step6_validated") != "completed":
+        return False
+    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
         return False
     if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
         return False
@@ -118,12 +142,22 @@ def block_tool_reason(
     gate = infer_gate_step(task_id)
     allowed = _STEP_WHITELIST.get(gate, frozenset())
 
+    # 社工库工具：仅 4.3；名称可能含 sanitize 后的 es_search
+    if is_osint_es_tool(tool_name):
+        if gate == OSINT_ES_STEP_KEY:
+            return None
+        return (
+            f"当前编排步骤为 {gate}，禁止调用社工库工具 {tool_name}。"
+            "须等 4.1+4.2 完成后进入 4.3（step6_osint_es），"
+            "仅对 validated 账号的 profile_url 调用 search_country_wise。"
+        )
+
     # Apify dataset/run：phase 与 gate 不一致时按 phase 放宽（Hook 已写 phase）
     ph = str(phase or "")
     if tool_name in {"mcp_apify_get_dataset_items", "mcp_apify_get_actor_run"}:
         if ph.startswith("step4_profile_") and gate in {"step4_profiles", "step1_seed"}:
             return None
-        if ph.startswith("step7_post_") and gate in {"step7_posts", "step6_validated"}:
+        if ph.startswith("step7_post_") and gate in {"step7_posts", "step6_validated", OSINT_ES_STEP_KEY}:
             return None
 
     if tool_name in allowed:
@@ -143,25 +177,54 @@ def should_advance_on_tool(task_id: str, tool_name: str) -> bool:
     """步骤7未收口时，Agent 又调主页/检索类采集工具 → 视为进入分析前收口 step7。"""
     if not tool_name or get_step_status(task_id, "step6_validated") != "completed":
         return False
+    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
+        return False
     if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
         return False
     if tool_name in POST_TOOLS | APIFY_POST_TOOLS:
         return False
     if tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}:
         return False
+    if is_osint_es_tool(tool_name):
+        return False
     if tool_name in WEB_SEARCH_TOOLS | PROFILE_TOOLS:
         return True
     return False
 
 
-def advance_to_analysis_phase(store: Any, task_id: str, reason: str) -> bool:
+def advance_to_analysis_phase(
+    store: Any,
+    task_id: str,
+    reason: str,
+    *,
+    force_skip_unattempted: bool = False,
+) -> bool:
     """
-    进入步骤8/9/10：pending/running 的 step7 子步批量 skip，收口父节点，点亮分析步。
-    幂等；步骤7 已 completed 时仍可点亮 8～10。
+    进入步骤8/9/10：对「已尝试但 0 条」的 step7 子步 skip，收口父节点，点亮分析步。
+    默认禁止空 skip 未尝试发文的平台（逼 Agent 先调工具）；
+    仅终稿/会话结束等路径可 force_skip_unattempted=True。
     """
-    from report_04.step_reconcile import close_collect_parent_if_ready
+    from report_04.step_reconcile import (
+        _post_actor_without_dataset,
+        _post_collect_attempted,
+        close_collect_parent_if_ready,
+        list_unattempted_post_platforms,
+    )
 
     if get_step_status(task_id, "step6_validated") != "completed":
+        return False
+    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
+        return False
+
+    leftover = list_unattempted_post_platforms(task_id)
+    if leftover and not force_skip_unattempted:
+        plats = [str(x.get("platform") or "") for x in leftover]
+        logger.warning(
+            "拒绝 advance_to_analysis：未尝试发文平台 task=%s platforms=%s reason=%s",
+            task_id,
+            ",".join(plats[:12]),
+            reason[:80],
+        )
         return False
 
     changed = False
@@ -175,14 +238,25 @@ def advance_to_analysis_phase(store: Any, task_id: str, reason: str) -> bool:
     for row in rows:
         step_key = str(row.get("step_key") or "")
         st = str(row.get("status") or "")
-        if st in {"pending", "running"}:
-            store.set_step_status(
-                task_id,
-                step_key,
-                "skipped",
-                message=f"进入分析阶段收口：{reason[:120]}",
-            )
-            changed = True
+        if st not in {"pending", "running"}:
+            continue
+        plat = (
+            step_key.replace("step7_post_", "", 1)
+            if step_key.startswith("step7_post_")
+            else ""
+        )
+        attempted = bool(plat) and (
+            _post_collect_attempted(task_id, plat)
+            or _post_actor_without_dataset(task_id, plat)
+        )
+        if not attempted and not force_skip_unattempted:
+            # 保持 pending/running，禁止「进分析」空 skip
+            continue
+        msg = f"进入分析阶段收口：{reason[:120]}"
+        if not attempted and force_skip_unattempted:
+            msg = f"违规空过·未尝试发文后强制收口：{reason[:100]}"
+        store.set_step_status(task_id, step_key, "skipped", message=msg)
+        changed = True
 
     if close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕"):
         changed = True

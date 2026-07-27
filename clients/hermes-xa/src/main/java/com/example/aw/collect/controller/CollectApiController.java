@@ -215,11 +215,13 @@ public class CollectApiController {
 
     /**
      * 用户结束任务：pending/running → cancelled；步骤树不动。
+     * 同时将 hermes_user_dialogues 非 summary 的 assistant msg_type 标为 cancelled
+     * （无 assistant 则插入一条；不改 user_input / summary）。
      * <p>
      * Agent 由 Gateway 读流发现 cancelled 后断 SSE（与 failed 同路径）。
      * 不杀视频等后台子进程。
      * <p>
-     * 200：ok/taskId/status/statusLabel；404 不存在；409 状态不可结束。
+     * 200：ok/taskId/status/statusLabel/dialogueMsgType；404 不存在；409 状态不可结束。
      */
     @PostMapping("/tasks/{taskId}/end")
     public ResponseEntity<?> endTask(@PathVariable String taskId) {
@@ -400,8 +402,9 @@ public class CollectApiController {
 
     /**
      * 历史对话分页查询。
-     * 同一 taskId 若已有 assistant，只返回该任务最新一条 assistant；
-     * 若该条 payload 为空，则从同任务其它记录（通常为 user）回填 payload。
+     * 每个 taskId 只返回一条，且仅考虑 msg_type ∈ {user_input, summary, cancelled}；
+     * 优先级：cancelled &gt; summary &gt; user_input；
+     * payload 一律取同任务 user_input.payload_json。
      *
      * @param taskType 可选，前端短码 collect/expand/verify/report，或库内 account_*
      */
@@ -464,12 +467,7 @@ public class CollectApiController {
             item.put("sessionId", row.get("session_id"));
             item.put("role", row.get("role"));
             item.put("content", row.get("content"));
-            String msgType = stringVal(row.get("msg_type"));
-            // 历史列表仅在没有 summary 时才落到 thoughts_final，对外统一展示为 summary
-            if ("thoughts_final".equals(msgType)) {
-                msgType = "summary";
-            }
-            item.put("msgType", msgType);
+            item.put("msgType", stringVal(row.get("msg_type")));
             String dbType = stringVal(row.get("task_type"));
             item.put("taskType", taskTypeRegistry.labelOfDbTaskType(dbType));
             item.put("payload", parsePayloadJson(row.get("payload_json")));

@@ -288,6 +288,11 @@ public final class CoarseToolStepMapping {
         if ("mcp_maigret_collect_accounts".equals(tool)) {
             return new Target("step2_maigret", false);
         }
+        if (tool != null && (tool.endsWith("search_country_wise")
+                || tool.endsWith("list_es_indices")
+                || tool.endsWith("es_cluster_health"))) {
+            return new Target("step6_osint_es", false);
+        }
         if ("mcp_twitter_get_user_tweets".equals(tool)) {
             return new Target("step7_post_twitter", false);
         }

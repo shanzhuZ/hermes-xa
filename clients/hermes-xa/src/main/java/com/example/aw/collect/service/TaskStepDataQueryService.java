@@ -59,6 +59,11 @@ public class TaskStepDataQueryService {
             if (records.isEmpty()) {
                 records = loadDisplayRecords(taskId, stepKey);
             }
+        } else if ("step6_osint_es".equals(stepKey) || "collect_osint_hits".equals(dataType)) {
+            records = loadOsintHitRecords(taskId);
+            if (records.isEmpty()) {
+                records = loadDisplayRecords(taskId, stepKey);
+            }
         } else if ("collect_images".equals(dataType)) {
             records = imageAssetQueryService.listTaskImagesWithDataUrl(
                     taskId, 100, STEP_IMAGE_MAX_BYTES);
@@ -138,6 +143,30 @@ public class TaskStepDataQueryService {
             }
         }
         return "";
+    }
+
+    /** 4.3 社工库命中明细 */
+    private List<Map<String, Object>> loadOsintHitRecords(String taskId) {
+        List<Map<String, Object>> rows = collectTaskMapper.selectOsintHits(taskId);
+        if (rows == null || rows.isEmpty()) {
+            return new ArrayList<Map<String, Object>>();
+        }
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", row.get("id"));
+            item.put("platform", row.get("platform"));
+            item.put("accountId", row.get("account_id"));
+            item.put("profileUrl", row.get("profile_url"));
+            item.put("sourceIndex", row.get("source_index"));
+            item.put("queryText", row.get("query_text"));
+            item.put("hitCount", row.get("hit_count"));
+            item.put("hitJson", row.get("hit_json"));
+            item.put("toolOutputId", row.get("tool_output_id"));
+            item.put("createdAt", row.get("created_at"));
+            out.add(item);
+        }
+        return out;
     }
 
     /** 身份流比对明细（collect_identity_streams） */
@@ -272,12 +301,21 @@ public class TaskStepDataQueryService {
                 || "step4_image_compare".equals(stepKey)) {
             return "collect_identity_streams";
         }
-        if ("step5_validated".equals(stepKey)) {
+        if ("step5_validated".equals(stepKey) || "step6_validated".equals(stepKey)) {
             return "collect_validated_accounts";
+        }
+        if ("step6_osint_es".equals(stepKey)) {
+            return "collect_osint_hits";
         }
         if (stepKey.startsWith("step3_post_") || "step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")
                 || "step7_posts".equals(stepKey) || stepKey.startsWith("step7_post_")) {
             return "collect_posts";
+        }
+        if ("step8_img_analysis".equals(stepKey)
+                || "step9_context_views".equals(stepKey)
+                || "step10_context_pii".equals(stepKey)
+                || "step11_report".equals(stepKey)) {
+            return "report_analysis";
         }
         return "unknown";
     }

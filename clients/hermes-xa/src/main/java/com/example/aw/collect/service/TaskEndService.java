@@ -11,8 +11,10 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * 用户「结束」任务：仅改 hermes_tasks → cancelled，不断改步骤树。
+ * 用户「结束」任务：hermes_tasks → cancelled，并在 hermes_user_dialogues
+ * 将非 summary 的 assistant 对话 msg_type 标为 cancelled（无则插入一条）。
  * <p>
+ * 不改步骤树；不改 user_input / summary。
  * Agent 停靠 Gateway drainStream 发现 cancelled 后断 SSE（与 failed 同路径）。
  * 不杀视频等后台子进程。
  */
@@ -20,12 +22,13 @@ import java.util.Map;
 public class TaskEndService {
 
     private static final String END_MESSAGE = "用户结束";
+    private static final String DIALOGUE_CANCELLED_MSG_TYPE = "cancelled";
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
     /**
-     * 结束任务：pending/running → cancelled。
+     * 结束任务：pending/running → cancelled，并标记对话 msg_type=cancelled。
      *
      * @param taskId 任务 ID
      * @return ok、taskId、status、statusLabel
@@ -53,11 +56,25 @@ public class TaskEndService {
             throw new ResponseStatusException(HttpStatus.CONFLICT, "task_status_not_endable");
         }
 
+        markDialogueCancelled(tid, task);
+
         Map<String, Object> body = new LinkedHashMap<String, Object>();
         body.put("ok", Boolean.TRUE);
         body.put("taskId", tid);
         body.put("status", "cancelled");
         body.put("statusLabel", "已取消");
+        body.put("dialogueMsgType", DIALOGUE_CANCELLED_MSG_TYPE);
         return body;
+    }
+
+    /** 非 summary 的 assistant → msg_type=cancelled；没有则插入标记行。 */
+    private void markDialogueCancelled(String taskId, Map<String, Object> task) {
+        int updated = collectTaskMapper.markLatestAssistantDialogueCancelled(taskId);
+        if (updated > 0) {
+            return;
+        }
+        Object sidObj = task.get("session_id");
+        String sessionId = sidObj == null ? "" : String.valueOf(sidObj).trim();
+        collectTaskMapper.insertCancelledDialogue(taskId, sessionId, END_MESSAGE);
     }
 }

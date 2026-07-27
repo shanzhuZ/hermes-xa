@@ -33,6 +33,7 @@ from report_04.candidate_parser import (
 from report_04.gates import (
     analysis_steps_terminal,
     can_advance_to_analysis,
+    can_advance_to_osint,
     can_advance_to_step5,
     can_advance_to_step7,
     can_complete_step11,
@@ -51,6 +52,7 @@ from report_04.phases import (
     ANALYSIS_STEP_KEYS,
     APIFY_POST_TOOLS,
     APIFY_TOOL_PLATFORM,
+    OSINT_ES_STEP_KEY,
     POST_TOOLS,
     PROFILE_TOOLS,
     STEP4_COLLECT_TOOLS,
@@ -136,6 +138,26 @@ def _normalize_hook_tool_name(raw: Optional[str]) -> str:
     return normalize_mcp_tool_name(str(raw or "").strip())
 
 
+def _is_premature_osint_tool(tool_name: str, task_id: str) -> Optional[str]:
+    """4.1+4.2 未完成时禁止社工库工具，防止抢跑点亮 4.3。"""
+    try:
+        from report_04.osint_es import is_osint_es_tool
+    except Exception:
+        return None
+    if not is_osint_es_tool(tool_name):
+        return None
+    if can_advance_to_osint(task_id).get("ok"):
+        return None
+    s4 = get_step_status(task_id, "step4_profiles")
+    s5 = get_step_status(task_id, "step5_streams")
+    s6 = get_step_status(task_id, "step6_validated")
+    return (
+        f"步骤4.3 社工库尚未开放（step4={s4 or 'pending'} step5={s5 or 'pending'} "
+        f"step6={s6 or 'pending'}）。禁止调用 {tool_name}。"
+        "须先完成步骤3全部主页子节点，再等 4.1/4.2 终态后由系统或本步调用社工库。"
+    )
+
+
 def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
     """步骤五/六未完成时禁止发文类工具。返回拦截原因，允许则 None。"""
     if can_run_step7_collect(task_id):
@@ -159,9 +181,11 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
                 "请立刻继续完成或跳过剩余主页采集，禁止结束会话空等；"
                 "步骤4全部终态后系统会自动跑 4.1/步骤6，放行后再采发文。"
             )
+        s43 = get_step_status(task_id, "step6_osint_es")
         return (
-            f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
-            "禁止发文类工具。请勿结束会话；等待本回合后系统收口步骤5/6，"
+            f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
+            f"step6_osint_es={s43 or 'pending'}）。"
+            "禁止发文类工具。请勿结束会话；等待系统收口 4.1/4.2/4.3，"
             "下一轮编排变为 step7_posts 后立即补采各平台发文。"
         )
     # 步骤四已收口后的 Apify：只可能是抢跑步骤7
@@ -170,9 +194,11 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
         or tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}
     )
     if apify_like and s4 in {"completed", "skipped"}:
+        s43 = get_step_status(task_id, "step6_osint_es")
         return (
-            f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
-            "禁止提前用 Apify 采发文；请勿结束会话空等，待步骤6完成后立即采发文。"
+            f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
+            f"step6_osint_es={s43 or 'pending'}）。"
+            "禁止提前用 Apify 采发文；请勿结束会话空等，待 4.2+4.3 终态后立即采发文。"
         )
     return None
 
@@ -434,6 +460,13 @@ def _resolve_collect_phase(
     if tool_name in _STEP5_STREAM_TOOLS:
         sk = tool_step_key(tool_name)
         return None, sk
+    try:
+        from report_04.osint_es import is_osint_es_tool
+
+        if is_osint_es_tool(tool_name):
+            return None, "step6_osint_es"
+    except Exception:
+        pass
     # 步骤七已可跑：Apify Actor/dataset / 发文 MCP 优先归 step7，禁止误进 step4 重开已完成主页
     apify_like = (
         tool_name in APIFY_POST_TOOLS
@@ -556,7 +589,7 @@ def _maybe_stale_step5(store: TaskStore, task_id: str) -> None:
 
 
 def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
-    """硬拦截：非法 YouTube channelId；步骤4未终态禁止 vision；步骤4后禁止无关 web；步骤5/6 未完成禁止发文。"""
+    """硬拦截：非法 YouTube channelId；步骤4未终态禁止 vision；步骤4后禁止无关 web；步骤5/6 未完成禁止发文；编排白名单。"""
     tool_name = _normalize_hook_tool_name(payload.get("tool_name"))
     if not tool_name or tool_name in _SKIP_STEP_TOOLS:
         return None
@@ -565,28 +598,76 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if not task_id:
             return None
         tool_args = payload.get("tool_input") if isinstance(payload.get("tool_input"), dict) else {}
+        phase = None
+        try:
+            ex = _extra(payload)
+            phase = str(ex.get("phase") or payload.get("phase") or "").strip() or None
+        except Exception:
+            phase = None
         reason = (
             _is_invalid_youtube_channel_id(tool_name, tool_args)
             or _is_premature_step5_tool(tool_name, task_id)
             or _is_redundant_step5_vision(tool_name, tool_args, task_id)
             or _is_late_web_search_tool(tool_name, task_id)
+            or _is_premature_osint_tool(tool_name, task_id)
             or _is_premature_step7_tool(tool_name, task_id)
         )
+        already_enriched = False
+        # 步骤7 有尚未尝试平台：非发文工具优先拦截并点名精确工具（比通用白名单更可执行）
+        if not reason:
+            try:
+                from report_04.gates import can_run_step7_collect
+                from report_04.phases import APIFY_POST_TOOLS, POST_TOOLS
+                from report_04.step_reconcile import list_unattempted_post_platforms
+
+                if can_run_step7_collect(task_id):
+                    todo = list_unattempted_post_platforms(task_id)
+                    post_ok = (
+                        tool_name in POST_TOOLS
+                        or tool_name in APIFY_POST_TOOLS
+                        or tool_name
+                        in {
+                            "mcp_apify_get_actor_run",
+                            "mcp_apify_get_dataset_items",
+                        }
+                    )
+                    if todo and not post_ok:
+                        lines = [
+                            f"步骤7尚有 {len(todo)} 个 validated 平台未尝试发文工具，"
+                            f"禁止调用 {tool_name}。本回合必须先调发文工具："
+                        ]
+                        for item in todo[:10]:
+                            lines.append(
+                                f"- {item.get('platform')}: {item.get('tool_hint')}"
+                            )
+                        reason = "\n".join(lines)
+            except Exception:
+                pass
+        # 编排白名单（含步骤7仅允许发文工具）
+        if not reason:
+            try:
+                from report_04.engine import pre_tool_allowed
+
+                reason = pre_tool_allowed(task_id, tool_name, phase=phase)
+                already_enriched = bool(reason)
+            except Exception as exc:
+                logger.warning("pre_tool_allowed 失败 task=%s: %s", task_id, exc)
         if not reason:
             return None
-        try:
-            from report_04.engine import enrich_block_reason
+        if not already_enriched:
+            try:
+                from report_04.engine import enrich_block_reason
 
-            reason = enrich_block_reason(task_id, reason)
-        except Exception:
-            pass
+                reason = enrich_block_reason(task_id, reason)
+            except Exception:
+                pass
         try:
             from report_04.step_reconcile import ensure_step7_parent_not_premature
 
             ensure_step7_parent_not_premature(_store(), task_id)
         except Exception:
             pass
-        logger.warning("拦截越序工具 task=%s tool=%s: %s", task_id, tool_name, reason)
+        logger.warning("拦截越序工具 task=%s tool=%s: %s", task_id, tool_name, reason[:200])
         return {"decision": "block", "reason": reason}
     except DbError as exc:
         logger.warning("pre_tool 门禁失败: %s", exc)
@@ -1126,7 +1207,12 @@ def _complete_step11_from_report(
         reconcile_step7_from_post_tools(store, task_id)
         reconcile_step4_and_step7_children(store, task_id)
         _reconcile_report_post_child_steps(store, task_id)
-        advance_to_analysis_phase(store, task_id, "终稿已出，收口未完成的发文子步骤")
+        advance_to_analysis_phase(
+            store,
+            task_id,
+            "终稿已出，收口未完成的发文子步骤",
+            force_skip_unattempted=True,
+        )
         store.reconcile_collect_child_steps(task_id)
         close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     except Exception as exc:
@@ -1446,6 +1532,9 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 pass
             elif primary_step == "step7_posts" and not can_run_step7_collect(task_id):
                 pass
+            elif primary_step == OSINT_ES_STEP_KEY and not can_advance_to_osint(task_id).get("ok"):
+                # 禁止抢跑点亮 4.3（含连带 phase_collision 壳）
+                pass
             else:
                 cur = get_step_status(task_id, primary_step)
                 if cur not in {"completed", "failed", "skipped"}:
@@ -1490,6 +1579,60 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
 
     if tool_call_id:
         _SEEN_TOOL_CALLS.add(tool_call_id)
+
+    # 4.3 社工库：落薄表 + 点亮步骤，无 profile/post 产物
+    try:
+        from report_04.osint_es import (
+            is_search_country_wise_tool,
+            kickoff_osint_if_ready,
+            maybe_close_osint_by_coverage,
+            upsert_osint_hit_from_tool,
+        )
+
+        if is_search_country_wise_tool(tool_name) or tool_name.endswith("list_es_indices") or tool_name.endswith(
+            "es_cluster_health"
+        ):
+            # 未满足 4.1+4.2 时：不点亮 4.3、不 kickoff、不落命中（防步骤3未完就跑社工库）
+            # 但禁止裸 return：Agent 连打 ES 时若跳过引擎，4.2 会永远停在 running
+            if not can_advance_to_osint(task_id).get("ok"):
+                try:
+                    from report_04.step_reconcile import ensure_osint_not_premature
+
+                    ensure_osint_not_premature(store, task_id)
+                except Exception:
+                    pass
+                try:
+                    from report_04.engine import run_post_tool_light
+
+                    run_post_tool_light(store, task_id)
+                except Exception as exc:
+                    logger.warning(
+                        "社工库抢跑后仍推进引擎失败 task=%s: %s", task_id, exc
+                    )
+                return
+            kickoff_osint_if_ready(store, task_id)
+            if get_step_status(task_id, "step6_osint_es") == "pending":
+                store.set_step_status(
+                    task_id, "step6_osint_es", "running", message=f"社工库核验中 ({tool_name})"
+                )
+            if status == "success" and is_search_country_wise_tool(tool_name):
+                upsert_osint_hit_from_tool(
+                    task_id,
+                    tool_args=tool_args,
+                    tool_output=tool_output,
+                    tool_output_id=tool_output_id,
+                )
+                maybe_close_osint_by_coverage(store, task_id, reason="工具后覆盖度")
+            # 4.3 合法路径也走引擎：预建发文子节点 / 纠正抢跑，勿裸 return 跳过
+            try:
+                from report_04.engine import run_post_tool_light
+
+                run_post_tool_light(store, task_id)
+            except Exception as exc:
+                logger.warning("社工库后引擎推进失败 task=%s: %s", task_id, exc)
+            return
+    except Exception as exc:
+        logger.warning("社工库 post_tool 失败 task=%s tool=%s: %s", task_id, tool_name, exc)
 
     # OCR/Vision 快路径：无 profile/post 产物，必须先写图片流再退出。
     # GPT 并行多工具时 db_sink 易在尾部超时，导致 tool_outputs 已成功、步骤五永远 pending。
@@ -1777,6 +1920,12 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
                 _maybe_advance_step67(store, task_id)
         except Exception as exc:
             logger.warning("解析文本核验结论失败 task=%s: %s", task_id, exc)
+        try:
+            from report_04.osint_es import apply_osint_conclusion_from_assistant
+
+            apply_osint_conclusion_from_assistant(store, task_id, assistant)
+        except Exception as exc:
+            logger.warning("解析社工库核验结论失败 task=%s: %s", task_id, exc)
         _try_complete_profiles(store, task_id)
         # 中途兜底：回放已成功的 vision；若长时间空等 Vision 则 fail-forward 解开 step5
         try:
@@ -1853,6 +2002,14 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             and get_step_status(task_id, "step6_validated") != "completed"
         ):
             store.run_validated_accounts(task_id)
+        try:
+            from report_04.osint_es import close_osint_on_session_end, kickoff_osint_if_ready
+
+            kickoff_osint_if_ready(store, task_id)
+            # 未调用 ES 工具时也必须收口，禁止 4.3 永久 running
+            close_osint_on_session_end(store, task_id)
+        except Exception as exc2:
+            logger.warning("on_session_end 社工库收口失败 task=%s: %s", task_id, exc2)
     except Exception as exc:
         logger.warning("on_session_end step5 轻量收口失败 task=%s: %s", task_id, exc)
     try:

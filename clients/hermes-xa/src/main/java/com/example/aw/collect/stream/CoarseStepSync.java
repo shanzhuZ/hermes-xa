@@ -206,7 +206,12 @@ public class CoarseStepSync {
             return false;
         }
         String s6 = collectTaskMapper.selectStepStatus(taskId, "step6_validated");
-        return !"completed".equals(s6);
+        if (!"completed".equals(s6)) {
+            return true;
+        }
+        // 4.3 未终态（含尚未补插的旧任务 null）禁止粗同步点亮发文
+        String sOsint = collectTaskMapper.selectStepStatus(taskId, "step6_osint_es");
+        return !"completed".equals(sOsint) && !"skipped".equals(sOsint);
     }
 
     /**

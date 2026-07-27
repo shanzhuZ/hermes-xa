@@ -78,25 +78,32 @@ steps:
   "6_validated":
     do: |
       validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded。
-      本步完成前禁止一切发文工具；完成后才能进入步骤7。
-    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*]
+      本步完成前禁止一切发文工具；完成后进入 4.3 社工库核验（不是直接发文）。
+    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_country_wise]
+
+  "6_osint_es":
+    do: |
+      4.3 社工库核验（step6_osint_es）：主路径由系统自动查 ES（kickoff），不依赖 Agent。
+      Agent 若见待查 URL 可补调 mcp_es_search_search_country_wise(query_text=profile_url，按需 field；可选 person_name)。
+      禁止默认跑 search_facebook / search_worldpeople。
+      系统收口：有命中 completed；无命中 skipped（不阻塞步骤7）。
+      可选输出 [社工库核验结论]；4.3 未终态禁止发文工具。
+    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_facebook, search_worldpeople]
 
   "7_posts":
     do: |
-      发文采集分两类，条数不同：
-      【种子账号】发文取 50 条（尽可能采全，用于步骤10判断本人真实个人信息）：
-      - Twitter→get_user_tweets(50)
-      - YouTube→analyze_channel_videos(channelId)（尽可能多）
-      - 微博→get_user_feeds（尽可能多，翻页至 50 或采完）
-      - Apify 平台→resultsLimit=50→get_dataset_items 原文
-      【其余 validated 关联账号】发文取 50 条：
-      - Twitter→get_user_tweets(50)
-      - YouTube→analyze_channel_videos(channelId)
-      - 微博→get_user_feeds
-      - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
-      全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11
-      说明：各平台发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点并后台分析（每平台最多1条、只取前180秒、3秒一帧）；禁止调用 mcp_video2frame_*。
-    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video]
+      【硬强制·UI步骤5】本回合唯一合法动作=调用发文工具；上下文「必须立即调用」列表须本回合并行调完。
+      每个 validated（含种子）必须先真实调用对应发文工具，禁止未调用就收口/进分析/结束会话/口头完成。
+      平台工具：
+      - twitter→mcp_twitter_get_user_tweets(约50条)；get_user_info 不算
+      - youtube→mcp_youtube_analyze_channel_videos(channelId=UC…)；get_channel_stats 不算
+      - weibo→mcp_weibo_get_user_feeds；get_profile 不算
+      - Instagram/TikTok/Telegram/Facebook/GitHub→Apify Actor→run→dataset（phase=step7_post_*）；步骤1/4 主页 dataset 不算
+      【种子】发文约 50 条；【其余 validated】同上。
+      允许：工具已调用但失败或 0 条再 skip。禁止：未调用就宣称完成。
+      全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11。
+      说明：发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点；禁止调用 mcp_video2frame_*。
+    forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video, 未调用发文工具就进分析, 结束会话空过发文]
 
   "7_5_image_assets":
     require_before: [7_posts]
@@ -149,6 +156,7 @@ steps:
       一、账号基本信息 含两个子节：
       - 1.1 profile 信息：昵称、简介、粉丝数、认证状态、头衔、外链（账号层面信息）
       - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
+      若上下文有【社工库命中摘要】，揉进 1.1 或「四、核查思路」，勿单开「社工库」专节；无命中可不写或一句未命中
       终稿正文必须以「一、账号基本信息」或「## 一、账号基本信息」开头，禁止前置进度句/管线摘要
     section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
     section3: 每平台一块，MCP/Apify 依照主题归纳的行文形式；有视频分析成功结果时须含「### 视频观察」

@@ -188,32 +188,18 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
                     message=f"{platform} Actor 已完成但未拉取发文 dataset",
                 )
                 updated += 1
-            elif platform == seed_plat:
-                store.set_step_status(
-                    task_id,
-                    step_key,
-                    "skipped",
-                    message=f"种子平台 {platform} 未在步骤七尝试发文采集",
-                )
-                updated += 1
-            elif platform in validated:
-                store.set_step_status(
-                    task_id,
-                    step_key,
-                    "skipped",
-                    message=f"{platform} 已纳入可信账号，但未尝试发文采集",
-                )
-                updated += 1
+            # 未调用发文工具：会话收口也不再空 skip（保持 pending，由 close_open 统一处理）
+            # 避免「违规空过 + 父 completed」掩盖未采集
             continue
         if platform in validated or platform == seed_plat:
             store.set_step_status(
                 task_id,
                 step_key,
                 "skipped",
-                message=f"{platform} 已纳入可信账号，但未采集到发文",
+                message=f"{platform} 已调用发文工具但未采集到发文",
             )
             updated += 1
-    # 子节点收口后立刻关父节点，避免「子全终态、父仍 running」
+    # 仅当无「未尝试」残留时才关父节点
     if updated:
         from report_04.step_reconcile import close_collect_parent_if_ready
 
@@ -616,18 +602,22 @@ class TaskStore:
     def reconcile_collect_child_steps(self, task_id: str) -> int:
         from report_04.step_reconcile import (
             close_collect_parent_if_ready,
+            ensure_osint_not_premature,
             ensure_step4_parent_not_premature,
             ensure_step5_not_premature,
+            ensure_step7_awaits_agent_tool,
             ensure_step7_parent_not_premature,
             maybe_close_abandoned_step4,
             reconcile_step4_and_step7_children,
         )
 
-        # 先尝试收口「已开干又被 Agent 扔下」的步骤四，避免父节点永久 running
-        updated = maybe_close_abandoned_step4(self, task_id)
+        # 有主页进展超时才 fail-forward；抢跑 4.3 时不 skip
+        updated = maybe_close_abandoned_step4(self, task_id, min_quiet_seconds=180.0, force=False)
         updated += reconcile_step4_and_step7_children(self, task_id)
         updated += ensure_step4_parent_not_premature(self, task_id)
+        updated += ensure_osint_not_premature(self, task_id)
         updated += ensure_step7_parent_not_premature(self, task_id)
+        updated += ensure_step7_awaits_agent_tool(self, task_id)
         for parent, msg_done in (
             (PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"),
             (POST_PARENT_STEP_KEY, "发文采集已尝试完毕"),
@@ -1450,13 +1440,20 @@ class TaskStore:
         return True
 
     def run_validated_accounts(self, task_id: str) -> None:
-        """步骤六：一次算完并写入可信清单（可重入；展示双写不挡收口）。"""
+        """步骤六：一次算完并写入可信清单（可重入；展示双写不挡收口）。
+
+        只负责 4.2 收敛落库；4.3 kickoff 由 engine._auto_step5_step6 负责，
+        避免把耗时 ES HTTP 塞进本函数后 Hook 超时、且 except 误把 completed 打回 running。
+        """
         if _step_status(task_id, "step5_streams") not in {"completed", "skipped"}:
             logger.info("run_validated_accounts 跳过 task=%s: step5_streams 未完成", task_id)
             return
         if _step_status(task_id, "step6_validated") == "completed":
             return
         self.set_step_status(task_id, "step6_validated", "running", message="收敛可信账号…")
+        prepared: List[Dict[str, Any]] = []
+        platforms_for_posts: List[str] = []
+        count = 0
         try:
             profiles = db.fetch_all(
                 "SELECT platform, account_id, account_handle FROM collect_profiles WHERE task_id=%s",
@@ -1469,9 +1466,6 @@ class TaskStore:
             except json.JSONDecodeError:
                 pass
             seed_platform = seed.get("platform", "twitter")
-            platforms_for_posts: List[str] = []
-            count = 0
-            prepared: List[Dict[str, Any]] = []
             for p in profiles:
                 platform = p["platform"]
                 account_id = p["account_id"]
@@ -1532,29 +1526,35 @@ class TaskStore:
                 message=f"已收敛 {count} 个可信账号",
                 payload={"validated_count": count, "platforms": platforms_for_posts},
             )
-            self.prepare_step7_children_pending(task_id)
-            # 展示双写放收口之后，失败不影响步骤6终态
-            for row in prepared:
-                try:
-                    from collect_01.display_store import sync_validated_display
-
-                    sync_validated_display(
-                        task_id,
-                        row["platform"],
-                        row["account_id"],
-                        step_key="step6_validated",
-                    )
-                except Exception as exc:
-                    logger.warning("展示层双写 validated 失败: %s", exc)
         except Exception as exc:
             logger.exception("run_validated_accounts 失败 task=%s: %s", task_id, exc)
-            # 保持 running 以便后续 post_llm/session_end 重试，勿半截 completed
-            self.set_step_status(
-                task_id,
-                "step6_validated",
-                "running",
-                message=f"收敛中断将重试：{str(exc)[:120]}",
-            )
+            # 仅未完成时保持 running 以便重试；禁止把已 completed 打回 running
+            if _step_status(task_id, "step6_validated") != "completed":
+                self.set_step_status(
+                    task_id,
+                    "step6_validated",
+                    "running",
+                    message=f"收敛中断将重试：{str(exc)[:120]}",
+                )
+            return
+
+        # 收口后的附属工作：失败不影响 4.2 终态（4.3 由引擎另推）
+        try:
+            self.prepare_step7_children_pending(task_id)
+        except Exception as exc:
+            logger.warning("prepare_step7 after validated 失败 task=%s: %s", task_id, exc)
+        for row in prepared:
+            try:
+                from collect_01.display_store import sync_validated_display
+
+                sync_validated_display(
+                    task_id,
+                    row["platform"],
+                    row["account_id"],
+                    step_key="step6_validated",
+                )
+            except Exception as exc:
+                logger.warning("展示层双写 validated 失败: %s", exc)
 
     def prepare_step7_children_pending(self, task_id: str) -> List[str]:
         """步骤六完成后预建发文子节点，父步骤保持 pending。"""
@@ -1597,17 +1597,27 @@ class TaskStore:
         return platforms
 
     def start_step7_if_ready(self, task_id: str) -> bool:
-        """步骤六完成后，由首个发文工具点亮步骤七。"""
+        """首个发文工具触发时点亮步骤七父节点 running。
+
+        禁止由 pre_llm/系统管线空转调用把父节点抢跑成 running；
+        系统侧只应 prepare_step7_children_pending。
+        """
         from report_04.gates import can_advance_to_step7
 
         if not can_advance_to_step7(task_id).get("ok"):
             return False
         self.prepare_step7_children_pending(task_id)
         cur = get_step_status(task_id, "step7_posts")
-        if cur in {"pending", None}:
-            self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
+        if cur in {"pending", None, "skipped"}:
+            self.set_step_status(
+                task_id,
+                "step7_posts",
+                "running",
+                message="发文采集中",
+                force_reopen=True,
+            )
             return True
-        # 父已收口后仍有晚到发文工具：回开，避免「父 completed + 子 running」
+        # 父已收口后仍有晚到发文工具：回开
         if cur == "completed":
             self.set_step_status(
                 task_id,
@@ -1627,18 +1637,22 @@ class TaskStore:
         *,
         source: str = "standalone",
     ) -> None:
+        """写入步骤8/9/10 分析展示。终稿回填对外与 Agent 独立分析一致（不暴露 backfill 来源）。"""
         if not content or not step_key:
             return
+        # source 仅兼容调用方参数，展示与步骤 message 一律按 Agent 分析呈现
+        _ = source
         try:
             from collect_01.display_store import upsert_display_record
 
+            # 展示层只写正文；不写 source，避免出现 backfill_from_step11
             upsert_display_record(
                 task_id=task_id,
                 step_key=step_key,
                 data_type="report_analysis",
                 source_table="hermes_user_dialogues",
-                source_ref=f"{step_key}:{source}",
-                row={"content": content[:50000], "source": source},
+                source_ref=f"{step_key}:analysis",
+                row={"content": content[:50000]},
                 platform=None,
                 account_id=None,
             )
@@ -1648,8 +1662,8 @@ class TaskStore:
             task_id,
             step_key,
             "completed",
-            message="分析完成" if source == "standalone" else "由终稿回填",
-            payload={"source": source, "length": len(content)},
+            message="分析完成",
+            payload={"length": len(content)},
         )
 
     def finalize_task(self, task_id: str, *, session_ended: bool = True) -> None:
@@ -1664,7 +1678,11 @@ class TaskStore:
         if full_reconcile_enabled():
             from report_04.step_reconcile import reconcile_stuck_pipeline
 
-            reconcile_stuck_pipeline(self, task_id)
+            reconcile_stuck_pipeline(
+                self,
+                task_id,
+                allow_skip_unattempted_step4=bool(session_ended),
+            )
             _reconcile_report_post_child_steps(self, task_id)
             self.reconcile_collect_child_steps(task_id)
             from report_04.step_reconcile import close_collect_parent_if_ready
@@ -1707,19 +1725,17 @@ class TaskStore:
             except Exception as exc:
                 logger.warning("finalize session_end 步骤收口失败 task=%s: %s", task_id, exc)
         post_children = _report_post_step_rows(task_id)
-        # 会话未结束才可把发文父节点点回 running；session_end 时 stream 已死禁止空挂
+        # 会话未结束：禁止仅因 validated/子节点存在就点亮 step7 running
+        # （须等 Agent 首个发文工具 → sink.start_step7_if_ready；否则会抢跑甩开 stream）
         if not session_ended:
             legacy_step6 = _step_status(task_id, "step7_posts")
-            if legacy_step6 == "pending":
-                if vc > 0 or post_children:
-                    self.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
-                else:
-                    self.set_step_status(
-                        task_id,
-                        "step7_posts",
-                        "skipped",
-                        message="无可信账号，跳过发文采集",
-                    )
+            if legacy_step6 == "pending" and vc <= 0 and not post_children:
+                self.set_step_status(
+                    task_id,
+                    "step7_posts",
+                    "skipped",
+                    message="无可信账号，跳过发文采集",
+                )
         step7_st = _step_status(task_id, "step7_posts")
         step7_ok = step7_st in {"completed", "skipped", "failed"}
         post_children = _report_post_step_rows(task_id)

@@ -49,20 +49,25 @@
                 'user_input')
     </insert>
 
-    <!-- 历史对话折叠：每个 task 只展示一条 assistant；优先 summary，不用 thoughts_final 顶替 -->
-    <sql id="dialogueHistoryAssistantId">
+    <!--
+      历史对话折叠：每个 task 只展示一条，且仅考虑 user_input / summary / cancelled。
+      优先级：cancelled > summary > user_input。
+      payload_json 一律取同任务首条 user_input。
+    -->
+    <sql id="dialogueHistoryPreferredId">
         (
-            SELECT a2.id
-            FROM hermes_user_dialogues a2
-            WHERE a2.task_id = d.task_id AND a2.role = 'assistant'
+            SELECT p.id
+            FROM hermes_user_dialogues p
+            WHERE p.task_id = d.task_id
+              AND p.msg_type IN ('user_input', 'summary', 'cancelled')
             ORDER BY
-                CASE a2.msg_type
-                    WHEN 'summary' THEN 0
-                    WHEN 'assistant_reply' THEN 1
-                    WHEN 'thoughts_final' THEN 9
-                    ELSE 5
+                CASE p.msg_type
+                    WHEN 'cancelled' THEN 0
+                    WHEN 'summary' THEN 1
+                    WHEN 'user_input' THEN 2
+                    ELSE 9
                 END,
-                a2.id DESC
+                p.id DESC
             LIMIT 1
         )
     </sql>
@@ -70,16 +75,8 @@
     <sql id="dialogueHistoryWhere">
         FROM hermes_user_dialogues d
         INNER JOIN hermes_tasks t ON t.task_id = d.task_id
-        WHERE (
-                  NOT EXISTS (
-                      SELECT 1 FROM hermes_user_dialogues a
-                      WHERE a.task_id = d.task_id AND a.role = 'assistant'
-                  )
-               OR (
-                      d.role = 'assistant'
-                  AND d.id = <include refid="dialogueHistoryAssistantId"/>
-                  )
-              )
+        WHERE d.msg_type IN ('user_input', 'summary', 'cancelled')
+          AND d.id = <include refid="dialogueHistoryPreferredId"/>
         <if test="dbTaskType != null and dbTaskType != ''">
             AND t.task_type = #{dbTaskType}
         </if>
@@ -96,18 +93,14 @@
                d.session_id,
                d.role,
                d.content,
-               COALESCE(
-                   d.payload_json,
-                   (
-                       SELECT u.payload_json
-                       FROM hermes_user_dialogues u
-                       WHERE u.task_id = d.task_id
-                         AND u.role = 'user'
-                         AND u.msg_type = 'user_input'
-                         AND u.payload_json IS NOT NULL
-                       ORDER BY u.id ASC
-                       LIMIT 1
-                   )
+               (
+                   SELECT u.payload_json
+                   FROM hermes_user_dialogues u
+                   WHERE u.task_id = d.task_id
+                     AND u.msg_type = 'user_input'
+                     AND u.payload_json IS NOT NULL
+                   ORDER BY u.id ASC
+                   LIMIT 1
                ) AS payload_json,
                d.msg_type,
                t.task_type,
@@ -225,6 +218,20 @@
         WHERE task_id = #{taskId}
           AND status IN ('pending', 'running')
     </update>
+
+    <!-- 用户结束：非 summary 的 assistant 行 msg_type → cancelled（保留 user_input / summary） -->
+    <update id="markLatestAssistantDialogueCancelled">
+        UPDATE hermes_user_dialogues
+        SET msg_type = 'cancelled'
+        WHERE task_id = #{taskId}
+          AND role = 'assistant'
+          AND (msg_type IS NULL OR msg_type &lt;&gt; 'summary')
+    </update>
+
+    <insert id="insertCancelledDialogue">
+        INSERT INTO hermes_user_dialogues (task_id, session_id, role, content, msg_type)
+        VALUES (#{taskId}, #{sessionId}, 'assistant', #{content}, 'cancelled')
+    </insert>
 
     <!-- 任务首条用户提问（历史详情 question；含 payload_json） -->
     <select id="selectUserInput" resultType="java.util.HashMap">
@@ -416,6 +423,14 @@
         ORDER BY is_seed DESC, confidence DESC, id ASC
     </select>
 
+    <select id="selectOsintHits" resultType="java.util.HashMap">
+        SELECT id, task_id, platform, account_id, profile_url, source_index, query_text,
+               hit_count, hit_json, tool_output_id, created_at, updated_at
+        FROM collect_osint_hits
+        WHERE task_id = #{taskId}
+        ORDER BY id ASC
+    </select>
+
     <select id="selectPostsByTaskId" resultType="java.util.HashMap">
         SELECT id, platform, account_id, content_id, content_type, title, content_text,
                content_url, published_at, view_count, like_count, comment_count, repost_count,
@@ -489,6 +504,10 @@
 
     <delete id="deleteCollectValidatedAccountsByTaskId">
         DELETE FROM collect_validated_accounts WHERE task_id = #{taskId}
+    </delete>
+
+    <delete id="deleteCollectOsintHitsByTaskId">
+        DELETE FROM collect_osint_hits WHERE task_id = #{taskId}
     </delete>
 
     <delete id="deleteCrossPlatformCandidatesByTaskId">

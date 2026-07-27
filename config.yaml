@@ -340,6 +340,21 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 360
     connect_timeout: 120
+  es-search:
+    enabled: true
+    command: D:/environment/python/python.exe
+    args:
+      - D:/hermes-xa/mcp/servers/es-search/server.py
+    env:
+      FASTMCP_SHOW_SERVER_BANNER: 'false'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      ES_HOST: ${ES_HOST}
+      ES_USERNAME: ${ES_USERNAME}
+      ES_PASSWORD: ${ES_PASSWORD}
+    supports_parallel_tool_calls: true
+    timeout: 120
+    connect_timeout: 30
   twitter:
     enabled: true
     command: D:/environment/python/python.exe

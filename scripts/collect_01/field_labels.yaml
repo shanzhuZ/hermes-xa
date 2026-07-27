@@ -145,6 +145,29 @@ collect_validated_accounts:
   confidence: 置信度
   created_at: 收敛时间
 
+collect_osint_hits:
+  _order:
+    - platform
+    - account_id
+    - profile_url
+    - query_text
+    - source_index
+    - hit_count
+    - created_at
+  _exclude:
+    - id
+    - task_id
+    - hit_json
+    - tool_output_id
+    - updated_at
+  platform: 平台
+  account_id: 账号ID
+  profile_url: 主页URL
+  query_text: 查询文本
+  source_index: ES索引
+  hit_count: 命中数
+  created_at: 查询时间
+
 # 平台语义差异覆盖
 platform_overrides:
   youtube:
@@ -206,6 +229,16 @@ input_accounts:
   platform: 平台
   account_handle: 用户名/Handle
   display_label: 平台说明
+
+# 步骤8/9/10（及步骤11）分析正文展示；勿暴露回填来源
+report_analysis:
+  _order:
+    - content
+  _exclude:
+    - source
+    - id
+    - task_id
+  content: 分析正文
 
 platform_labels:
   twitter: Twitter

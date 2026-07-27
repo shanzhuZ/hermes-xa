@@ -89,9 +89,20 @@ def step7_collect_active(task_id: str) -> bool:
     return get_step_status(task_id, "step7_posts") in {"running", "completed", "skipped"}
 
 
+def can_advance_to_osint(task_id: str) -> Dict[str, Any]:
+    """4.1 + 4.2 均完成后才开放 4.3 社工库核验。"""
+    if get_step_status(task_id, "step5_streams") != "completed":
+        return {"ok": False, "message": "step5_streams 未完成"}
+    if get_step_status(task_id, "step6_validated") != "completed":
+        return {"ok": False, "message": "step6_validated 未完成"}
+    return {"ok": True, "message": "满足社工库核验推进条件"}
+
+
 def can_run_step7_collect(task_id: str) -> bool:
-    """步骤六完成后才允许执行发文采集。"""
-    return get_step_status(task_id, "step6_validated") == "completed"
+    """步骤6 + 4.3 终态后才允许执行发文采集。"""
+    if get_step_status(task_id, "step6_validated") != "completed":
+        return False
+    return get_step_status(task_id, "step6_osint_es") in {"completed", "skipped"}
 
 
 def _step4_profile_children_pending(task_id: str) -> Optional[str]:
@@ -195,6 +206,9 @@ def can_advance_to_step7(task_id: str) -> Dict[str, Any]:
         return {"ok": False, "message": "step5_streams 未完成"}
     if get_step_status(task_id, "step6_validated") != "completed":
         return {"ok": False, "message": "step6_validated 未完成"}
+    osint = get_step_status(task_id, "step6_osint_es")
+    if osint not in {"completed", "skipped"}:
+        return {"ok": False, "message": f"step6_osint_es={osint or 'pending'}"}
     return {"ok": True, "message": "满足步骤七推进条件"}
 
 
@@ -204,6 +218,19 @@ def can_advance_to_analysis(task_id: str) -> Dict[str, Any]:
         return gate
     if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
         return {"ok": False, "message": "step7_posts 未完成"}
+    # 仍有未尝试发文的 validated：禁止进分析（逼 Agent 先调工具）
+    try:
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        leftover = list_unattempted_post_platforms(task_id)
+        if leftover:
+            plats = ",".join(str(x.get("platform") or "") for x in leftover[:8])
+            return {
+                "ok": False,
+                "message": f"仍有未尝试发文平台：{plats}",
+            }
+    except Exception:
+        pass
     return {"ok": True, "message": "满足步骤八～十推进条件"}
 
 

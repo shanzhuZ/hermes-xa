@@ -49,6 +49,9 @@ STREAM_IMAGE_STEP_KEY = "step5_stream_image"
 
 # Agent 文本核验结论标记（Hook 解析）
 STREAM_TEXT_CONCLUSION_MARKER = "[文本核验结论]"
+# Agent 社工库核验结论标记（Hook 解析）
+OSINT_ES_STEP_KEY = "step6_osint_es"
+OSINT_CONCLUSION_MARKER = "[社工库核验结论]"
 
 
 @dataclass(frozen=True)
@@ -146,6 +149,14 @@ def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDe
             PHASE_STREAM_VALIDATE,
         ),
         StepDef("step6_validated", "相似账号认定 Agent", 420, "4.2", PHASE_COLLISION, PHASE_VALIDATED),
+        StepDef(
+            OSINT_ES_STEP_KEY,
+            "社工库核验 Agent",
+            430,
+            "4.3",
+            PHASE_COLLISION,
+            PHASE_VALIDATED,
+        ),
         StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
         StepDef("step8_img_analysis", "图片流 Agent 分析", 610, "6.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
         StepDef("step9_context_views", "观点与涉华分析 Agent", 620, "6.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
@@ -189,6 +200,11 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_youtube_analyze_channel_videos": "step7_posts",
     "mcp_weibo_get_user_feeds": "step7_posts",
     "mcp_weibo_get_feeds": "step7_posts",
+    # 社工库（Hermes 可能 sanitize 为 es_search）
+    "mcp_es_search_search_country_wise": OSINT_ES_STEP_KEY,
+    "mcp_es-search_search_country_wise": OSINT_ES_STEP_KEY,
+    "mcp_es_search_list_es_indices": OSINT_ES_STEP_KEY,
+    "mcp_es_search_es_cluster_health": OSINT_ES_STEP_KEY,
 }
 
 PROFILE_TOOLS = frozenset(

@@ -572,6 +572,7 @@ public class HistoryQaQueryService {
         deleted.put("videoFrames", Integer.valueOf(collectVideoMapper.deleteFramesByTaskId(tid)));
         deleted.put("videos", Integer.valueOf(collectVideoMapper.deleteVideosByTaskId(tid)));
         deleted.put("images", Integer.valueOf(collectTaskMapper.deleteCollectImagesByTaskId(tid)));
+        deleted.put("osintHits", Integer.valueOf(collectTaskMapper.deleteCollectOsintHitsByTaskId(tid)));
         deleted.put("displayRecords", Integer.valueOf(collectTaskMapper.deleteCollectDisplayRecordsByTaskId(tid)));
         deleted.put("identityStreams", Integer.valueOf(collectTaskMapper.deleteCollectIdentityStreamsByTaskId(tid)));
         deleted.put("phaseSteps", Integer.valueOf(collectTaskMapper.deleteCollectPhaseStepsByTaskId(tid)));

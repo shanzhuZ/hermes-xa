@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
-description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/发文→7.5图片入库→分析→画像报告。禁search_username。"
-version: 1.21.0
+description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/4.2认定/4.3系统社工库ES→发文→7.5图片入库→分析→画像报告。禁search_username。"
+version: 1.22.0
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -29,13 +29,14 @@ metadata:
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
 - **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台（含 youtube/github）；**全部 step4_profile_* 子节点终态前禁止 vision/OCR**
 - **步骤 5（4.1）**：父壳下分 **4.1.1 文本流核验** / **4.1.2 图片流核验**。步骤4全部主页子节点终态后系统启动核验：文本可做规则比对；Agent 应用 `[文本核验结论]` 输出核验正文（无工具）。**4.1.2 由系统 `image_pipeline` 入库分析，完成后才 completed（无图则 skipped）**。两子都终态后父壳 completed 并进步骤6。步骤5未完成禁止发文工具
-- **步骤 6** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮
-- **步骤 7** 才对 `validated_accounts` 采发文，发文采集范围最近90天；**种子平台必须单独采发文**（Twitter/YouTube/微博用 MCP 发文工具；Instagram/TikTok/Telegram/Facebook/GitHub 再走一轮 Apify→dataset 入库 posts）。**禁止**因步骤1已采过主页而跳过种子平台发文；步骤1 Apify 只保留 profile，不算步骤7发文
+- **步骤 6（4.2）** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮
+- **步骤 4.3（`step6_osint_es`）**：**主路径由系统自动查 ES**（4.2 完成后 kickoff，不依赖 Agent）。Agent 若见待查 URL 可补调 `mcp_es_search_search_country_wise`；**禁止**默认跑 `search_facebook`/`search_worldpeople`；可选输出 `[社工库核验结论]`。系统无命中 → **skipped**（不阻塞发文）；会话结束/超时有 fail-forward
+- **步骤 7 / UI步骤5 发文（硬强制·禁止空过）** 须等 4.3 终态后，对 **每一个** `verdict=validated` 平台（含种子）**本回合必须实际调用对应发文工具**（不是口头宣称）。Twitter→`get_user_tweets`；YouTube→`analyze_channel_videos(channelId)`；微博→`get_user_feeds`；其余 Apify→Actor→dataset。**禁止**未调用就收口/进分析/结束会话；**禁止**空过种子 Twitter/YouTube；步骤1/4 主页≠发文。允许：工具已调用但失败或 0 条再 skip
 - **步骤 7 视频（Hook 自动）**：发文入库后若有可下载视频，系统自动挂 `5.1.x.1`（`step7_video_*`）并后台分析（每平台最多 1 条、只取前 180 秒、3 秒一帧）。**禁止**同步调用 `mcp_video2frame_*`。发文子步须等视频终态再收口；无视频不建节点
 - **步骤 7.5（硬门槛）**：步骤7发文全部结束后、步骤8之前，必须跑图片资产入库+分析回填（见下）；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接写步骤8～11
-- **硬顺序**：步骤5（4.1.1+4.1.2）→ 步骤6 → 步骤7（含视频子节点终态） → **7.5 补发文配图** → 步骤8/9/10；步骤5未完成时发文工具会被拦截
+- **硬顺序**：步骤5（4.1.1+4.1.2）→ 步骤6（4.2）→ **4.3 社工库** → 步骤7（含视频子节点终态） → **7.5 补发文配图** → 步骤8/9/10；4.3 未终态时发文工具会被拦截
 - **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search（YouTube 解析 UC 例外见上）
-- **步骤5→6→7**：4.1 两子终态后进步骤6；步骤7仅在真正调用发文工具时开始
+- **步骤5→6→4.3→7**：4.1 两子终态后进 4.2；4.2 后进 4.3；步骤7仅在真正调用发文工具时开始
 - **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现；步骤8可优先结合已入库的 `collect_images` / 图片 API，勿再全量空跑未入库 CDN
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
 - **步骤11** 必须按照整体章节的结构输出， 每一章节内容必须使用整段叙述性文字描述。不要换行输出展示
@@ -50,7 +51,8 @@ metadata:
 | 3  | web_search, web_extract, browser_* 检索种子账号昵称及账号id获取候选社交账号                         |
 | 4  | 各候选主页：MCP profile **或** Apify；失败跳过                                        |
 | 5  | 4.1 信息核验：4.1.1 文本流核验 + 4.1.2 图片流核验（系统 image_pipeline）                    |
-| 6  | `validated_accounts`（相似账号）                                                         |
+| 6  | 4.2 `validated_accounts`（相似账号认定）                                                 |
+| 4.3 | 社工库核验：**系统自动**查 validated 的 TW/FB/LI URL；Agent 可补查；无命中 skipped |
 | 7  | 发文：MCP 或 Apify；有可下载视频时 Hook 挂 `5.1.x.1` 后台分析                               |
 | 7.5 | **补发文配图**：发文后再次 `image_pipeline`（`skip_if_stored`），补齐发文中图片 |
 | 8  | 图片流： 分析账号头像、账号背景图片、账号发文配图的关联信息                                                     |
@@ -77,6 +79,17 @@ metadata:
 | 父壳 4.1 | 两子都终态（completed/failed/skipped）后 completed → 步骤6 |
 | 禁止 | 步骤5未完成写步骤6/发文；禁止把 `image_pipeline` 元叙述写进终稿 |
 | 禁空等 | 发文工具被门禁拦截时：**禁止结束会话空等**；步骤4未完则继续主页，步骤4已完则等下一轮 `step7_posts` 放行后立刻采发文 |
+
+## 步骤 4.3 社工库核验（系统主路径 + Agent 可选）
+
+| 规则 | 说明 |
+|------|------|
+| 开门 | 4.1（`step5_streams`）与 4.2（`step6_validated`）均 completed |
+| 主路径 | **系统**对 validated 的 Twitter/Facebook/LinkedIn `profile_url` 自动调 ES；有命中 completed，无命中 skipped |
+| Agent | 若系统未收口且上下文仍列待查 URL，可补调 `search_country_wise`；可选输出 `[社工库核验结论]` |
+| 禁止 | 默认跑 `search_facebook` / `search_worldpeople`；4.3 未终态禁止发文 |
+| 成报 | **不单开**「社工库」专节；有命中时把摘要揉进「一、账号基本信息」或「四、核查思路」 |
+| 兜底 | 会话结束未调用 ES → skip；超时无 ES 调用 → fail-forward skip |
 
 ## 步骤 7.5 图片入库与分析回填（硬门槛）
 
@@ -136,6 +149,12 @@ mcp_maigret_collect_accounts(username="whyyoutouzhele")
 | Facebook  | `mcp__apify__headlessagent__facebook_profile_post_scraper` → run → dataset |
 
 **种子平台硬约束**：无论种子是 Twitter / YouTube / 微博 / Facebook 等，步骤7都必须对该平台再采一轮发文；Apify 种子平台步骤1 dataset 只入主页，步骤7须再 Actor→run→dataset 才能入 posts。
+
+**步骤7执行硬约束（本回合优先）**：
+1. 打开步骤7后，**本回合优先**对上下文「尚未尝试发文」列表逐平台调工具，禁止先写步骤8～11、禁止结束会话空等。
+2. 种子 Twitter：**必须** `mcp_twitter_get_user_tweets`（或等价 sanitize 名）；仅有 `get_user_info` 不算发文。
+3. 种子 YouTube：**必须** `mcp_youtube_analyze_channel_videos(channelId=UC…)`；仅有 `get_channel_stats` 不算发文。
+4. 上下文若列出未尝试平台：非发文工具会被 Hook 拦截，先清列表再谈 7.5/分析。
 
 <!-- ## 步骤 11 输出骨架
 

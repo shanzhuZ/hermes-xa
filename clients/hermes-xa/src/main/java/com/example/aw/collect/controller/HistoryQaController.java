@@ -20,7 +20,7 @@ import java.util.Map;
  * <p>
  * <b>为什么单独建一套接口？</b>
  * <ul>
- *   <li>/api/dialogues 是按「对话消息」折叠展示，容易拿到 thoughts_final，且不强调任务状态；</li>
+ *   <li>/api/dialogues 按 task 折叠，仅 user_input/summary/cancelled（cancelled 优先）；</li>
  *   <li>本控制器按「任务」维度：一条记录 = 一次采集/扩建/核查/写报任务；</li>
  *   <li>列表只关心进行中与已完成；详情一次给出账号/发文/图片/终稿，方便前端历史回顾页。</li>
  * </ul>

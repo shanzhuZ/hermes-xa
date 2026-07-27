@@ -82,6 +82,21 @@ public interface CollectTaskMapper {
      */
     int markTaskCancelled(@Param("taskId") String taskId, @Param("errorMessage") String errorMessage);
 
+    /**
+     * 用户结束：将该任务非 summary 的 assistant 对话 msg_type 改为 cancelled。
+     * 不改 user_input / summary，避免破坏历史提问与终稿查询。
+     *
+     * @return 影响行数，0 表示尚无可改的 assistant 行
+     */
+    int markLatestAssistantDialogueCancelled(@Param("taskId") String taskId);
+
+    /**
+     * 用户结束且尚无 assistant 对话时：插入一条 msg_type=cancelled 的标记行。
+     */
+    int insertCancelledDialogue(@Param("taskId") String taskId,
+                                @Param("sessionId") String sessionId,
+                                @Param("content") String content);
+
     /** 思考终稿（msg_type=thoughts_final） */
     Map<String, Object> selectThoughtsFinal(@Param("taskId") String taskId);
 
@@ -179,6 +194,9 @@ public interface CollectTaskMapper {
 
     List<Map<String, Object>> selectValidatedAccounts(@Param("taskId") String taskId);
 
+    /** 4.3 社工库命中薄表 */
+    List<Map<String, Object>> selectOsintHits(@Param("taskId") String taskId);
+
     List<Map<String, Object>> selectPostsByTaskId(@Param("taskId") String taskId);
 
     List<Map<String, Object>> selectPostsByTaskAndPlatform(
@@ -211,6 +229,8 @@ public interface CollectTaskMapper {
     int deleteCollectTaskSummariesByTaskId(@Param("taskId") String taskId);
 
     int deleteCollectValidatedAccountsByTaskId(@Param("taskId") String taskId);
+
+    int deleteCollectOsintHitsByTaskId(@Param("taskId") String taskId);
 
     int deleteCrossPlatformCandidatesByTaskId(@Param("taskId") String taskId);
 

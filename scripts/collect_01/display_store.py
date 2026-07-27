@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import logging
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -32,6 +31,7 @@ DATA_TYPE_BY_STEP = {
     "step5_stream_image": "collect_identity_streams",
     "step5_validated": "collect_validated_accounts",
     "step6_validated": "collect_validated_accounts",
+    "step6_osint_es": "collect_osint_hits",
     "step6_posts": "collect_posts",
     "step7_posts": "collect_posts",
     "step8_img_analysis": "report_analysis",
@@ -41,13 +41,26 @@ DATA_TYPE_BY_STEP = {
 }
 
 
-@lru_cache(maxsize=1)
+_LABELS_CACHE: Dict[str, Any] = {}
+_LABELS_MTIME: Optional[float] = None
+
+
 def _load_labels() -> Dict[str, Any]:
+    """读 field_labels.yaml；按 mtime 失效，避免改 yaml 后进程内仍用旧中文 label。"""
+    global _LABELS_CACHE, _LABELS_MTIME
     if not _LABELS_PATH.is_file():
         logger.warning("field_labels.yaml 不存在: %s", _LABELS_PATH)
         return {}
+    try:
+        mtime = _LABELS_PATH.stat().st_mtime
+    except OSError:
+        mtime = None
+    if _LABELS_CACHE and mtime is not None and mtime == _LABELS_MTIME:
+        return _LABELS_CACHE
     with _LABELS_PATH.open("r", encoding="utf-8") as f:
-        return yaml.safe_load(f) or {}
+        _LABELS_CACHE = yaml.safe_load(f) or {}
+    _LABELS_MTIME = mtime
+    return _LABELS_CACHE
 
 
 def _platform_label(platform: Optional[str]) -> str:
@@ -154,9 +167,21 @@ def build_record_title(data_type: str, row: Dict[str, Any]) -> str:
         handle = row.get("account_handle") or row.get("account_id") or ""
         seed = "（种子）" if str(row.get("is_seed")) in {"1", "True", "true"} else ""
         return f"{plabel} · @{handle}{seed}".rstrip(" · @")
+    if data_type == "collect_osint_hits":
+        handle = row.get("account_id") or ""
+        hits = row.get("hit_count")
+        url = (row.get("profile_url") or row.get("query_text") or "")[:48]
+        return f"{plabel} · {handle} · 命中{hits} · {url}".strip(" ·")
     if data_type == "input_accounts":
         handle = row.get("account_handle") or ""
         return f"{plabel} · @{handle}".rstrip(" · @") if handle else plabel
+    if data_type == "report_analysis":
+        # 与 Agent 独立分析展示一致，不暴露回填痕迹
+        text = str(row.get("content") or "").strip()
+        if text:
+            head = text.replace("\n", " ")[:40]
+            return f"分析结果 · {head}" + ("…" if len(text) > 40 else "")
+        return "分析结果"
     return plabel or data_type
 
 
@@ -406,6 +431,46 @@ def sync_validated_display(
         source_ref=str(ref["id"]),
         row=dict(ref),
         platform=str(ref.get("platform") or ""),
+    )
+
+
+def sync_osint_hit_display(row: Dict[str, Any], *, step_key: str = "step6_osint_es") -> None:
+    """4.3 社工库命中 → 展示层双写。"""
+    task_id = str(row.get("task_id") or "")
+    if not task_id:
+        return
+    query = str(row.get("query_text") or row.get("profile_url") or "")
+    source_index = str(row.get("source_index") or "")
+    ref = db.fetch_one(
+        """
+        SELECT id, task_id, platform, account_id, profile_url, source_index,
+               query_text, hit_count, created_at
+        FROM collect_osint_hits
+        WHERE task_id=%s AND query_text=%s AND IFNULL(source_index,'')=IFNULL(%s,'')
+        ORDER BY id DESC LIMIT 1
+        """,
+        (task_id, query[:1024], source_index),
+    )
+    if not ref:
+        ref = {
+            "id": f"{task_id}:{query[:80]}",
+            "task_id": task_id,
+            "platform": row.get("platform"),
+            "account_id": row.get("account_id"),
+            "profile_url": row.get("profile_url"),
+            "source_index": source_index,
+            "query_text": query,
+            "hit_count": row.get("hit_count") or 0,
+        }
+    upsert_display_record(
+        task_id=task_id,
+        step_key=step_key,
+        data_type="collect_osint_hits",
+        source_table="collect_osint_hits",
+        source_ref=str(ref.get("id")),
+        row=dict(ref),
+        platform=str(ref.get("platform") or row.get("platform") or ""),
+        account_id=str(ref.get("account_id") or row.get("account_id") or "") or None,
     )
 
 

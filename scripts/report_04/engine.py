@@ -32,8 +32,8 @@ logger = logging.getLogger(__name__)
 
 ENGINE_VERSION = "v2"
 
-# 步骤四子节点长时间无 step4 工具成功时，允许 peer-skip（秒）
-STEP4_QUIET_SKIP_SECONDS = 45.0
+# 步骤四：距上次成功主页工具超过该秒数且无抢跑干扰时，fail-forward 跳过未尝试子节点
+STEP4_QUIET_SKIP_SECONDS = 180.0
 
 
 def snapshot(task_id: str) -> Dict[str, Any]:
@@ -56,20 +56,37 @@ def build_agent_context(task_id: str) -> Optional[str]:
     lines: List[str] = [f"【04引擎 {ENGINE_VERSION}】当前编排步骤：{gate}"]
 
     if gate == "step4_profiles":
-        pend = None
-        try:
-            from report_04.gates import _step4_profile_children_pending
-
-            pend = _step4_profile_children_pending(task_id)
-        except Exception:
-            pend = "step4_profile_*"
         lines.append(
-            "步骤4：请继续完成/跳过剩余主页子步"
-            + (f"（当前未终态：{pend}）" if pend else "")
-            + "；禁止发文工具；禁止结束会话空等系统。"
+            "步骤3（账号主页采集）：须对每个 pending/running 子节点调用对应主页工具；"
+            "禁止社工库/发文/vision；采不到或失败再 skip，禁止空等结束会话。"
         )
+        open_rows = db.fetch_all(
+            """
+            SELECT step_key, status FROM collect_phase_steps
+            WHERE task_id=%s AND parent_step_key=%s
+              AND status IN ('pending', 'running')
+            ORDER BY step_order, step_key
+            """,
+            (task_id, PROFILE_PARENT_STEP_KEY),
+        )
+        if open_rows:
+            from report_04.phases import APIFY_TOOL_PLATFORM, TOOL_PLATFORM
+
+            lines.append(f"【本回合必须处理】未终态主页子步 {len(open_rows)} 个：")
+            rev_apify = {p: t for t, p in APIFY_TOOL_PLATFORM.items()}
+            rev_mcp = {}
+            for t, p in TOOL_PLATFORM.items():
+                if p not in rev_apify and "get_user_tweets" not in t and "feeds" not in t and "analyze_channel" not in t:
+                    rev_mcp.setdefault(p, t)
+            for r in open_rows[:12]:
+                sk = str(r.get("step_key") or "")
+                plat = sk.replace("step4_profile_", "", 1) if sk.startswith("step4_profile_") else sk
+                hint = rev_mcp.get(plat) or rev_apify.get(plat) or f"Apify/MCP 主页工具({plat})"
+                if plat in rev_apify:
+                    hint = f"{rev_apify[plat]} → get_actor_run → get_dataset_items"
+                lines.append(f"- {sk}: {hint}")
         lines.append(
-            "步骤4全部终态后系统会自动跑 4.1 文本/图片核验与步骤6；放行 step7_posts 后再采发文。"
+            "全部子步终态后系统自动跑 4.1→4.2→4.3；未完成步骤3前调用社工库会被拦截。"
         )
 
     elif gate == "step5_streams":
@@ -99,10 +116,50 @@ def build_agent_context(task_id: str) -> Optional[str]:
             lines.append("步骤5：图片流已齐，系统将自动 completed 并进入步骤6。")
 
     elif gate == "step6_validated":
-        lines.append("步骤6：系统正在/即将收敛可信账号，禁止发文工具；禁止结束会话，等进入 step7_posts 后立刻采发文。")
+        lines.append(
+            "步骤6（4.2）：系统正在/即将收敛可信账号，禁止发文工具；"
+            "完成后进入 4.3 社工库核验，禁止结束会话空等。"
+        )
+
+    elif gate == "step6_osint_es":
+        from report_04.osint_es import format_pending_urls_for_agent
+
+        pending = format_pending_urls_for_agent(task_id)
+        lines.append(
+            "步骤4.3 社工库核验：主路径由系统自动查 ES；"
+            "若下列仍有待查 URL，可补调 mcp_es_search_search_country_wise"
+            "（query_text=profile_url，按需 field；可选 person_name）；"
+            "禁止 search_facebook/search_worldpeople；禁止发文工具。"
+        )
+        if pending:
+            lines.append(f"待查 URL（{len(pending)}）：")
+            lines.extend(pending[:20])
+        else:
+            lines.append(
+                "待查 URL 已由系统查完或无可查 URL；"
+                "可选输出 [社工库核验结论]，然后进入步骤7发文。"
+            )
+        # 4.3 已终态：点名步骤7待采，逼 Agent 立刻调发文工具
+        if get_step_status(task_id, "step6_osint_es") in {"completed", "skipped"}:
+            try:
+                from report_04.step_reconcile import list_unattempted_post_platforms
+
+                todo7 = list_unattempted_post_platforms(task_id)
+                if todo7:
+                    lines.append(
+                        "【下一步硬强制】步骤7须先对下列 validated 调用发文工具"
+                        f"（{len(todo7)} 个尚未尝试），禁止直接写分析/终稿："
+                    )
+                    for item in todo7[:10]:
+                        lines.append(
+                            f"- {item.get('platform')}: {item.get('tool_hint')}"
+                        )
+            except Exception:
+                pass
 
     elif gate == "step7_posts":
-        # 列出仍未终态的发文子步，避免 Agent 误以为「只能等」而结束 stream
+        # UI 步骤5 发文：父节点在首个发文工具前应为 pending；本回合必须调工具
+        s7 = get_step_status(task_id, "step7_posts")
         open_posts = db.fetch_all(
             """
             SELECT step_key, status FROM collect_phase_steps
@@ -113,7 +170,32 @@ def build_agent_context(task_id: str) -> Optional[str]:
             (task_id, POST_PARENT_STEP_KEY),
         )
         open_keys = [str(r.get("step_key") or "") for r in (open_posts or [])]
-        lines.append("步骤7：仅允许各平台发文 MCP/Apify；子步完成后系统自动关父节点。")
+        if s7 in {"pending", None, ""}:
+            lines.append(
+                "【步骤5发文·待启动】4.3 已终态，发文父节点等待你调用工具后才会 running。"
+                "本回合必须对下列 validated 发起发文工具；禁止只写 4.1/等待系统、禁止进分析/终稿。"
+            )
+        else:
+            lines.append(
+                "【步骤5发文·硬强制】本回合继续对各平台调用发文工具。"
+                "禁止输出分析/终稿；允许工具已调用但失败或 0 条再 skip。主页≠发文。"
+            )
+        try:
+            from report_04.step_reconcile import list_unattempted_post_platforms
+
+            todo = list_unattempted_post_platforms(task_id)
+            if todo:
+                lines.append(
+                    f"【必须立即调用·禁止空过】共 {len(todo)} 个平台，请本回合并行发起工具："
+                )
+                for item in todo[:12]:
+                    lines.append(
+                        f"- {item.get('platform')}: {item.get('tool_hint')}"
+                    )
+            else:
+                lines.append("发文工具均已尝试；等待入库/视频子步终态后进入 7.5/步骤8。")
+        except Exception:
+            pass
         if open_keys:
             lines.append(
                 "仍有未完成发文子步："
@@ -121,14 +203,25 @@ def build_agent_context(task_id: str) -> Optional[str]:
                 + "。必须继续采集，禁止结束会话空等。"
             )
         lines.append(
-            "发文入库后若有可下载视频，Hook 会挂 5.1.x.1 并后台分析；禁止同步 mcp_video2frame_*；发文子步会等视频终态。"
-        )
-        lines.append(
-            "步骤7全部发文子步终态后必须先跑图片资产管线，再进步骤8："
-            "python -m image_pipeline.run --task-id <taskId> --force-analyze"
+            "发文入库后若有可下载视频，Hook 会挂 5.1.x.1 并后台分析；禁止同步 mcp_video2frame_*。"
         )
 
     elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
+        try:
+            from report_04.step_reconcile import list_unattempted_post_platforms
+
+            leftover = list_unattempted_post_platforms(task_id)
+            if leftover:
+                lines.append(
+                    "【违规风险】仍有 validated 平台未尝试发文工具，禁止写步骤8～11；"
+                    "请立刻回调发文工具："
+                )
+                for item in leftover[:8]:
+                    lines.append(
+                        f"- {item.get('platform')}: {item.get('tool_hint')}"
+                    )
+        except Exception:
+            pass
         lines.append(
             f"当前 task_id={task_id}。图片资产由系统 Hook 兜底；"
             "禁止在终稿前缀/正文写「跳过步骤7.5 / 管线未找到 / 即席执行」等元叙述。"
@@ -156,6 +249,16 @@ def build_agent_context(task_id: str) -> Optional[str]:
             lines.append(
                 "步骤11：终稿必须以「一、账号基本信息」开头，勿在第一节前写进度/管线句。"
             )
+            try:
+                from report_04.osint_es import format_osint_hits_for_report
+
+                osint_sum = format_osint_hits_for_report(task_id)
+                if osint_sum:
+                    lines.append(osint_sum)
+                else:
+                    lines.append("社工库无命中或未查：终稿可不写或一句「社工库未命中」。")
+            except Exception:
+                pass
         elif gate in ANALYSIS_STEP_KEYS:
             lines.append("步骤8/9/10：同一次响应内并行输出三步分析正文。")
 
@@ -173,7 +276,11 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
     """post_tool 末尾：毫秒～百毫秒级，禁止 reconcile_stuck_pipeline。"""
     from report_04.step_reconcile import (
         close_collect_parent_if_ready,
+        ensure_osint_not_premature,
         ensure_step4_parent_not_premature,
+        ensure_step5_not_premature,
+        ensure_step6_not_premature,
+        ensure_step7_awaits_agent_tool,
         ensure_step7_parent_active,
         ensure_step7_parent_not_premature,
         maybe_close_abandoned_step4,
@@ -181,25 +288,26 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
 
     try:
         ensure_step4_parent_not_premature(store, task_id)
+        ensure_step5_not_premature(store, task_id)
+        ensure_step6_not_premature(store, task_id)
+        ensure_osint_not_premature(store, task_id)
         ensure_step7_parent_not_premature(store, task_id)
         # 晚到发文子节点时回开已 completed 的 step7_posts（及 phase_content 壳）
         ensure_step7_parent_active(store, task_id)
+        # 违规空过的发文子步回开为 pending（父节点不强制 running）
+        from report_04.step_reconcile import reopen_unattempted_empty_skipped_posts
+
+        reopen_unattempted_empty_skipped_posts(store, task_id)
+        # 无发文工具却 running：降回 pending，禁止抢跑甩开 stream
+        ensure_step7_awaits_agent_tool(store, task_id)
     except Exception as exc:
         logger.warning("engine ensure parent 失败 task=%s: %s", task_id, exc)
 
-    s5 = get_step_status(task_id, "step5_streams") or "pending"
+    # 步骤3：有进展超时才 fail-forward；抢跑 4.3 时不 skip（由 pre_tool 拉回）
     try:
-        if s5 in {"running", "completed"}:
-            maybe_close_abandoned_step4(
-                store,
-                task_id,
-                min_quiet_seconds=STEP4_QUIET_SKIP_SECONDS,
-                force=(s5 == "completed"),
-            )
-        elif not step4_profiles_terminal(task_id):
-            maybe_close_abandoned_step4(
-                store, task_id, min_quiet_seconds=90.0, force=False
-            )
+        maybe_close_abandoned_step4(
+            store, task_id, min_quiet_seconds=STEP4_QUIET_SKIP_SECONDS, force=False
+        )
     except Exception as exc:
         logger.warning("engine step4 收口失败 task=%s: %s", task_id, exc)
 
@@ -261,10 +369,34 @@ def run_session_finalize_light(store: Any, task_id: str) -> None:
             logger.warning("session_finalize 图片管线兜底失败 task=%s: %s", task_id, exc)
 
 
-def _auto_step5_step6(store: Any, task_id: str) -> None:
-    """步骤5 completed 后自动跑步骤6，不等 Agent。"""
-    if get_step_status(task_id, "step6_validated") == "completed":
+def _prepare_step7_after_osint(store: Any, task_id: str) -> None:
+    """4.3 终态后：仅预建发文子节点，父节点保持 pending。
+
+    禁止在此把 step7_posts / phase_content 标成 running——须等 Agent 真正调用发文工具
+   （sink.start_step7_if_ready），避免 stream 还在 4.1 叙述时树上发文已抢跑。
+    """
+    from report_04.gates import can_run_step7_collect
+
+    if not can_run_step7_collect(task_id):
         return
+    try:
+        store.prepare_step7_children_pending(task_id)
+    except Exception as exc:
+        logger.warning("engine prepare_step7 失败 task=%s: %s", task_id, exc)
+    # 纠正误抢跑：running 但无任何发文工具/子步 running → 降回 pending
+    try:
+        from report_04.step_reconcile import ensure_step7_awaits_agent_tool
+
+        ensure_step7_awaits_agent_tool(store, task_id)
+    except Exception as exc:
+        logger.warning("engine ensure_step7_awaits_agent 失败 task=%s: %s", task_id, exc)
+
+
+def _auto_step5_step6(store: Any, task_id: str) -> None:
+    """系统自动推进，但每轮最多推一档，避免甩开 Agent/stream。
+
+    档位：4.1 kickoff/settle → 4.2 validated → 4.3 osint → 预建发文子节点（不点亮 running）。
+    """
     if not can_advance_to_step5(task_id).get("ok"):
         return
 
@@ -272,14 +404,16 @@ def _auto_step5_step6(store: Any, task_id: str) -> None:
     if s5 not in {"completed", "skipped"}:
         if step4_profiles_terminal(task_id):
             store.kickoff_step5_if_ready(task_id)
-        if s5 == "running" and is_stream_compare_ready(task_id):
+        if get_step_status(task_id, "step5_streams") == "running" and is_stream_compare_ready(
+            task_id
+        ):
             try:
                 from report_04.sink import _try_complete_step5_if_settled
 
                 _try_complete_step5_if_settled(store, task_id)
             except Exception as exc:
                 logger.warning("engine step5 settle 失败 task=%s: %s", task_id, exc)
-        return
+        return  # 本轮只推 4.1
 
     if get_step_status(task_id, "step6_validated") != "completed":
         try:
@@ -287,6 +421,19 @@ def _auto_step5_step6(store: Any, task_id: str) -> None:
             logger.info("engine 自动步骤6 task=%s", task_id)
         except Exception as exc:
             logger.warning("engine run_validated 失败 task=%s: %s", task_id, exc)
+        # 4.2 仍未终态：本轮停；若刚完成则继续推 4.3（系统活，不点亮发文）
+        if get_step_status(task_id, "step6_validated") != "completed":
+            return
+
+    # 4.2 已完成：推 4.3；终态后只 prepare 发文子节点
+    try:
+        from report_04.osint_es import kickoff_osint_if_ready, maybe_fail_forward_stale_osint
+
+        kickoff_osint_if_ready(store, task_id)
+        maybe_fail_forward_stale_osint(store, task_id, min_wait_seconds=120.0)
+    except Exception as exc:
+        logger.warning("engine kickoff/fail-forward osint 失败 task=%s: %s", task_id, exc)
+    _prepare_step7_after_osint(store, task_id)
 
 
 def _try_finalize_report(store: Any, task_id: str, *, light_only: bool) -> None:
