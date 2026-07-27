@@ -243,7 +243,8 @@ public class CollectApiController {
     }
 
     /**
-     * 思考过程查询：完成态返回 assistant.completed 终稿；进行中 mode=live（I1 无 partial）。
+     * 思考过程查询：完成态返回 assistant.completed 终稿；进行中 mode=live。
+     * 另返回 thoughtsTimelineUrl / lastThinkingSeq，历史回放请用 timeline。
      */
     @GetMapping("/tasks/{taskId}/thoughts")
     public ResponseEntity<Map<String, Object>> getThoughts(@PathVariable String taskId) {
@@ -255,17 +256,37 @@ public class CollectApiController {
     }
 
     /**
+     * 思考流可回放时间线：仅 tool.progress + toolName=_thinking 整句。
+     * <p>
+     * 实时前端仍拼 SSE 的 assistant.delta；历史/刷新用本接口渲染 _thinking。
+     * 续传：记下 lastSeq 后再连 SSE {@code /thoughts/stream?afterSeq=}。
+     */
+    @GetMapping("/tasks/{taskId}/thoughts/timeline")
+    public ResponseEntity<Map<String, Object>> getThoughtsTimeline(
+            @PathVariable String taskId,
+            @RequestParam(value = "afterSeq", defaultValue = "0") long afterSeq) {
+        Map<String, Object> body = thoughtQueryService.getTimeline(taskId, afterSeq);
+        if (body.containsKey("error") && "task_not_found".equals(body.get("error"))) {
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(body);
+        }
+        return ResponseEntity.ok(body);
+    }
+
+    /**
      * 模型思考过程 SSE 中继（Java 转发 Gateway 的 assistant.delta / tool.* 等）。
      * <p>
-     * 前端实时：只拼 assistant.delta.content；完成态回放请用 GET /thoughts。
+     * 前端实时：只拼 assistant.delta.content。
+     * 可选 afterSeq：先重放库中 seq&gt;afterSeq 的 _thinking，再接直播（按 seq 去重）。
      */
     @GetMapping(value = "/tasks/{taskId}/thoughts/stream", produces = MediaType.TEXT_EVENT_STREAM_VALUE)
-    public SseEmitter thoughtStream(@PathVariable String taskId) {
+    public SseEmitter thoughtStream(
+            @PathVariable String taskId,
+            @RequestParam(value = "afterSeq", required = false, defaultValue = "0") long afterSeq) {
         Map<String, Object> task = collectTaskMapper.selectTaskById(taskId);
         if (task == null || task.isEmpty()) {
             throw new ResponseStatusException(HttpStatus.NOT_FOUND, "task_not_found");
         }
-        return thoughtStreamHub.subscribe(taskId);
+        return thoughtStreamHub.subscribe(taskId, ThoughtStreamHub.DEFAULT_TIMEOUT_MS, afterSeq);
     }
 
     /**

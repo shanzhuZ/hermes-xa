@@ -121,12 +121,12 @@ public interface CollectTaskMapper {
     /**
      * 统计历史问答可见任务数。
      * <p>
-     * 基础范围：status IN (pending, running, completed)。
+     * 基础范围：status IN (pending, running, completed, cancelled)。
      * dbTaskType 非空时按 hermes_tasks.task_type 过滤；
-     * status 非空时再精确到单一状态（仍须属于上述三种之一，由调用方保证）。
+     * status 非空时再精确到单一状态（仍须属于上述四种之一，由调用方保证）。
      *
      * @param dbTaskType 库内业务类型，如 account_collect；可空
-     * @param status     pending/running/completed；可空表示三种都算
+     * @param status     pending/running/completed/cancelled；可空表示四种都算
      */
     long countHistoryTasks(@Param("dbTaskType") String dbTaskType,
                            @Param("status") String status);
@@ -137,7 +137,7 @@ public interface CollectTaskMapper {
      * 除任务主字段外，还通过子查询附带：
      * question（首条 user_input.content）、
      * payload_json（首条 user_input.payload_json）、
-     * answer_preview（最新 summary.content）。
+     * answer_preview / answer_msg_type（cancelled &gt; summary &gt; user_input）。
      * 排序：created_at DESC。供 HistoryQaQueryService.listHistoryTasks 使用。
      *
      * @param dbTaskType 库内业务类型，可空

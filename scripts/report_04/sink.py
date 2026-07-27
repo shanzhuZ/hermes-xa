@@ -178,15 +178,17 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
             return (
                 f"步骤7发文尚未开放：当前仍在步骤4（未完成 {pend or '主页子步'}）。"
                 "禁止 get_user_tweets / 发文类工具。"
-                "请立刻继续完成或跳过剩余主页采集，禁止结束会话空等；"
-                "步骤4全部终态后系统会自动跑 4.1/步骤6，放行后再采发文。"
+                "请立刻继续完成或跳过剩余主页采集；禁止结束会话。"
+                "步骤4全部终态后系统会自动跑 4.1/4.2/4.3，"
+                "同一会话下一轮编排变为 step7_posts 后必须立即调发文工具。"
             )
         s43 = get_step_status(task_id, "step6_osint_es")
         return (
             f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
             f"step6_osint_es={s43 or 'pending'}）。"
-            "禁止发文类工具。请勿结束会话；等待系统收口 4.1/4.2/4.3，"
-            "下一轮编排变为 step7_posts 后立即补采各平台发文。"
+            "禁止发文类工具。禁止结束会话空等；"
+            "保持同一会话，待系统收口 4.1/4.2/4.3 后下一轮立刻补采各平台发文。"
+            "禁止输出「等待系统完成后再发文」后 done。"
         )
     # 步骤四已收口后的 Apify：只可能是抢跑步骤7
     apify_like = (
@@ -198,7 +200,8 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
         return (
             f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
             f"step6_osint_es={s43 or 'pending'}）。"
-            "禁止提前用 Apify 采发文；请勿结束会话空等，待 4.2+4.3 终态后立即采发文。"
+            "禁止提前用 Apify 采发文；禁止结束会话空等；"
+            "待 4.2+4.3 终态后同一会话立即采发文。"
         )
     return None
 
@@ -346,13 +349,76 @@ def _step5_guidance_context(task_id: str) -> Optional[str]:
     if n_img > 0 and n_done >= n_img:
         return (
             "【写报硬约束·步骤5】全部图片流已终态，禁止再 vision/OCR。"
-            "请停止步骤5工具，等待系统收口并进入步骤6。"
+            "可输出 [文本核验结论]；禁止写「等待系统完成 4.2/4.3」后结束会话。"
+            "请保持会话：系统收口并进入步骤6/4.3 后，下一轮必须立刻调发文工具。"
         )
     return (
         "【写报硬约束·当前步骤5】必须完成全部图片流 vision 后才能进入步骤6/7。"
         f"图片流进度 {n_done}/{n_img}。"
         "禁止调用：get_user_tweets、analyze_channel_videos、get_user_feeds、"
         "以及任何 Apify 发文采集。步骤6 validated 完成前禁止发文工具。"
+        "禁止结束会话空等。"
+    )
+
+
+def _step7_ready_guidance(task_id: str) -> Optional[str]:
+    """4.3 已放行且仍有未尝试发文平台：强制催调，禁止「等系统」收尾。"""
+    if not can_run_step7_collect(task_id):
+        return None
+    try:
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        todo = list_unattempted_post_platforms(task_id)
+    except Exception:
+        return None
+    if not todo:
+        return None
+    lines = [
+        "【写报硬约束·步骤7发文已开放】禁止结束会话，禁止只写 4.1/等待系统。",
+        f"本回合必须对下列 {len(todo)} 个 validated 调用发文工具：",
+    ]
+    for item in todo[:12]:
+        lines.append(f"- {item.get('platform')}: {item.get('tool_hint')}")
+    return "\n".join(lines)
+
+
+def _looks_like_wait_for_system_exit(text: str) -> bool:
+    """识别 Agent 以「等系统/等 4.2/4.3」收尾（易导致 stream 结束、发文未开）。"""
+    t = (text or "").strip()
+    if not t:
+        return False
+    markers = (
+        "等待系统完成",
+        "等待系统收口",
+        "等待系统推进",
+        "等待 4.2",
+        "等待4.2",
+        "等待步骤6",
+        "后进入步骤4.3",
+        "后进入步骤7",
+        "后再进入步骤7",
+        "后再采发文",
+    )
+    return any(m in t for m in markers)
+
+
+def _early_exit_before_posts_message(task_id: str) -> Optional[str]:
+    """会话结束时：门禁已开但发文未尝试 → 明确失败文案。"""
+    if not can_run_step7_collect(task_id):
+        return None
+    try:
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        todo = list_unattempted_post_platforms(task_id)
+    except Exception:
+        return None
+    if not todo:
+        return None
+    plats = ", ".join(str(i.get("platform") or "") for i in todo[:8] if i.get("platform"))
+    return (
+        f"会话结束：步骤7发文已开放但未调用即结束（未尝试 {len(todo)} 个平台"
+        + (f"：{plats}" if plats else "")
+        + "）。禁止「等待系统」后结束会话；须同会话立刻调发文工具。"
     )
 
 
@@ -708,6 +774,9 @@ def _on_pre_llm(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             if ex.get("is_first_turn") and not store.has_user_dialogue(task_id, "user_input"):
                 store.save_dialogue(task_id, session_id, "user", user_message, "user_input")
         context = _step5_guidance_context(task_id)
+        step7_ctx = _step7_ready_guidance(task_id)
+        if step7_ctx:
+            context = (context + "\n\n" + step7_ctx) if context else step7_ctx
         try:
             from report_04.engine import build_agent_context
 
@@ -1918,6 +1987,12 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
 
             if apply_text_conclusion_from_assistant(store, task_id, assistant):
                 _maybe_advance_step67(store, task_id)
+                try:
+                    from report_04.engine import run_pre_llm_auto
+
+                    run_pre_llm_auto(store, task_id)
+                except Exception as exc2:
+                    logger.warning("post_llm 文本核验后自动推进失败 task=%s: %s", task_id, exc2)
         except Exception as exc:
             logger.warning("解析文本核验结论失败 task=%s: %s", task_id, exc)
         try:
@@ -1939,6 +2014,20 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             _maybe_advance_step67(store, task_id)
         except Exception as exc:
             logger.warning("post_llm vision 回放失败 task=%s: %s", task_id, exc)
+        # 检测「等系统」收尾：若发文已开放则告警（下一轮 pre_llm 会硬催；若直接 session_end 则失败文案）
+        if _looks_like_wait_for_system_exit(assistant):
+            early = _early_exit_before_posts_message(task_id)
+            if early:
+                logger.warning(
+                    "post_llm 检测到「等待系统」收尾且发文已开放 task=%s: %s",
+                    task_id,
+                    early[:180],
+                )
+            else:
+                logger.info(
+                    "post_llm 检测到「等待系统」收尾（门禁尚未开放发文）task=%s，须保持会话勿 done",
+                    task_id,
+                )
         if not is_progress_only(assistant) and not _looks_like_report_meta_closing(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
     except DbError as exc:
@@ -1990,6 +2079,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         return
     session_id = str(payload.get("session_id") or "").strip() or None
     store = _store()
+    fail_reason: Optional[str] = None
     # 先做轻量步骤5收口，避免 finalize 过重导致 Hook 120s 超时后步骤5永久 running
     try:
         from report_04.step_reconcile import _fail_forward_step5_pending_images
@@ -2005,7 +2095,10 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         try:
             from report_04.osint_es import close_osint_on_session_end, kickoff_osint_if_ready
 
-            kickoff_osint_if_ready(store, task_id)
+            # 4.3 已终态则跳过 kickoff，缩短 Hook 耗时，确保能跑到 finalize
+            s43 = get_step_status(task_id, "step6_osint_es")
+            if s43 not in {"completed", "skipped", "failed"}:
+                kickoff_osint_if_ready(store, task_id)
             # 未调用 ES 工具时也必须收口，禁止 4.3 永久 running
             close_osint_on_session_end(store, task_id)
         except Exception as exc2:
@@ -2033,16 +2126,39 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             else:
                 _try_parse_seed(store, task_id, assistant, user_message)
                 _try_step3_web_candidates(store, task_id, assistant)
+                if _looks_like_wait_for_system_exit(assistant):
+                    fail_reason = _early_exit_before_posts_message(task_id) or fail_reason
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
+    # finalize 必须跑到：此前超时会导致 stream 已关、任务仍 running
     try:
+        if not fail_reason:
+            fail_reason = _early_exit_before_posts_message(task_id)
         from report_04.orchestrator import run_full_reconcile_if_requested
 
         run_full_reconcile_if_requested(store, task_id)
         # stream.end / session_end：流程与 stream 一并终态
-        store.finalize_task(task_id, session_ended=True)
-    except DbError as exc:
-        logger.warning("%s", exc)
+        store.finalize_task(task_id, session_ended=True, fail_reason=fail_reason)
+    except Exception as exc:
+        logger.warning("on_session_end finalize 失败 task=%s: %s", task_id, exc)
+        try:
+            # 最后兜底：至少把任务标失败，避免永久 running
+            from collect_01 import db as _db
+
+            msg = (fail_reason or "会话结束收口失败（Hook 异常）")[:500]
+            _db.execute(
+                """
+                UPDATE hermes_tasks
+                SET status='failed',
+                    error_message=%s,
+                    finished_at=COALESCE(finished_at, NOW(3)),
+                    updated_at=NOW(3)
+                WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
+                """,
+                (msg, task_id),
+            )
+        except Exception as exc2:
+            logger.warning("on_session_end 兜底标 failed 失败 task=%s: %s", task_id, exc2)
 
 
 def _extract_account_id(tool_args: Dict[str, Any]) -> Optional[str]:

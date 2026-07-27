@@ -95,7 +95,10 @@ def build_agent_context(task_id: str) -> Optional[str]:
         pending = _pending_image_stream_lines(task_id)
         s5 = get_step_status(task_id, "step5_streams")
         if s5 in {"completed", "skipped"}:
-            lines.append("步骤5已系统收口，禁止再 vision/OCR；请等待或触发步骤6收敛（系统会自动跑）。")
+            lines.append(
+                "步骤5已系统收口，禁止再 vision/OCR；"
+                "禁止结束会话；系统会推进 4.2/4.3，下一轮须立刻调发文工具。"
+            )
         elif not step4_profiles_terminal(task_id):
             pend = None
             try:
@@ -113,12 +116,16 @@ def build_agent_context(task_id: str) -> Optional[str]:
             )
             lines.extend(pending[:8])
         else:
-            lines.append("步骤5：图片流已齐，系统将自动 completed 并进入步骤6。")
+            lines.append(
+                "步骤5：图片流已齐，系统将自动 completed 并进入步骤6；"
+                "禁止写「等待系统」后结束会话。"
+            )
 
     elif gate == "step6_validated":
         lines.append(
             "步骤6（4.2）：系统正在/即将收敛可信账号，禁止发文工具；"
-            "完成后进入 4.3 社工库核验，禁止结束会话空等。"
+            "完成后进入 4.3 社工库核验。"
+            "禁止结束会话空等；禁止输出「等待系统完成 4.2/4.3」后 done。"
         )
 
     elif gate == "step6_osint_es":
@@ -130,6 +137,7 @@ def build_agent_context(task_id: str) -> Optional[str]:
             "若下列仍有待查 URL，可补调 mcp_es_search_search_country_wise"
             "（query_text=profile_url，按需 field；可选 person_name）；"
             "禁止 search_facebook/search_worldpeople；禁止发文工具。"
+            "禁止结束会话空等。"
         )
         if pending:
             lines.append(f"待查 URL（{len(pending)}）：")
@@ -137,7 +145,7 @@ def build_agent_context(task_id: str) -> Optional[str]:
         else:
             lines.append(
                 "待查 URL 已由系统查完或无可查 URL；"
-                "可选输出 [社工库核验结论]，然后进入步骤7发文。"
+                "可选输出 [社工库核验结论]，然后同一会话立刻进入步骤7调发文工具（禁止 done）。"
             )
         # 4.3 已终态：点名步骤7待采，逼 Agent 立刻调发文工具
         if get_step_status(task_id, "step6_osint_es") in {"completed", "skipped"}:
@@ -173,7 +181,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
         if s7 in {"pending", None, ""}:
             lines.append(
                 "【步骤5发文·待启动】4.3 已终态，发文父节点等待你调用工具后才会 running。"
-                "本回合必须对下列 validated 发起发文工具；禁止只写 4.1/等待系统、禁止进分析/终稿。"
+                "本回合必须对下列 validated 发起发文工具；"
+                "禁止只写 4.1/等待系统、禁止进分析/终稿、禁止结束会话。"
             )
         else:
             lines.append(
@@ -338,7 +347,12 @@ def run_pre_llm_auto(store: Any, task_id: str) -> None:
     _try_finalize_report(store, task_id, light_only=True)
 
 
-def run_session_finalize_light(store: Any, task_id: str) -> None:
+def run_session_finalize_light(
+    store: Any,
+    task_id: str,
+    *,
+    reason: str = "会话结束：Agent stream 已结束",
+) -> None:
     """session_end：与 stream 一并结束流程（收口未终态步骤，禁止新开分析 running）。"""
     from report_04.task_store import _reconcile_report_post_child_steps
     from report_04.step_reconcile import (
@@ -359,7 +373,7 @@ def run_session_finalize_light(store: Any, task_id: str) -> None:
     store.reconcile_collect_child_steps(task_id)
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     # stream 已结束：未终态步骤全部收口，不再 advance_to_analysis（否则会空挂 running）
-    close_open_steps_for_session_end(store, task_id)
+    close_open_steps_for_session_end(store, task_id, reason=reason)
     if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
         try:
             from report_04.image_assets import run_image_pipeline_for_report

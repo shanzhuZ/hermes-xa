@@ -114,7 +114,7 @@ public class HistoryQaController {
      *   <li>采集到的账号列表（优先 collect_display_records；01 用 step3_profiles，03 用 step3_profile_*）</li>
      *   <li>采集到的发文列表（优先 collect_display_records；01 用 step6_posts，03 用 step3_post_*）</li>
      *   <li>图片资产列表（collect_images；有存储则尽量带 dataUrl，失败不阻塞）</li>
-     *   <li>模型终稿报告（优先 summary）</li>
+     *   <li>模型终稿 / 取消态（report：cancelled &gt; summary &gt; user_input）</li>
      * </ol>
      * <p>
      * <b>请求示例：</b>

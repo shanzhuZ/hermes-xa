@@ -4,6 +4,7 @@ import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectImageMapper;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import com.example.aw.collect.mapper.CollectVideoMapper;
+import com.example.aw.collect.mapper.ThoughtEventMapper;
 import com.example.aw.collect.registry.TaskTypeRegistry;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -94,12 +95,16 @@ public class HistoryQaQueryService {
     @Autowired
     private CollectVideoMapper collectVideoMapper;
 
+    /** 思考流 _thinking 事件删除 */
+    @Autowired
+    private ThoughtEventMapper thoughtEventMapper;
+
     /** 本地视频根目录，对应 hermes.video.local-dir */
     @Value("${hermes.video.local-dir:D:/hermes-xa/data/video_bytes}")
     private String videoLocalDir;
 
     /**
-     * 复用终稿查询：优先 summary，否则 assistant_reply；都没有则 ready=false。
+     * 复用终稿查询：cancelled &gt; summary &gt; user_input；都没有则 ready=false。
      */
     @Autowired
     private TaskFinalAnswerQueryService taskFinalAnswerQueryService;
@@ -118,13 +123,13 @@ public class HistoryQaQueryService {
      * <ol>
      *   <li>规范化 page / pageSize（防前端传 0、负数、过大值）</li>
      *   <li>若传了 taskType，用 TaskTypeRegistry 转成库内 task_type；无法识别则 400</li>
-     *   <li>若传了 status，只允许 pending/running/completed；否则 400</li>
+     *   <li>若传了 status，只允许 pending/running/completed/cancelled；否则 400</li>
      *   <li>先 count 再 SELECT 分页行（含 question / payload / answer_preview 子查询）</li>
      *   <li>把每行下划线字段转成前端驼峰列表项</li>
      * </ol>
      *
      * @param taskType 前端短码或库内类型，可空表示不限业务
-     * @param status   可选单一状态过滤：pending / running / completed；空表示三种都要
+     * @param status   可选单一状态过滤：pending / running / completed / cancelled；空表示四种都要
      * @param page     页码（从 1 起）
      * @param pageSize 每页条数
      * @return 含 page、pageSize、total、list 的 Map；若带了筛选条件还会带顶层 taskType/status 中文信息
@@ -193,9 +198,9 @@ public class HistoryQaQueryService {
      * <b>处理步骤：</b>
      * <ol>
      *   <li>校验 taskId；查 hermes_tasks，不存在 → 404</li>
-     *   <li>状态必须是历史可见（pending/running/completed），否则 → 409</li>
+     *   <li>状态必须是历史可见（pending/running/completed/cancelled），否则 → 409</li>
      *   <li>组装 question（user_input + payload_json）</li>
-     *   <li>组装 report（复用 TaskFinalAnswerQueryService）</li>
+     *   <li>组装 report（cancelled &gt; summary &gt; user_input，对齐 /api/dialogues）</li>
      *   <li>拉取并映射 profiles / posts</li>
      *   <li>拉取 images（复用 ImageAssetQueryService，带中文状态与 imageUrl）</li>
      *   <li>附 counts 统计，方便详情页头展示数量徽章</li>
@@ -288,17 +293,21 @@ public class HistoryQaQueryService {
     /**
      * 把 SQL 查出来的一行历史任务，转成列表接口的一条驼峰 JSON。
      * <p>
-     * SQL 侧已通过子查询带上 question、payload_json、answer_preview，
-     * 这里不做二次查库，保证列表接口轻量。
+     * SQL 侧已通过子查询带上 question、payload_json、answer_preview、answer_msg_type，
+     * 这里不做二次查库，保证列表接口轻量。答案优先级：cancelled &gt; summary &gt; user_input。
      */
     private Map<String, Object> toListItem(Map<String, Object> row) {
         String taskId = str(row.get("task_id"));
         String dbType = str(row.get("task_type"));
         String status = str(row.get("status"));
         String question = str(row.get("question"));
-        // answer_preview 来自 summary.content；没有终稿则为空串
         String preview = str(row.get("answer_preview"));
+        String answerMsgType = str(row.get("answer_msg_type"));
         boolean hasAnswer = preview.length() > 0;
+        // 取消态 / 仅有提问 也算有可展示答案态（与 dialogues 折叠一致）
+        if ("cancelled".equals(answerMsgType) || "user_input".equals(answerMsgType)) {
+            hasAnswer = preview.length() > 0;
+        }
 
         Map<String, Object> item = new LinkedHashMap<String, Object>();
         item.put("taskId", taskId);
@@ -307,17 +316,14 @@ public class HistoryQaQueryService {
         item.put("taskTypeCode", taskTypeRegistry.frontendCodeOfDbTaskType(dbType));
         item.put("status", status);
         item.put("statusLabel", labelStatus(status));
-        // 用户原始提问文案（可能带 skill 前缀，如 account-intelligence-collect ...）
         item.put("question", question);
-        // 前端建任务时传入的表单 JSON；没有则为 null（与 dialogues 历史回填语义一致）
         item.put("payload", parseJson(row.get("payload_json")));
         item.put("hasAnswer", Boolean.valueOf(hasAnswer));
-        // 列表只给预览，完整报告去详情的 report 字段
+        item.put("answerMsgType", answerMsgType.isEmpty() ? null : answerMsgType);
         item.put("answerPreview", hasAnswer ? clip(preview, PREVIEW_LEN) : null);
         item.put("createdAt", row.get("created_at"));
         item.put("startedAt", row.get("started_at"));
         item.put("finishedAt", row.get("finished_at"));
-        // 方便前端直接拼详情请求，不必自己拼路径
         item.put("detailUrl", "/api/history/tasks/" + taskId);
         return item;
     }
@@ -582,6 +588,7 @@ public class HistoryQaQueryService {
         deleted.put("validatedAccounts", Integer.valueOf(collectTaskMapper.deleteCollectValidatedAccountsByTaskId(tid)));
         deleted.put("crossPlatformCandidates", Integer.valueOf(collectTaskMapper.deleteCrossPlatformCandidatesByTaskId(tid)));
         deleted.put("toolOutputs", Integer.valueOf(collectTaskMapper.deleteHermesToolOutputsByTaskId(tid)));
+        deleted.put("thoughtEvents", Integer.valueOf(thoughtEventMapper.deleteByTaskId(tid)));
         deleted.put("dialogues", Integer.valueOf(collectTaskMapper.deleteHermesUserDialoguesByTaskId(tid)));
         deleted.put("task", Integer.valueOf(collectTaskMapper.deleteHermesTaskById(tid)));
 

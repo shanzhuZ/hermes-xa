@@ -267,8 +267,9 @@
 
     <!--
       列表分页行：
-      question / payload_json —— 该任务最早一条 user_input
-      answer_preview —— 该任务最新一条 summary（没有则 NULL，前端 hasAnswer=false）
+      question / payload_json —— 该任务最早一条 user_input（提问展示）
+      answer_preview / answer_msg_type —— 与 /api/dialogues 折叠一致：
+        cancelled > summary > user_input
     -->
     <select id="selectHistoryTasksPage" resultType="java.util.HashMap">
         SELECT t.task_id,
@@ -295,10 +296,33 @@
                (
                    SELECT s.content
                    FROM hermes_user_dialogues s
-                   WHERE s.task_id = t.task_id AND s.msg_type = 'summary'
-                   ORDER BY s.id DESC
+                   WHERE s.task_id = t.task_id
+                     AND s.msg_type IN ('cancelled', 'summary', 'user_input')
+                   ORDER BY
+                       CASE s.msg_type
+                           WHEN 'cancelled' THEN 0
+                           WHEN 'summary' THEN 1
+                           WHEN 'user_input' THEN 2
+                           ELSE 9
+                       END,
+                       s.id DESC
                    LIMIT 1
-               ) AS answer_preview
+               ) AS answer_preview,
+               (
+                   SELECT s.msg_type
+                   FROM hermes_user_dialogues s
+                   WHERE s.task_id = t.task_id
+                     AND s.msg_type IN ('cancelled', 'summary', 'user_input')
+                   ORDER BY
+                       CASE s.msg_type
+                           WHEN 'cancelled' THEN 0
+                           WHEN 'summary' THEN 1
+                           WHEN 'user_input' THEN 2
+                           ELSE 9
+                       END,
+                       s.id DESC
+                   LIMIT 1
+               ) AS answer_msg_type
         <include refid="historyTaskWhere"/>
         ORDER BY t.created_at DESC, t.task_id DESC
         LIMIT #{limit} OFFSET #{offset}
@@ -464,12 +488,20 @@
         ORDER BY id ASC
     </select>
 
+    <!-- 历史详情/终稿：cancelled > summary > user_input（对齐 /api/dialogues） -->
     <select id="selectLatestAssistantReply" resultType="java.util.HashMap">
         SELECT content, created_at, msg_type
         FROM hermes_user_dialogues
-        WHERE task_id = #{taskId} AND role = 'assistant'
-          AND msg_type IN ('summary', 'assistant_reply')
-        ORDER BY FIELD(msg_type, 'summary'), id DESC
+        WHERE task_id = #{taskId}
+          AND msg_type IN ('cancelled', 'summary', 'user_input')
+        ORDER BY
+            CASE msg_type
+                WHEN 'cancelled' THEN 0
+                WHEN 'summary' THEN 1
+                WHEN 'user_input' THEN 2
+                ELSE 9
+            END,
+            id DESC
         LIMIT 1
     </select>
 

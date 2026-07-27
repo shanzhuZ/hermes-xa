@@ -1666,14 +1666,44 @@ class TaskStore:
             payload={"length": len(content)},
         )
 
-    def finalize_task(self, task_id: str, *, session_ended: bool = True) -> None:
-        """收口任务。session_ended=True（默认，on_session_end）：stream 结束则流程必须终态，禁止再标 running。"""
+    def finalize_task(
+        self,
+        task_id: str,
+        *,
+        session_ended: bool = True,
+        fail_reason: Optional[str] = None,
+    ) -> None:
+        """收口任务。session_ended=True（默认，on_session_end）：stream 结束则流程必须终态，禁止再标 running。
+
+        fail_reason：会话提前结束等场景的明确失败文案（优先于通用「未产出终稿」）。
+        """
         from report_04.engine import full_reconcile_enabled, run_session_finalize_light
 
         task = self.get_task(task_id) or {}
         if str(task.get("status") or "") in {"failed", "cancelled", "completed"}:
             # 已终态：不再 reconcile 改回 running
             return
+
+        early_fail = str(fail_reason or "").strip() or None
+        # 会话结束且发文已开放但未尝试：补强失败文案
+        if session_ended and not early_fail:
+            try:
+                from report_04.gates import can_run_step7_collect
+                from report_04.step_reconcile import list_unattempted_post_platforms
+
+                if can_run_step7_collect(task_id):
+                    todo = list_unattempted_post_platforms(task_id)
+                    if todo:
+                        plats = ", ".join(
+                            str(i.get("platform") or "") for i in todo[:8] if i.get("platform")
+                        )
+                        early_fail = (
+                            f"会话结束：步骤7发文已开放但未调用即结束（未尝试 {len(todo)} 个平台"
+                            + (f"：{plats}" if plats else "")
+                            + "）"
+                        )
+            except Exception:
+                pass
 
         if full_reconcile_enabled():
             from report_04.step_reconcile import reconcile_stuck_pipeline
@@ -1690,9 +1720,17 @@ class TaskStore:
 
             close_collect_parent_if_ready(self, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
             if session_ended:
-                close_open_steps_for_session_end(self, task_id)
+                close_open_steps_for_session_end(
+                    self,
+                    task_id,
+                    reason=early_fail or "会话结束：Agent stream 已结束",
+                )
         else:
-            run_session_finalize_light(self, task_id)
+            run_session_finalize_light(
+                self,
+                task_id,
+                reason=early_fail or "会话结束：Agent stream 已结束",
+            )
 
         profiles = db.fetch_one(
             "SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)
@@ -1721,7 +1759,11 @@ class TaskStore:
             try:
                 from report_04.orchestrator import close_open_steps_for_session_end
 
-                close_open_steps_for_session_end(self, task_id)
+                close_open_steps_for_session_end(
+                    self,
+                    task_id,
+                    reason=early_fail or "会话结束：Agent stream 已结束",
+                )
             except Exception as exc:
                 logger.warning("finalize session_end 步骤收口失败 task=%s: %s", task_id, exc)
         post_children = _report_post_step_rows(task_id)
@@ -1783,7 +1825,11 @@ class TaskStore:
             if session_ended:
                 from report_04.orchestrator import close_open_steps_for_session_end
 
-                close_open_steps_for_session_end(self, task_id)
+                close_open_steps_for_session_end(
+                    self,
+                    task_id,
+                    reason=early_fail or "会话结束：Agent stream 已结束",
+                )
                 analysis_running = False
                 step11 = _step_status(task_id, "step11_report")
                 step7_st = _step_status(task_id, "step7_posts")
@@ -1851,6 +1897,7 @@ class TaskStore:
             )
         elif session_ended:
             # stream 已结束：流程一并终态，禁止继续 running 空等
+            err_msg = early_fail or "会话结束：Agent stream 已结束，流程已收口（未产出终稿）"
             db.execute(
                 """
                 UPDATE hermes_tasks
@@ -1863,11 +1910,11 @@ class TaskStore:
                 """,
                 (
                     PHASE_DONE,
-                    "会话结束：Agent stream 已结束，流程已收口（未产出终稿）",
+                    err_msg[:500],
                     task_id,
                 ),
             )
-            logger.info("finalize session_ended → failed（无终稿） task=%s", task_id)
+            logger.info("finalize session_ended → failed task=%s reason=%s", task_id, err_msg[:120])
         else:
             current_phase = PHASE_REPORT if not step5_ok else PHASE_POSTS
             db.execute(

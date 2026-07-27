@@ -24,7 +24,8 @@ import java.util.function.Consumer;
 /**
  * 思考流中继：Gateway SSE → 内存总线 → 前端 SseEmitter。
  * <p>
- * 旁路：assistant.completed 落库；tool.* 粗同步步骤状态（方案 C）。
+ * 旁路：assistant.completed 落库；tool.* 粗同步步骤状态；
+ * tool.progress+_thinking 精简事件落库（供历史/刷新回放，失败不影响主流）。
  */
 @Component
 public class ThoughtStreamHub {
@@ -64,6 +65,9 @@ public class ThoughtStreamHub {
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
+    @Autowired
+    private ThoughtTimelineStore thoughtTimelineStore;
+
     /**
      * 任务开流前调用，避免极早事件无处存放。
      */
@@ -82,6 +86,7 @@ public class ThoughtStreamHub {
 
     /**
      * 发布一条已规范化事件（会分配 seq 并推给所有订阅者）。
+     * 旁路：符合条件的 _thinking 整句落库（失败不影响推送）。
      */
     public void publish(String taskId, String eventType, Map<String, Object> payload) {
         if (taskId == null || taskId.trim().isEmpty()) {
@@ -94,7 +99,14 @@ public class ThoughtStreamHub {
                 return new TaskChannel(id, push);
             }
         });
-        channel.publish(eventType, payload);
+        Map<String, Object> event = channel.publish(eventType, payload);
+        try {
+            if (thoughtTimelineStore != null && event != null) {
+                thoughtTimelineStore.persistIfThinkingProgress(event);
+            }
+        } catch (Exception e) {
+            log.warn("思考流 timeline 旁路落库失败 taskId={}: {}", taskId, e.getMessage());
+        }
     }
 
     /**
@@ -145,10 +157,17 @@ public class ThoughtStreamHub {
      * 前端订阅；先回放缓冲，再收实时事件。
      */
     public SseEmitter subscribe(String taskId) {
-        return subscribe(taskId, DEFAULT_TIMEOUT_MS);
+        return subscribe(taskId, DEFAULT_TIMEOUT_MS, 0L);
     }
 
     public SseEmitter subscribe(String taskId, long timeoutMs) {
+        return subscribe(taskId, timeoutMs, 0L);
+    }
+
+    /**
+     * 前端订阅；可选 afterSeq：先重放库中 seq&gt;afterSeq 的 _thinking，再接内存缓冲与直播（按 seq 去重）。
+     */
+    public SseEmitter subscribe(String taskId, long timeoutMs, long afterSeq) {
         final ExecutorService push = pushExecutor;
         final TaskChannel channel = channels.computeIfAbsent(taskId, new java.util.function.Function<String, TaskChannel>() {
             @Override
@@ -157,7 +176,28 @@ public class ThoughtStreamHub {
             }
         });
         final SseEmitter emitter = new SseEmitter(timeoutMs);
-        channel.attach(emitter);
+        long minSeq = Math.max(0L, afterSeq);
+        // 库中已落盘段落（刷新/切换后内存 buffer 可能已丢）
+        if (thoughtTimelineStore != null && minSeq >= 0L) {
+            try {
+                List<Map<String, Object>> fromDb = thoughtTimelineStore.listAfterSeq(taskId, minSeq);
+                for (Map<String, Object> ev : fromDb) {
+                    if (!TaskChannel.safeSendStatic(emitter, ev)) {
+                        return emitter;
+                    }
+                    Object seqObj = ev.get("seq");
+                    if (seqObj instanceof Number) {
+                        long s = ((Number) seqObj).longValue();
+                        if (s > minSeq) {
+                            minSeq = s;
+                        }
+                    }
+                }
+            } catch (Exception e) {
+                log.warn("订阅前 timeline 重放失败 taskId={}: {}", taskId, e.getMessage());
+            }
+        }
+        channel.attach(emitter, minSeq);
         emitter.onCompletion(new Runnable() {
             @Override
             public void run() {
@@ -260,11 +300,21 @@ public class ThoughtStreamHub {
         }
 
         private void attach(SseEmitter emitter) {
+            attach(emitter, 0L);
+        }
+
+        /**
+         * @param afterSeq 仅回放/推送 seq &gt; afterSeq 的事件（与库重放衔接去重）
+         */
+        private void attach(SseEmitter emitter, long afterSeq) {
             List<Map<String, Object>> snapshot;
             synchronized (buffer) {
                 snapshot = new ArrayList<Map<String, Object>>(buffer);
             }
             for (Map<String, Object> event : snapshot) {
+                if (eventSeq(event) <= afterSeq) {
+                    continue;
+                }
                 if (!safeSend(emitter, event)) {
                     return;
                 }
@@ -294,7 +344,7 @@ public class ThoughtStreamHub {
             subscribers.remove(emitter);
         }
 
-        private void publish(String eventType, Map<String, Object> payload) {
+        private Map<String, Object> publish(String eventType, Map<String, Object> payload) {
             Map<String, Object> event = new LinkedHashMap<String, Object>();
             if (payload != null) {
                 event.putAll(payload);
@@ -312,19 +362,19 @@ public class ThoughtStreamHub {
 
             // 快照后异步推：调用方（规划线程/Gateway 转发）不被慢客户端拖死
             final List<SseEmitter> snapshot = new ArrayList<SseEmitter>(subscribers);
-            if (snapshot.isEmpty()) {
-                return;
-            }
-            pushExecutor.execute(new Runnable() {
-                @Override
-                public void run() {
-                    for (SseEmitter emitter : snapshot) {
-                        if (!safeSend(emitter, event)) {
-                            subscribers.remove(emitter);
+            if (!snapshot.isEmpty()) {
+                pushExecutor.execute(new Runnable() {
+                    @Override
+                    public void run() {
+                        for (SseEmitter emitter : snapshot) {
+                            if (!safeSend(emitter, event)) {
+                                subscribers.remove(emitter);
+                            }
                         }
                     }
-                }
-            });
+                });
+            }
+            return event;
         }
 
         private void complete() {
@@ -358,6 +408,26 @@ public class ThoughtStreamHub {
         }
 
         private boolean safeSend(SseEmitter emitter, Map<String, Object> event) {
+            return safeSendStatic(emitter, event);
+        }
+
+        private static long eventSeq(Map<String, Object> event) {
+            if (event == null) {
+                return 0L;
+            }
+            Object seqObj = event.get("seq");
+            if (seqObj instanceof Number) {
+                return ((Number) seqObj).longValue();
+            }
+            try {
+                return Long.parseLong(String.valueOf(seqObj));
+            } catch (Exception e) {
+                return 0L;
+            }
+        }
+
+        /** 供 Hub 在 attach 前重放 DB 事件 */
+        private static boolean safeSendStatic(SseEmitter emitter, Map<String, Object> event) {
             try {
                 String type = String.valueOf(event.get("eventType"));
                 emitter.send(SseEmitter.event()
@@ -365,7 +435,7 @@ public class ThoughtStreamHub {
                         .data(JSON.toJSONString(event), MediaType.APPLICATION_JSON));
                 return true;
             } catch (IOException e) {
-                log.debug("思考流推送断开 taskId={}: {}", taskId, e.getMessage());
+                log.debug("思考流推送断开: {}", e.getMessage());
                 try {
                     emitter.complete();
                 } catch (Exception ignore) {
@@ -373,7 +443,7 @@ public class ThoughtStreamHub {
                 }
                 return false;
             } catch (Exception e) {
-                log.warn("思考流推送失败 taskId={}: {}", taskId, e.getMessage());
+                log.warn("思考流推送失败: {}", e.getMessage());
                 try {
                     emitter.completeWithError(e);
                 } catch (Exception ignore) {

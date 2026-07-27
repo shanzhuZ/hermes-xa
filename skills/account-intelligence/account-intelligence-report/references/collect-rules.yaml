@@ -1,5 +1,5 @@
 # 04 账号画像写报 — 唯一参考（Skill 只加载本文件）
-version: "1.21.0"
+version: "1.22.0"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -73,13 +73,16 @@ steps:
       4.1.2 图片流核验：系统 image_pipeline 入库+分析；完成后 collect_images 可渲染才 completed；无图 skipped
       两子都终态后父壳 completed → 步骤6；步骤5未完成禁止发文工具
       （步骤5只产出核查数据，不输出报告章节）
-    forbid: [发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, mcp_weibo_get_feeds, mcp_apify_get_dataset_items发文轮, 写最终报告, web_search, web_extract, browser_*]
+      【禁空等结束】输出 [文本核验结论] / 头像分析进度后，禁止写「等待系统完成 4.2/4.3」并结束会话；
+      须保持同一会话继续：系统推进后下一回合立刻调发文工具（勿 done）。
+    forbid: [发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, mcp_weibo_get_feeds, mcp_apify_get_dataset_items发文轮, 写最终报告, web_search, web_extract, browser_*, 等待系统后结束会话]
 
   "6_validated":
     do: |
       validated_accounts = 种子 + 与种子文本/图片流相似的候选（high/medium）；其余进 excluded。
       本步完成前禁止一切发文工具；完成后进入 4.3 社工库核验（不是直接发文）。
-    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_country_wise]
+      禁止以「等待系统」结束会话。
+    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_country_wise, 等待系统后结束会话]
 
   "6_osint_es":
     do: |
@@ -88,12 +91,14 @@ steps:
       禁止默认跑 search_facebook / search_worldpeople。
       系统收口：有命中 completed；无命中 skipped（不阻塞步骤7）。
       可选输出 [社工库核验结论]；4.3 未终态禁止发文工具。
-    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_facebook, search_worldpeople]
+      4.3 一旦终态（含 skipped）：同一会话必须立刻进入步骤7调发文工具，禁止结束会话空等。
+    forbid: [一切发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, web_search, web_extract, browser_*, search_facebook, search_worldpeople, 等待系统后结束会话]
 
   "7_posts":
     do: |
       【硬强制·UI步骤5】本回合唯一合法动作=调用发文工具；上下文「必须立即调用」列表须本回合并行调完。
       每个 validated（含种子）必须先真实调用对应发文工具，禁止未调用就收口/进分析/结束会话/口头完成。
+      禁止输出「等待系统完成 4.2/4.3 后再发文」类收尾；4.3 已终态时本回合必须调工具。
       平台工具：
       - twitter→mcp_twitter_get_user_tweets(约50条)；get_user_info 不算
       - youtube→mcp_youtube_analyze_channel_videos(channelId=UC…)；get_channel_stats 不算
@@ -170,4 +175,7 @@ apify:
   facebook: { tool: mcp_apify_headlessagent__facebook_profile_post_scraper }
   github: { tool: mcp_apify_knotless_cadence__github_profile_scraper }
 
-midflight: 步骤1-10 每步向用户输出 1-2 句进度（如"步骤4完成：采集N个候选profile"）；禁止在步骤1-10 输出最终报告的任何章节（一/二/三/四）；步骤11 才一次性输出完整报告
+midflight: |
+  步骤1-10 每步向用户输出 1-2 句进度（如"步骤4完成：采集N个候选profile"）；
+  禁止在步骤1-10 输出最终报告的任何章节（一/二/三/四）；步骤11 才一次性输出完整报告。
+  全程禁止「等待系统收口/等待 4.2/4.3」后结束会话：系统推进与 Agent 同会话接力，门禁放行后须立刻调下一步工具。
