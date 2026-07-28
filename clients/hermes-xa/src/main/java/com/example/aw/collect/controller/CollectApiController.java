@@ -273,6 +273,49 @@ public class CollectApiController {
     }
 
     /**
+     * 系统管线进度注入思考流（Python Hook 在系统采发文/图片/社工库时调用）。
+     * <p>
+     * 同时推送 assistant.delta（实时碎字区）与 tool.progress+_thinking（timeline 回放），
+     * 与 ReportPlanBootstrap 规划文案同一通道，保证步骤树与思考流同阶段可见。
+     */
+    @PostMapping("/tasks/{taskId}/thoughts/progress")
+    public ResponseEntity<Map<String, Object>> postThoughtsProgress(
+            @PathVariable String taskId,
+            @RequestBody Map<String, Object> body) {
+        Map<String, Object> task = collectTaskMapper.selectTaskById(taskId);
+        if (task == null || task.isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<String, Object>();
+            err.put("error", "task_not_found");
+            return ResponseEntity.status(HttpStatus.NOT_FOUND).body(err);
+        }
+        String content = body == null || body.get("content") == null
+                ? ""
+                : String.valueOf(body.get("content")).trim();
+        if (content.isEmpty()) {
+            Map<String, Object> err = new LinkedHashMap<String, Object>();
+            err.put("error", "empty_content");
+            return ResponseEntity.status(HttpStatus.BAD_REQUEST).body(err);
+        }
+        if (content.length() > 2000) {
+            content = content.substring(0, 2000);
+        }
+        thoughtStreamHub.open(taskId);
+        Map<String, Object> delta = new LinkedHashMap<String, Object>();
+        delta.put("taskId", taskId);
+        delta.put("content", content);
+        thoughtStreamHub.publish(taskId, "assistant.delta", delta);
+        Map<String, Object> progress = new LinkedHashMap<String, Object>();
+        progress.put("taskId", taskId);
+        progress.put("content", content);
+        progress.put("toolName", "_thinking");
+        thoughtStreamHub.publish(taskId, "tool.progress", progress);
+        Map<String, Object> ok = new LinkedHashMap<String, Object>();
+        ok.put("ok", Boolean.TRUE);
+        ok.put("taskId", taskId);
+        return ResponseEntity.ok(ok);
+    }
+
+    /**
      * 模型思考过程 SSE 中继（Java 转发 Gateway 的 assistant.delta / tool.* 等）。
      * <p>
      * 前端实时：只拼 assistant.delta.content。

@@ -165,6 +165,18 @@ def block_tool_reason(
 
     # 步骤4 期间 YouTube 解析 UC 的 web 仍由 sink 专门处理，此处不重复
     if gate == "step3_web_search" and tool_name in WEB_SEARCH_TOOLS:
+        # 墙钟/次数耗尽：禁止继续检索，逼进步骤4
+        try:
+            from report_04.sink import step3_web_budget_exhausted
+
+            budget = step3_web_budget_exhausted(task_id)
+            if budget and budget != "already_done":
+                return (
+                    f"步骤3网页检索已达限制（{budget}）。"
+                    "请立即停止 web_search/browser，合并候选后进入步骤4主页采集。"
+                )
+        except Exception:
+            pass
         return None
 
     return (

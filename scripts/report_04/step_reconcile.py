@@ -676,8 +676,12 @@ def ensure_osint_not_premature(store: Any, task_id: str) -> int:
 
 
 def _skip_irrelevant_step4_children(store: Any, task_id: str) -> int:
-    """跳过与种子无关的步骤四子节点。"""
-    from report_04.candidate_parser import candidate_relevant_for_seed, relevant_profile_platforms
+    """跳过步骤四中「线索发现无该平台候选」的子节点。
+
+    不再按种子相似度过滤：步骤2/3 发现的可采集平台一律保留采集；
+    相似度只在步骤6 validated 收敛。
+    """
+    from report_04.candidate_parser import relevant_profile_platforms
 
     rows = db.fetch_all(
         """
@@ -702,17 +706,11 @@ def _skip_irrelevant_step4_children(store: Any, task_id: str) -> int:
             continue
         if not is_collectible_platform(plat):
             continue
-        # 有任一相关候选则保留
-        if any(
-            str(c.get("platform") or "").lower() == plat and candidate_relevant_for_seed(c, _task_seed_handle(task_id))
-            for c in rows
-        ):
-            continue
         store.set_step_status(
             task_id,
             step_key,
             "skipped",
-            message=f"{plat} 候选与种子账号不匹配，跳过",
+            message=f"{plat} 线索发现无候选，跳过",
         )
         updated += 1
     return updated
@@ -1263,30 +1261,54 @@ def reconcile_step3_from_web_tools(store: Any, task_id: str) -> int:
     n_search = int((stat or {}).get("n_search") or 0)
     n_extract = int((stat or {}).get("n_extract") or 0)
 
-    should_complete = n_extract >= 1 or n_search >= 3
-    if not should_complete:
-        return 0
-    # 会话收口才强制完成；中途由 sink 安静期控制
-    age = None
+    should_complete = n_extract >= 1 or n_search >= 2
+    # 墙钟/次数耗尽：立刻收口，不再等安静期
+    force_budget = False
     try:
-        from report_04.gates import seconds_since_last_tool
+        from report_04.sink import (
+            _STEP3_MAX_WALL_SECONDS,
+            _STEP3_MAX_WEB_SEARCH,
+            _STEP3_MAX_WEB_TOOLS,
+            _step3_wall_age_seconds,
+            _step3_web_tool_counts,
+        )
 
-        age = seconds_since_last_tool(task_id, phase_prefix="step3_web_search")
+        wall = _step3_wall_age_seconds(task_id)
+        n_s2, n_all = _step3_web_tool_counts(task_id)
+        if wall is not None and wall >= float(_STEP3_MAX_WALL_SECONDS):
+            force_budget = True
+        if n_s2 >= int(_STEP3_MAX_WEB_SEARCH) or n_all >= int(_STEP3_MAX_WEB_TOOLS):
+            force_budget = True
     except Exception:
-        age = None
-    if age is not None and age < 40:
+        force_budget = False
+
+    if not should_complete and not force_budget:
         return 0
+    # 会话收口才强制完成；中途由 sink 安静期控制（预算耗尽除外）
+    if not force_budget:
+        age = None
+        try:
+            from report_04.gates import seconds_since_last_tool
+
+            age = seconds_since_last_tool(task_id, phase_prefix="step3_web_search")
+        except Exception:
+            age = None
+        if age is not None and age < 15:
+            return 0
 
     n_web = db.fetch_one(
         "SELECT COUNT(*) AS c FROM cross_platform_candidates WHERE task_id=%s AND match_strategy='web_search'",
         (task_id,),
     )
     n_web_c = int((n_web or {}).get("c") or 0)
+    msg = f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web_c}）"
+    if force_budget:
+        msg = f"网页检索超时/达上限收口（search={n_search} extract={n_extract} 候选={n_web_c}）"
     store.set_step_status(
         task_id,
         "step3_web_search",
         "completed",
-        message=f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web_c}）",
+        message=msg,
     )
     store.materialize_step4_from_candidates(task_id)
     return 1

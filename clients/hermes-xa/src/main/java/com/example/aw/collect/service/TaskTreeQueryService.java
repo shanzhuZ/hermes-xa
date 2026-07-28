@@ -58,7 +58,7 @@ public class TaskTreeQueryService {
         Map<String, List<String>> toolNamesByStep = collectToolNamesByStep(tools);
         String taskType = stringVal(task.get("task_type"));
         List<Map<String, Object>> nodes = buildStepHierarchy(taskId, taskType, steps, toolNamesByStep);
-        // 04：七大壳 progressPct 现算写入响应；值变化时才回写 progress_pct，不进 Hook
+        // 04：七大壳阶段锚点进度（stages/currentStage/progressPct）；值变化时回写 progress_pct
         if ("account_report".equals(taskType)) {
             applyReportPhaseShellProgress(taskId, nodes);
         }
@@ -223,9 +223,9 @@ public class TaskTreeQueryService {
     }
 
     /**
-     * 04 七大壳进度：后代叶子步骤中终态占比。
-     * 叶子 = 树中无子步骤的业务节点（含视频叶、未挂视频的发文叶等）。
-     * 同步回写库字段 progress_pct，便于直接查库或读 snake_case 字段的调用方。
+     * 04 七大壳进度：阶段锚点（stages + currentStage → progressPct）。
+     * 仅壳节点 showProgress=true；子步不展示进度条。
+     * progressPct = round(100 * currentStage / (stages.length - 1))；前端可对 pct 做过渡动画。
      */
     private void applyReportPhaseShellProgress(String taskId, List<Map<String, Object>> nodes) {
         if (nodes == null || nodes.isEmpty()) {
@@ -235,12 +235,13 @@ public class TaskTreeQueryService {
             applyReportPhaseShellProgress(taskId, childrenOf(node));
             String stepKey = stringVal(node.get("stepKey"));
             if (REPORT_PHASE_SHELLS.contains(stepKey)) {
-                // 前端只对带此标志的节点渲染进度条（七大壳）
                 node.put("showProgress", Boolean.TRUE);
-                int pct = calcReportShellProgressPct(node);
-                node.put("progressPct", Integer.valueOf(pct));
+                StageProgress sp = resolveReportShellStageProgress(node);
+                node.put("stages", sp.stages);
+                node.put("currentStage", Integer.valueOf(sp.currentStage));
+                node.put("progressPct", Integer.valueOf(sp.progressPct));
                 try {
-                    collectTaskMapper.updateStepProgressPctIfChanged(taskId, stepKey, pct);
+                    collectTaskMapper.updateStepProgressPctIfChanged(taskId, stepKey, sp.progressPct);
                 } catch (Exception ignored) {
                     // 回写失败不影响树接口；进度仍以响应 progressPct 为准
                 }
@@ -248,41 +249,223 @@ public class TaskTreeQueryService {
         }
     }
 
-    private int calcReportShellProgressPct(Map<String, Object> shellNode) {
-        String status = stringVal(shellNode.get("status"));
-        if ("completed".equals(status) || "skipped".equals(status)) {
-            return 100;
-        }
-        if ("failed".equals(status)) {
-            return 100;
-        }
-        List<Map<String, Object>> leaves = new ArrayList<Map<String, Object>>();
-        collectStepLeaves(childrenOf(shellNode), leaves);
-        if (leaves.isEmpty()) {
-            return "running".equals(status) ? 5 : 0;
-        }
-        int terminal = 0;
-        for (Map<String, Object> leaf : leaves) {
-            String st = stringVal(leaf.get("status"));
-            if (TERMINAL_STATUSES.contains(st)) {
-                terminal++;
+    /** 七壳阶段锚点结果。 */
+    private static final class StageProgress {
+        private final List<String> stages;
+        private final int currentStage;
+        private final int progressPct;
+
+        private StageProgress(List<String> stages, int currentStage) {
+            this.stages = stages;
+            int last = stages.size() - 1;
+            int idx = currentStage;
+            if (idx < 0) {
+                idx = 0;
             }
+            if (idx > last) {
+                idx = last;
+            }
+            this.currentStage = idx;
+            this.progressPct = last <= 0 ? 100 : (int) Math.round(100.0 * idx / last);
         }
-        return (int) Math.round(100.0 * terminal / leaves.size());
     }
 
-    private void collectStepLeaves(List<Map<String, Object>> nodes, List<Map<String, Object>> out) {
-        if (nodes == null || nodes.isEmpty()) {
-            return;
+    private StageProgress resolveReportShellStageProgress(Map<String, Object> shellNode) {
+        String shellKey = stringVal(shellNode.get("stepKey"));
+        String shellStatus = stringVal(shellNode.get("status"));
+        if ("phase_lock_target".equals(shellKey)) {
+            return stageLockTarget(shellNode, shellStatus);
         }
-        for (Map<String, Object> node : nodes) {
-            List<Map<String, Object>> children = childrenOf(node);
-            if (children == null || children.isEmpty()) {
-                out.add(node);
-            } else {
-                collectStepLeaves(children, out);
+        if ("phase_discovery".equals(shellKey)) {
+            return stageDiscovery(shellNode, shellStatus);
+        }
+        if ("phase_account_collect".equals(shellKey)) {
+            return stageAccountCollect(shellNode, shellStatus);
+        }
+        if ("phase_collision".equals(shellKey)) {
+            return stageCollision(shellNode, shellStatus);
+        }
+        if ("phase_content".equals(shellKey)) {
+            return stageContent(shellNode, shellStatus);
+        }
+        if ("phase_analysis".equals(shellKey)) {
+            return stageAnalysis(shellNode, shellStatus);
+        }
+        if ("phase_report".equals(shellKey)) {
+            return stageReport(shellNode, shellStatus);
+        }
+        List<String> fallback = Arrays.asList("开始", "完成");
+        return new StageProgress(fallback, isTerminalStatus(shellStatus) ? 1 : 0);
+    }
+
+    /** 1.锁定目标：开始 → 进行中 → 完成 */
+    private StageProgress stageLockTarget(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "进行中", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 2);
+        }
+        String s1 = findDescendantStatus(shell, "step1_seed");
+        if (isActiveStatus(s1) || isActiveStatus(shellStatus) || isTerminalStatus(s1)) {
+            // 种子已终态但壳未滚完：仍算进行中，直到壳终态才 100
+            return new StageProgress(stages, isTerminalStatus(shellStatus) ? 2 : 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 2.线索发现：开始 → Maigret → 网页检索 → 完成 */
+    private StageProgress stageDiscovery(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "Maigret", "网页检索", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 3);
+        }
+        String s2 = findDescendantStatus(shell, "step2_maigret");
+        String s3 = findDescendantStatus(shell, "step3_web_search");
+        if (isTerminalStatus(s3)) {
+            return new StageProgress(stages, 3);
+        }
+        if (isActiveStatus(s3) || isTerminalStatus(s2)) {
+            return new StageProgress(stages, 2);
+        }
+        if (isActiveStatus(s2) || isActiveStatus(shellStatus)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 3.账号采集：开始 → 主页采集中 → 完成 */
+    private StageProgress stageAccountCollect(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "主页采集中", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 2);
+        }
+        String s4 = findDescendantStatus(shell, "step4_profiles");
+        if (isActiveStatus(s4) || isActiveStatus(shellStatus)
+                || hasActiveDescendant(shell)
+                || isTerminalStatus(s4)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 4.关联碰撞：开始 → 4.1 → 4.2 → 4.3 → 完成 */
+    private StageProgress stageCollision(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "4.1信息核验", "4.2认定", "4.3社工库", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 4);
+        }
+        String s5 = findDescendantStatus(shell, "step5_streams");
+        String s6 = findDescendantStatus(shell, "step6_validated");
+        String s43 = findDescendantStatus(shell, "step6_osint_es");
+        if (isTerminalStatus(s43)) {
+            return new StageProgress(stages, 4);
+        }
+        if (isActiveStatus(s43) || isTerminalStatus(s6)) {
+            return new StageProgress(stages, 3);
+        }
+        if (isActiveStatus(s6) || isTerminalStatus(s5)) {
+            return new StageProgress(stages, 2);
+        }
+        if (isActiveStatus(s5) || isActiveStatus(shellStatus)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 5.内容采集：开始 → 发文采集中 → 完成 */
+    private StageProgress stageContent(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "发文采集中", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 2);
+        }
+        String s7 = findDescendantStatus(shell, "step7_posts");
+        if (isActiveStatus(s7) || isActiveStatus(shellStatus)
+                || hasActiveDescendant(shell)
+                || isTerminalStatus(s7)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 6.深度研判：开始 → 图片分析 → 观点分析 → PII圈层 → 完成 */
+    private StageProgress stageAnalysis(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "图片分析", "观点分析", "PII圈层", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 4);
+        }
+        String s8 = findDescendantStatus(shell, "step8_img_analysis");
+        String s9 = findDescendantStatus(shell, "step9_context_views");
+        String s10 = findDescendantStatus(shell, "step10_context_pii");
+        if (isTerminalStatus(s10)) {
+            return new StageProgress(stages, 4);
+        }
+        if (isActiveStatus(s10) || isTerminalStatus(s9)) {
+            return new StageProgress(stages, 3);
+        }
+        if (isActiveStatus(s9) || isTerminalStatus(s8)) {
+            return new StageProgress(stages, 2);
+        }
+        if (isActiveStatus(s8) || isActiveStatus(shellStatus)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    /** 7.报告生成：开始 → 写报中 → 完成 */
+    private StageProgress stageReport(Map<String, Object> shell, String shellStatus) {
+        List<String> stages = Arrays.asList("开始", "写报中", "完成");
+        if (isTerminalStatus(shellStatus)) {
+            return new StageProgress(stages, 2);
+        }
+        String s11 = findDescendantStatus(shell, "step11_report");
+        if (isActiveStatus(s11) || isActiveStatus(shellStatus) || isTerminalStatus(s11)) {
+            return new StageProgress(stages, 1);
+        }
+        return new StageProgress(stages, 0);
+    }
+
+    private boolean isTerminalStatus(String status) {
+        return TERMINAL_STATUSES.contains(stringVal(status));
+    }
+
+    private boolean isActiveStatus(String status) {
+        return "running".equals(stringVal(status));
+    }
+
+    /** 在壳子树中查找业务步 status；找不到返回空串。 */
+    private String findDescendantStatus(Map<String, Object> root, String stepKey) {
+        Map<String, Object> hit = findDescendantNode(root, stepKey);
+        if (hit == null) {
+            return "";
+        }
+        return stringVal(hit.get("status"));
+    }
+
+    private Map<String, Object> findDescendantNode(Map<String, Object> root, String stepKey) {
+        if (root == null || stepKey == null || stepKey.isEmpty()) {
+            return null;
+        }
+        if (stepKey.equals(stringVal(root.get("stepKey")))) {
+            return root;
+        }
+        for (Map<String, Object> child : childrenOf(root)) {
+            Map<String, Object> hit = findDescendantNode(child, stepKey);
+            if (hit != null) {
+                return hit;
             }
         }
+        return null;
+    }
+
+    private boolean hasActiveDescendant(Map<String, Object> root) {
+        for (Map<String, Object> child : childrenOf(root)) {
+            if (isActiveStatus(stringVal(child.get("status")))) {
+                return true;
+            }
+            if (hasActiveDescendant(child)) {
+                return true;
+            }
+        }
+        return false;
     }
 
     private Map<String, Object> buildStepNode(

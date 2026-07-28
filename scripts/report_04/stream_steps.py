@@ -143,6 +143,12 @@ def start_step5_image_pipeline(store: Any, task_id: str) -> None:
             "running",
             message="文本/图片流核查中",
         )
+    try:
+        from report_04.thought_progress import emit_system_thinking
+
+        emit_system_thinking(task_id, "【系统·步骤4.1.2】图片资产入库与分析中…")
+    except Exception:
+        pass
 
     def _work() -> None:
         try:
@@ -258,5 +264,15 @@ def start_step5_image_pipeline(store: Any, task_id: str) -> None:
                 rollup_step5_parent(store, task_id)
             except Exception as exc:
                 logger.warning("4.1.2 后 rollup 失败 task=%s: %s", task_id, exc)
+            try:
+                from report_04.thought_progress import emit_system_thinking
+
+                st = get_step_status(task_id, STREAM_IMAGE_STEP_KEY) or ""
+                emit_system_thinking(
+                    task_id,
+                    f"【系统·步骤4.1.2】图片核验结束（状态={st}）。",
+                )
+            except Exception:
+                pass
 
     threading.Thread(target=_work, name=f"step5-image-{task_id[:8]}", daemon=True).start()

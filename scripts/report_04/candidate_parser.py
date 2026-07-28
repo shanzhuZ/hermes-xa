@@ -83,13 +83,41 @@ def looks_like_step3_summary(text: str) -> bool:
     return len(parse_web_search_candidates(text)) >= 1
 
 
+_NOISE_HANDLES = frozenset(
+    {
+        "p",
+        "s",
+        "login",
+        "search",
+        "null",
+        "reel",
+        "articles",
+        "contact",
+        "home",
+        "watch",
+        "results",
+        "channel",
+        "user",
+        "users",
+        "explore",
+        "about",
+    }
+)
+
+
+def is_noise_handle(handle: str) -> bool:
+    """明显噪声 handle（路径碎片等），不进入步骤四采集。"""
+    h = (handle or "").lower().strip().lstrip("@")
+    if not h or len(h) < 2:
+        return True
+    return h in _NOISE_HANDLES
+
+
 def handle_matches_seed(handle: str, seed_handle: str) -> bool:
-    """web_search 候选 handle 是否与种子账号相关。"""
+    """候选 handle 是否与种子账号相似（仅步骤6认定用；步骤四不再用此过滤）。"""
     h = (handle or "").lower().strip().lstrip("@")
     s = (seed_handle or "").lower().strip().lstrip("@")
-    if not h or not s or len(h) < 3:
-        return False
-    if h in {"p", "s", "login", "search", "null", "reel", "articles", "contact", "home", "watch"}:
+    if not h or not s or len(h) < 3 or is_noise_handle(h):
         return False
     if h == s:
         return True
@@ -98,18 +126,27 @@ def handle_matches_seed(handle: str, seed_handle: str) -> bool:
     return False
 
 
-def candidate_relevant_for_seed(row: Dict[str, Any], seed_handle: str) -> bool:
-    """候选是否应进入步骤四采集列表。"""
-    if str(row.get("match_strategy") or "") == "maigret":
-        return True
-    return handle_matches_seed(str(row.get("account_handle") or ""), seed_handle)
+def candidate_relevant_for_seed(row: Dict[str, Any], seed_handle: str = "") -> bool:
+    """候选是否应进入步骤四采集列表。
+
+    产品规则：线索发现（Maigret/网页检索）产出的可采集候选一律尝试主页采集；
+    与种子的相似度过滤只在步骤6 validated，不在步骤四跳过。
+    seed_handle 保留兼容旧调用，步骤四逻辑不再依赖它。
+    """
+    _ = seed_handle
+    if is_noise_handle(str(row.get("account_handle") or "")):
+        return False
+    plat = str(row.get("platform") or "").strip().lower()
+    if not plat:
+        return False
+    return True
 
 
 def relevant_profile_platforms(
     candidates: List[Dict[str, Any]],
-    seed_handle: str,
+    seed_handle: str = "",
 ) -> List[str]:
-    """按平台去重，仅保留与种子相关的可采集平台。"""
+    """按平台去重：线索发现中所有可采集平台都物化步骤四子节点。"""
     from report_04.phases import is_collectible_platform, profile_step_order
 
     found: set[str] = set()

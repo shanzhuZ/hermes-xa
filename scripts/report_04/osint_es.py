@@ -273,6 +273,15 @@ def run_osint_es_pipeline(store: Any, task_id: str) -> bool:
         "running",
         message=f"系统社工库核验中（{len(targets)} 个 URL）",
     )
+    try:
+        from report_04.thought_progress import emit_system_thinking
+
+        emit_system_thinking(
+            task_id,
+            f"【系统·步骤4.3】开始社工库核验，共 {len(targets)} 个 profile URL。",
+        )
+    except Exception:
+        pass
     t0 = time.perf_counter()
     ok_n = 0
     err_n = 0
@@ -351,6 +360,24 @@ def run_osint_es_pipeline(store: Any, task_id: str) -> bool:
         has_hits,
         elapsed_ms,
     )
+    try:
+        from report_04.thought_progress import emit_system_thinking
+
+        emit_system_thinking(
+            task_id,
+            f"【系统·步骤4.3】社工库核验结束：命中={'有' if has_hits else '无'}，"
+            f"成功查询 {ok_n}，失败 {err_n}。请立刻调发文工具，禁止结束会话。",
+        )
+    except Exception:
+        pass
+    try:
+        from report_04.session_continue import maybe_continue_agent_session
+
+        maybe_continue_agent_session(
+            store, task_id, reason="osint_done", kind="posts"
+        )
+    except Exception as exc:
+        logger.warning("osint 后续跑失败 task=%s: %s", task_id, exc)
     return True
 
 

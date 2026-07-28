@@ -28,7 +28,7 @@ metadata:
 - **步骤3用浏览器 + 搜索引擎** 搜索类似昵称的账号及账号ID， 严查推特（X）、facebook、telegram、youtube、github、reddit、weibo、linkedin、ins、vk等中大型社交网站；**YouTube 候选必须落到 `channelId=UC…`**（禁止把 `@handle` 当 channelId）
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
 - **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台（含 youtube/github）；**全部 step4_profile_* 子节点终态前禁止 vision/OCR**
-- **步骤 5（4.1）**：父壳下分 **4.1.1 文本流核验** / **4.1.2 图片流核验**。步骤4全部主页子节点终态后系统启动核验：文本可做规则比对；Agent 应用 `[文本核验结论]` 输出核验正文（无工具）。**4.1.2 由系统 `image_pipeline` 入库分析，完成后才 completed（无图则 skipped）**。两子都终态后父壳 completed 并进步骤6。步骤5未完成禁止发文工具。**禁止**输出「等待系统完成 4.2/4.3」后结束会话
+- **步骤 5（4.1）**：父壳下分 **4.1.1 文本流核验** / **4.1.2 图片流核验**。步骤4全部主页子节点终态后系统启动核验：文本可做规则比对；Agent 应用 `[文本核验结论]` 输出核验正文（无工具）。**4.1.2 由系统 `image_pipeline` 入库分析，完成后才 completed（无图则 skipped）**。两子都终态后父壳 completed 并进步骤6。步骤5未完成禁止发文工具。**禁止**输出「等待系统完成 4.2/4.3 / 会话保持中」后结束会话；无工具可调也须保持会话，系统会同 session 续跑催促下一步
 - **步骤 6（4.2）** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮；**禁止**空等结束会话
 - **步骤 4.3（`step6_osint_es`）**：**主路径由系统自动查 ES**（4.2 完成后 kickoff，不依赖 Agent）。Agent 若见待查 URL 可补调 `mcp_es_search_search_country_wise`；**禁止**默认跑 `search_facebook`/`search_worldpeople`；可选输出 `[社工库核验结论]`。系统无命中 → **skipped**（不阻塞发文）；会话结束/超时有 fail-forward。**4.3 终态后同一会话必须立刻调发文工具**
 - **步骤 7 / UI步骤5 发文（硬强制·禁止空过）** 须等 4.3 终态后，对 **每一个** `verdict=validated` 平台（含种子）**本回合必须实际调用对应发文工具**（不是口头宣称）。Twitter→`get_user_tweets`；YouTube→`analyze_channel_videos(channelId)`；微博→`get_user_feeds`；其余 Apify→Actor→dataset。**禁止**未调用就收口/进分析/结束会话；**禁止**空过种子 Twitter/YouTube；步骤1/4 主页≠发文。允许：工具已调用但失败或 0 条再 skip

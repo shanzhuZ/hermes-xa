@@ -700,7 +700,7 @@ class TaskStore:
         if platforms:
             self.ensure_profile_steps(task_id, platforms)
         relevant_set = set(platforms)
-        # 跳过无采集通道 / 与种子无关的 Maigret 或 web 噪声子节点
+        # 跳过无采集通道 / 线索发现无该平台候选的子节点（不做种子相似度过滤）
         for row in db.fetch_all(
             "SELECT step_key FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
             (task_id, PROFILE_PARENT_STEP_KEY),
@@ -718,7 +718,7 @@ class TaskStore:
                     task_id,
                     sk,
                     "skipped",
-                    message=f"{plat} 候选与种子账号不匹配，跳过",
+                    message=f"{plat} 线索发现无候选，跳过",
                 )
             elif plat in relevant_set and cur == "skipped":
                 # 曾被误 skip 的可采集平台：恢复 pending，避免父步骤提前收口后晚到 Apify 把步骤树打乱
@@ -1685,8 +1685,21 @@ class TaskStore:
             return
 
         early_fail = str(fail_reason or "").strip() or None
-        # 会话结束且发文已开放但未尝试：补强失败文案
-        if session_ended and not early_fail:
+        # 未出终稿且续跑中：禁止 session_end 砍步骤 / 标 failed
+        defer_continue = False
+        if session_ended:
+            try:
+                from report_04.session_continue import (
+                    has_final_report,
+                    should_defer_finalize,
+                )
+
+                if not has_final_report(task_id) and should_defer_finalize(task_id):
+                    defer_continue = True
+            except Exception:
+                defer_continue = False
+        # 会话结束且发文已开放但未尝试：补强失败文案（续跑中不写）
+        if session_ended and not early_fail and not defer_continue:
             try:
                 from report_04.gates import can_run_step7_collect
                 from report_04.step_reconcile import list_unattempted_post_platforms
@@ -1719,18 +1732,24 @@ class TaskStore:
             from report_04.orchestrator import close_open_steps_for_session_end
 
             close_collect_parent_if_ready(self, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
-            if session_ended:
+            if session_ended and not defer_continue:
                 close_open_steps_for_session_end(
                     self,
                     task_id,
                     reason=early_fail or "会话结束：Agent stream 已结束",
                 )
         else:
-            run_session_finalize_light(
-                self,
-                task_id,
-                reason=early_fail or "会话结束：Agent stream 已结束",
-            )
+            if not defer_continue:
+                run_session_finalize_light(
+                    self,
+                    task_id,
+                    reason=early_fail or "会话结束：Agent stream 已结束",
+                )
+            else:
+                logger.info(
+                    "finalize 跳过 session_finalize_light（续跑中） task=%s",
+                    task_id,
+                )
 
         profiles = db.fetch_one(
             "SELECT COUNT(*) AS c FROM collect_profiles WHERE task_id=%s", (task_id,)
@@ -1754,8 +1773,8 @@ class TaskStore:
         step5 = _step_status(task_id, "step6_validated")
         step2_ok = step2 in {"completed", "skipped"}
         step5_ok = step5 in {"completed", "skipped"}
-        # stream 结束：再兜底一次，确保无 pending/running 步骤残留
-        if session_ended:
+        # stream 结束：再兜底一次，确保无 pending/running 步骤残留（续跑中禁止）
+        if session_ended and not defer_continue:
             try:
                 from report_04.orchestrator import close_open_steps_for_session_end
 
@@ -1896,25 +1915,42 @@ class TaskStore:
                 (PHASE_DONE, task_id),
             )
         elif session_ended:
-            # stream 已结束：流程一并终态，禁止继续 running 空等
-            err_msg = early_fail or "会话结束：Agent stream 已结束，流程已收口（未产出终稿）"
-            db.execute(
-                """
-                UPDATE hermes_tasks
-                SET status='failed',
-                    current_phase=%s,
-                    error_message=%s,
-                    finished_at=COALESCE(finished_at, NOW(3)),
-                    updated_at=NOW(3)
-                WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
-                """,
-                (
-                    PHASE_DONE,
-                    err_msg[:500],
+            if defer_continue:
+                db.execute(
+                    """
+                    UPDATE hermes_tasks
+                    SET status='running',
+                        finished_at=NULL,
+                        error_message=NULL,
+                        updated_at=NOW(3)
+                    WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
+                    """,
+                    (task_id,),
+                )
+                logger.info(
+                    "finalize session_ended 暂缓 failed：续跑中保持 running task=%s",
                     task_id,
-                ),
-            )
-            logger.info("finalize session_ended → failed task=%s reason=%s", task_id, err_msg[:120])
+                )
+            else:
+                # stream 已结束：流程一并终态，禁止继续 running 空等
+                err_msg = early_fail or "会话结束：Agent stream 已结束，流程已收口（未产出终稿）"
+                db.execute(
+                    """
+                    UPDATE hermes_tasks
+                    SET status='failed',
+                        current_phase=%s,
+                        error_message=%s,
+                        finished_at=COALESCE(finished_at, NOW(3)),
+                        updated_at=NOW(3)
+                    WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
+                    """,
+                    (
+                        PHASE_DONE,
+                        err_msg[:500],
+                        task_id,
+                    ),
+                )
+                logger.info("finalize session_ended → failed task=%s reason=%s", task_id, err_msg[:120])
         else:
             current_phase = PHASE_REPORT if not step5_ok else PHASE_POSTS
             db.execute(

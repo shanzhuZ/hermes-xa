@@ -82,8 +82,13 @@ _SKIP_STEP_TOOLS = frozenset({
     "skill_view", "clarify", "tool_search", "describe_tool", "todo", "terminal",
     "mcp_firecrawl_firecrawl_search", "mcp_firecrawl_firecrawl_scrape",
 })
-# 步骤3 web 安静期：避免 3 条并行 search 刚结束就收口，stream 还在搜
-_STEP3_QUIET_SECONDS = 40
+# 步骤3 网页检索：缩短安静期 + 墙钟/次数上限（甲方：耗时长且信息少）
+_STEP3_QUIET_SECONDS = 15
+_STEP3_MAX_WALL_SECONDS = 180  # 最多约 3 分钟
+_STEP3_MAX_WEB_SEARCH = 3  # web_search 成功次数上限
+_STEP3_MAX_WEB_TOOLS = 5  # 全部 web/browser 工具成功次数上限
+# 达标门槛：extract≥1 或 browser≥1 或 search≥2（原 search≥3）
+_STEP3_MIN_SEARCH_FOR_DONE = 2
 # 步骤5 vision 安静期：图片流已齐后仍等模型可能继续发的 vision
 _STEP5_VISION_SETTLE_SECONDS = 5  # 批次闭环：图片齐后短安静期即收口，不再等 25s
 _VISION_TOOL_NAMES = ("vision_analyze", "mcp_vision_analyze", "mcp_ocr_perform_ocr", "mcp_ocr_perform_batch_ocr")
@@ -126,7 +131,7 @@ def handle_event(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
     if event == "post_tool_call":
         _on_post_tool(payload)
     elif event == "post_llm_call":
-        _on_post_llm_call(payload)
+        return _on_post_llm_call(payload)
     elif event == "on_session_end":
         _on_session_end(payload)
     return None
@@ -384,22 +389,29 @@ def _step7_ready_guidance(task_id: str) -> Optional[str]:
 
 def _looks_like_wait_for_system_exit(text: str) -> bool:
     """识别 Agent 以「等系统/等 4.2/4.3」收尾（易导致 stream 结束、发文未开）。"""
-    t = (text or "").strip()
-    if not t:
-        return False
-    markers = (
-        "等待系统完成",
-        "等待系统收口",
-        "等待系统推进",
-        "等待 4.2",
-        "等待4.2",
-        "等待步骤6",
-        "后进入步骤4.3",
-        "后进入步骤7",
-        "后再进入步骤7",
-        "后再采发文",
-    )
-    return any(m in t for m in markers)
+    try:
+        from report_04.session_continue import looks_like_wait_exit
+
+        return looks_like_wait_exit(text)
+    except Exception:
+        t = (text or "").strip()
+        if not t:
+            return False
+        markers = (
+            "等待系统完成",
+            "等待系统收口",
+            "等待系统推进",
+            "等待系统",
+            "会话保持中",
+            "等待 4.2",
+            "等待4.2",
+            "等待步骤6",
+            "后进入步骤4.3",
+            "后进入步骤7",
+            "后再进入步骤7",
+            "后再采发文",
+        )
+        return any(m in t for m in markers)
 
 
 def _early_exit_before_posts_message(task_id: str) -> Optional[str]:
@@ -977,8 +989,79 @@ def _step3_threshold_met(task_id: str) -> tuple[bool, int, int, int]:
     n_search = int((row or {}).get("n_search") or 0)
     n_extract = int((row or {}).get("n_extract") or 0)
     n_browser = int((row or {}).get("n_browser") or 0)
-    ok = n_extract >= 1 or n_browser >= 1 or n_search >= 3
+    ok = (
+        n_extract >= 1
+        or n_browser >= 1
+        or n_search >= int(_STEP3_MIN_SEARCH_FOR_DONE)
+    )
     return ok, n_search, n_extract, n_browser
+
+
+def _step3_web_tool_counts(task_id: str) -> tuple[int, int]:
+    """返回 (web_search成功数, 全部WEB工具成功数)。"""
+    from collect_01 import db as _db
+
+    row = _db.fetch_one(
+        """
+        SELECT
+          SUM(tool_name='web_search' AND status='success') AS n_search,
+          SUM(status='success') AS n_all
+        FROM hermes_tool_outputs
+        WHERE task_id=%s AND phase='step3_web_search'
+          AND tool_name IN ('web_search','web_extract',
+            'browser_navigate','browser_vision','browser_click','browser_type')
+        """,
+        (task_id,),
+    )
+    return int((row or {}).get("n_search") or 0), int((row or {}).get("n_all") or 0)
+
+
+def _step3_wall_age_seconds(task_id: str) -> Optional[float]:
+    """步骤3 running 起算的墙钟秒数；无 started_at 则用首条 web 工具时间。"""
+    from datetime import datetime
+
+    from collect_01 import db as _db
+
+    row = _db.fetch_one(
+        """
+        SELECT started_at, status FROM collect_phase_steps
+        WHERE task_id=%s AND step_key='step3_web_search'
+        """,
+        (task_id,),
+    )
+    started = (row or {}).get("started_at")
+    if started is None:
+        first = _db.fetch_one(
+            """
+            SELECT MIN(executed_at) AS first_at FROM hermes_tool_outputs
+            WHERE task_id=%s AND phase='step3_web_search' AND status='success'
+            """,
+            (task_id,),
+        )
+        started = (first or {}).get("first_at")
+    if started is None:
+        return None
+    if hasattr(started, "timestamp"):
+        try:
+            return max(0.0, (datetime.now() - started).total_seconds())
+        except Exception:
+            return None
+    return None
+
+
+def step3_web_budget_exhausted(task_id: str) -> Optional[str]:
+    """步骤3预算耗尽原因；None 表示仍可继续检索。"""
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return "already_done"
+    wall = _step3_wall_age_seconds(task_id)
+    if wall is not None and wall >= float(_STEP3_MAX_WALL_SECONDS):
+        return f"墙钟已达 {int(_STEP3_MAX_WALL_SECONDS)}s"
+    n_search, n_all = _step3_web_tool_counts(task_id)
+    if n_search >= int(_STEP3_MAX_WEB_SEARCH):
+        return f"web_search 已达上限 {_STEP3_MAX_WEB_SEARCH} 次"
+    if n_all >= int(_STEP3_MAX_WEB_TOOLS):
+        return f"网页检索工具已达上限 {_STEP3_MAX_WEB_TOOLS} 次"
+    return None
 
 
 def _complete_step3_now(
@@ -987,6 +1070,7 @@ def _complete_step3_now(
     *,
     n_search: int,
     n_extract: int,
+    message: Optional[str] = None,
 ) -> None:
     from collect_01 import db as _db
 
@@ -998,21 +1082,52 @@ def _complete_step3_now(
         (task_id,),
     )
     n_web = int((n_web_cands or {}).get("c") or 0)
+    msg = message or f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web}）"
     store.set_step_status(
         task_id,
         "step3_web_search",
         "completed",
-        message=f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web}）",
+        message=msg,
     )
     store.materialize_step4_from_candidates(task_id)
 
 
-def _try_complete_step3_if_quiet(store: TaskStore, task_id: str) -> bool:
-    """检索安静期过后才收口步骤3，避免 stream 仍在 web_search 时树已进步骤4。"""
+def _force_complete_step3_by_budget(store: TaskStore, task_id: str) -> bool:
+    """墙钟/次数耗尽时强制收口步骤3，进入步骤4。"""
     if not can_run_step3_web_search(task_id):
         return False
     if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
         return False
+    reason = step3_web_budget_exhausted(task_id)
+    if not reason or reason == "already_done":
+        return False
+    ok, n_search, n_extract, _n_browser = _step3_threshold_met(task_id)
+    _ = ok
+    _complete_step3_now(
+        store,
+        task_id,
+        n_search=n_search,
+        n_extract=n_extract,
+        message=f"网页检索超时/达上限收口（{reason}；search={n_search} extract={n_extract}）",
+    )
+    logger.info(
+        "step3 预算耗尽强制收口 task=%s reason=%s search=%s extract=%s",
+        task_id,
+        reason,
+        n_search,
+        n_extract,
+    )
+    return True
+
+
+def _try_complete_step3_if_quiet(store: TaskStore, task_id: str) -> bool:
+    """检索安静期过后才收口步骤3；预算耗尽则立刻收口。"""
+    if not can_run_step3_web_search(task_id):
+        return False
+    if get_step_status(task_id, "step3_web_search") in {"completed", "skipped"}:
+        return False
+    if _force_complete_step3_by_budget(store, task_id):
+        return True
     ok, n_search, n_extract, _n_browser = _step3_threshold_met(task_id)
     if not ok:
         return False
@@ -1035,7 +1150,7 @@ def _maybe_complete_step3_after_web_tool(
     task_id: str,
     tool_name: str,
 ) -> None:
-    """步骤三：web 工具成功后解析候选；仅安静期后收口（或由步骤4工具触发）。"""
+    """步骤三：web 工具成功后解析候选；安静期或预算耗尽后收口。"""
     if tool_name not in WEB_SEARCH_TOOLS:
         return
     if not can_run_step3_web_search(task_id):
@@ -1044,7 +1159,6 @@ def _maybe_complete_step3_after_web_tool(
         return
     if get_step_status(task_id, "step3_web_search") == "pending":
         store.set_step_status(task_id, "step3_web_search", "running", message=f"网页检索中 ({tool_name})")
-    # 不在此处 completed：等安静期 / 步骤4首工具
     _try_complete_step3_if_quiet(store, task_id)
 
 
@@ -1948,20 +2062,21 @@ def _persist_normalized(
         store.save_post_rows(posts, step_key=post_step)
 
 
-def _on_post_llm_call(payload: Dict[str, Any]) -> None:
+def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """LLM 回合结束后：推进管线；若「等系统」收尾则注入硬约束并同 session 续跑。"""
     ex = _extra(payload)
     assistant = str(ex.get("assistant_response") or "").strip()
     user_message = str(ex.get("user_message") or "").strip()
     task_id = _resolve_task_id(payload, user_message=user_message)
+    followup_ctx: Optional[str] = None
     if not task_id:
-        return
+        return None
     store = _store()
     session_id = str(payload.get("session_id") or "").strip()
     try:
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id)
         if not assistant or assistant == "(empty)":
-            return
-        # 终稿优先：短收尾时回扫 state.db；先收口 8～11，再做候选/vision（防超时半截）
+            return None
         report = _resolve_final_report_text(assistant, session_id)
         if report and is_final_report(report):
             if get_step_status(task_id, "step6_validated") != "completed":
@@ -1969,8 +2084,7 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             _complete_step11_from_report(
                 store, task_id, report, session_id or payload.get("session_id")
             )
-            return
-        # 像终稿但脏：走收口（内部会清洗或 fail-forward），禁止 8～10 永久 running
+            return None
         from report_04.report_parser import looks_like_report_attempt
 
         if looks_like_report_attempt(assistant):
@@ -1979,7 +2093,7 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             _complete_step11_from_report(
                 store, task_id, assistant, session_id or payload.get("session_id")
             )
-            return
+            return None
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
         try:
@@ -2002,7 +2116,6 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
         except Exception as exc:
             logger.warning("解析社工库核验结论失败 task=%s: %s", task_id, exc)
         _try_complete_profiles(store, task_id)
-        # 中途兜底：回放已成功的 vision；若长时间空等 Vision 则 fail-forward 解开 step5
         try:
             from report_04.step_reconcile import (
                 _reconcile_vision_from_tools,
@@ -2014,24 +2127,38 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> None:
             _maybe_advance_step67(store, task_id)
         except Exception as exc:
             logger.warning("post_llm vision 回放失败 task=%s: %s", task_id, exc)
-        # 检测「等系统」收尾：若发文已开放则告警（下一轮 pre_llm 会硬催；若直接 session_end 则失败文案）
         if _looks_like_wait_for_system_exit(assistant):
-            early = _early_exit_before_posts_message(task_id)
-            if early:
-                logger.warning(
-                    "post_llm 检测到「等待系统」收尾且发文已开放 task=%s: %s",
-                    task_id,
-                    early[:180],
+            try:
+                from report_04.session_continue import (
+                    anti_wait_followup_context,
+                    maybe_continue_agent_session,
                 )
-            else:
-                logger.info(
-                    "post_llm 检测到「等待系统」收尾（门禁尚未开放发文）task=%s，须保持会话勿 done",
+                from report_04.osint_es import kickoff_osint_if_ready
+
+                _maybe_advance_step67(store, task_id)
+                if get_step_status(task_id, "step6_validated") == "completed":
+                    kickoff_osint_if_ready(store, task_id)
+                followup_ctx = anti_wait_followup_context(task_id)
+                maybe_continue_agent_session(
+                    store, task_id, reason="post_llm_wait_exit"
+                )
+                logger.warning(
+                    "post_llm 检测到「等待系统」收尾，已注入续跑 task=%s",
                     task_id,
+                )
+            except Exception as exc:
+                logger.warning("post_llm 等系统续跑失败 task=%s: %s", task_id, exc)
+                followup_ctx = (
+                    "【写报硬约束】禁止写「等待系统」后结束会话。"
+                    "请保持会话，门禁放行后立刻调发文工具，再写终稿。"
                 )
         if not is_progress_only(assistant) and not _looks_like_report_meta_closing(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
     except DbError as exc:
         logger.warning("post_llm_call 失败 task=%s: %s", task_id, exc)
+    if followup_ctx:
+        return {"context": followup_ctx}
+    return None
 
 
 def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
@@ -2066,7 +2193,6 @@ def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
         text = str(row[0] or "").strip()
         if not is_final_report(text):
             continue
-        # 取最近若干条中最长的真终稿，避免短摘要误抢
         if len(text) > best_len:
             best = text
             best_len = len(text)
@@ -2080,7 +2206,6 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
     session_id = str(payload.get("session_id") or "").strip() or None
     store = _store()
     fail_reason: Optional[str] = None
-    # 先做轻量步骤5收口，避免 finalize 过重导致 Hook 120s 超时后步骤5永久 running
     try:
         from report_04.step_reconcile import _fail_forward_step5_pending_images
 
@@ -2095,11 +2220,9 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         try:
             from report_04.osint_es import close_osint_on_session_end, kickoff_osint_if_ready
 
-            # 4.3 已终态则跳过 kickoff，缩短 Hook 耗时，确保能跑到 finalize
             s43 = get_step_status(task_id, "step6_osint_es")
             if s43 not in {"completed", "skipped", "failed"}:
                 kickoff_osint_if_ready(store, task_id)
-            # 未调用 ES 工具时也必须收口，禁止 4.3 永久 running
             close_osint_on_session_end(store, task_id)
         except Exception as exc2:
             logger.warning("on_session_end 社工库收口失败 task=%s: %s", task_id, exc2)
@@ -2108,7 +2231,6 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
     try:
         user_message = str(_extra(payload).get("user_message") or "")
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id or "")
-        # 优先回扫真终稿；短「报告已完成」不能当 summary
         assistant = _resolve_final_report_text("", session_id or "")
         if not assistant:
             assistant = _load_assistant_output_from_state(session_id or "")
@@ -2126,23 +2248,55 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             else:
                 _try_parse_seed(store, task_id, assistant, user_message)
                 _try_step3_web_candidates(store, task_id, assistant)
-                if _looks_like_wait_for_system_exit(assistant):
-                    fail_reason = _early_exit_before_posts_message(task_id) or fail_reason
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
-    # finalize 必须跑到：此前超时会导致 stream 已关、任务仍 running
+
+    deferred = False
     try:
-        if not fail_reason:
+        from report_04.session_continue import (
+            has_final_report,
+            maybe_continue_agent_session,
+            should_defer_finalize,
+        )
+
+        if not has_final_report(task_id):
+            maybe_continue_agent_session(store, task_id, reason="session_end")
+            deferred = should_defer_finalize(task_id)
+    except Exception as exc:
+        logger.warning("on_session_end 续跑失败 task=%s: %s", task_id, exc)
+
+    try:
+        if not fail_reason and not deferred:
             fail_reason = _early_exit_before_posts_message(task_id)
         from report_04.orchestrator import run_full_reconcile_if_requested
 
         run_full_reconcile_if_requested(store, task_id)
-        # stream.end / session_end：流程与 stream 一并终态
-        store.finalize_task(task_id, session_ended=True, fail_reason=fail_reason)
+        if deferred:
+            try:
+                from collect_01 import db as _db
+
+                _db.execute(
+                    """
+                    UPDATE hermes_tasks
+                    SET status='running',
+                        finished_at=NULL,
+                        error_message=NULL,
+                        updated_at=NOW(3)
+                    WHERE task_id=%s AND status NOT IN ('failed', 'completed', 'cancelled')
+                    """,
+                    (task_id,),
+                )
+                logger.info(
+                    "on_session_end 暂缓 finalize：已续跑，保持 running task=%s",
+                    task_id,
+                )
+            except Exception as exc2:
+                logger.warning("暂缓 finalize 失败 task=%s: %s", task_id, exc2)
+        else:
+            store.finalize_task(task_id, session_ended=True, fail_reason=fail_reason)
     except Exception as exc:
         logger.warning("on_session_end finalize 失败 task=%s: %s", task_id, exc)
         try:
-            # 最后兜底：至少把任务标失败，避免永久 running
             from collect_01 import db as _db
 
             msg = (fail_reason or "会话结束收口失败（Hook 异常）")[:500]

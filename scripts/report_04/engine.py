@@ -57,8 +57,9 @@ def build_agent_context(task_id: str) -> Optional[str]:
 
     if gate == "step4_profiles":
         lines.append(
-            "步骤3（账号主页采集）：须对每个 pending/running 子节点调用对应主页工具；"
-            "禁止社工库/发文/vision；采不到或失败再 skip，禁止空等结束会话。"
+            "步骤3（账号主页采集）：须对线索发现（步骤2 Maigret + 步骤3 网页）产出的"
+            "每个可采集候选平台调用主页工具；禁止因「与种子不相似」跳过；"
+            "相似度只在步骤6认定。禁止社工库/发文/vision；采不到或失败再 skip。"
         )
         open_rows = db.fetch_all(
             """
@@ -97,7 +98,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
         if s5 in {"completed", "skipped"}:
             lines.append(
                 "步骤5已系统收口，禁止再 vision/OCR；"
-                "禁止结束会话；系统会推进 4.2/4.3，下一轮须立刻调发文工具。"
+                "禁止结束会话、禁止写「等待系统/会话保持」。"
+                "系统推进 4.2/4.3 后，本会话必须立刻调发文工具。"
             )
         elif not step4_profiles_terminal(task_id):
             pend = None
@@ -117,15 +119,15 @@ def build_agent_context(task_id: str) -> Optional[str]:
             lines.extend(pending[:8])
         else:
             lines.append(
-                "步骤5：图片流已齐，系统将自动 completed 并进入步骤6；"
-                "禁止写「等待系统」后结束会话。"
+                "步骤5：图片流已齐或由系统管线处理；请输出 [文本核验结论]（若尚未输出）。"
+                "禁止写「等待系统/会话保持中」并 done；保持会话，门禁放行后立刻调发文。"
             )
 
     elif gate == "step6_validated":
         lines.append(
-            "步骤6（4.2）：系统正在/即将收敛可信账号，禁止发文工具；"
-            "完成后进入 4.3 社工库核验。"
-            "禁止结束会话空等；禁止输出「等待系统完成 4.2/4.3」后 done。"
+            "步骤6（4.2）：系统正在/即将收敛可信账号；你可保持会话。"
+            "禁止输出「等待系统完成 4.2/4.3」后 done；"
+            "4.3 终态后同一会话必须立刻调发文工具。"
         )
 
     elif gate == "step6_osint_es":
