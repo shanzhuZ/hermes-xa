@@ -650,7 +650,7 @@ def _fallback_collect_twitter_posts(store: Any, task_id: str) -> int:
                 proxy = val
                 break
 
-        async def _fetch(handle: str, count: int = 40):
+        async def _fetch(handle: str, count: int = 100):
             cookies = json.loads(cookies_path.read_text(encoding="utf-8"))
             client = Client("en", proxy=proxy)
             client.set_cookies(
@@ -857,6 +857,16 @@ def run_after_continue_max(store: Any, task_id: str) -> None:
         )
 
 
+def _ensure_completed_if_final_report(store: Any, task_id: str) -> None:
+    """已有终稿时把 hermes_tasks 标 completed（续跑跳过/收尾兜底）。"""
+    try:
+        from report_04.engine import _try_finalize_report
+
+        _try_finalize_report(store, task_id, light_only=True)
+    except Exception as exc:
+        logger.warning("终稿后补标 completed 失败 task=%s: %s", task_id, exc)
+
+
 def run_continue_worker_job(
     store: Any,
     task_id: str,
@@ -881,7 +891,8 @@ def run_continue_worker_job(
             logger.warning("continue_worker 无 session_id task=%s", task_id)
             return
         if has_final_report(task_id):
-            logger.info("continue_worker 已有终稿，跳过 task=%s", task_id)
+            logger.info("continue_worker 已有终稿，补标 completed 后跳过 task=%s", task_id)
+            _ensure_completed_if_final_report(store, task_id)
             return
         message = build_continue_message(use_kind, task_id)
         time.sleep(1.5 if next_retry <= 1 else 0.8)
@@ -903,6 +914,8 @@ def run_continue_worker_job(
     # inflight 已清后再决定重试 / 上限检查（避免假在飞挡重试）
     try:
         if has_final_report(task_id):
+            # SSE 期间主会话可能已出终稿：必须补标，禁止只 return 留下 running
+            _ensure_completed_if_final_report(store, task_id)
             return
         if not ok and next_retry < _CONTINUE_MAX:
             time.sleep(6.0)

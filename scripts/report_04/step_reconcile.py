@@ -126,7 +126,7 @@ def _post_tool_hint(platform: str, account_id: str = "", handle: str = "") -> st
     plat = (platform or "").strip().lower()
     who = (handle or account_id or "").strip().lstrip("@")
     if plat == "twitter":
-        return f"mcp_twitter_get_user_tweets(screen_name={who or '<handle>'}, count=50)"
+        return f"mcp_twitter_get_user_tweets(screen_name={who or '<handle>'}, count=100)"
     if plat == "youtube":
         cid = account_id if str(account_id).startswith("UC") else (who or "<UC…>")
         return f"mcp_youtube_analyze_channel_videos(channelId={cid})"

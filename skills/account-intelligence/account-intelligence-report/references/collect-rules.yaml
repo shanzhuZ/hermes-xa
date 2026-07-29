@@ -103,7 +103,7 @@ steps:
       每个 validated（含种子）必须先真实调用对应发文工具，禁止未调用就收口/进分析/结束会话/口头完成。
       禁止输出「等待系统完成 4.2/4.3 后再发文」类收尾；4.3 已终态时本回合必须调工具。
       平台工具：
-      - twitter→mcp_twitter_get_user_tweets(约50条)；get_user_info 不算
+      - twitter→mcp_twitter_get_user_tweets(约100条)；get_user_info 不算
       - youtube→mcp_youtube_analyze_channel_videos(channelId=UC…)；get_channel_stats 不算
       - weibo→mcp_weibo_get_user_feeds；get_profile 不算
       - Instagram/TikTok/Telegram/Facebook/GitHub→Apify Actor→run→dataset（phase=step7_post_*）；步骤1/4 主页 dataset 不算

@@ -93,7 +93,7 @@ steps:
   "6_posts":
     do: |
       validated 每个账号：
-      - Twitter→get_user_tweets(50)
+      - Twitter→get_user_tweets(100)
       - YouTube→analyze_channel_videos(channelId)
       - 微博→get_user_feeds
       - Apify 平台→三轮 resultsLimit=50→get_dataset_items 原文
@@ -104,7 +104,7 @@ steps:
     when: 用户明确说不需要跨平台
     do: |
       仅采种子账号发文：
-      - Twitter→get_user_tweets(50)
+      - Twitter→get_user_tweets(100)
       - 微博→get_user_feeds
       - YouTube 种子→analyze_channel_videos(channelId)
       - Apify 种子（instagram/tiktok/telegram/facebook/github）→ 三轮 resultsLimit=50→get_dataset_items 原文

@@ -1369,6 +1369,13 @@ def _complete_step11_from_report(
     )
 
     if get_step_status(task_id, "step11_report") == "completed":
+        # 已收口 step11 但任务行可能仍 running（Hook 超时 / 续跑未补标）→ 补 completed
+        try:
+            from report_04.engine import _try_finalize_report
+
+            _try_finalize_report(store, task_id, light_only=True)
+        except Exception as exc:
+            logger.warning("step11 已完成时补标 completed 失败 task=%s: %s", task_id, exc)
         return
     # 视频未终态：不落 step11/summary，避免抢跑（也不 fail-forward，等视频终态后再判）
     inject_fn = None
@@ -1427,8 +1434,15 @@ def _complete_step11_from_report(
 
     store.set_task_phase(task_id, PHASE_DONE)
     logger.info("终稿轻量收口完成 task=%s summary_len=%d", task_id, len(report_body or ""))
+    # 必须先于重路径标 completed：否则 Hook 超时/续跑占会话时任务会永久停在 running
+    try:
+        from report_04.engine import _try_finalize_report
 
-    # —— 重路径：步骤4/7 收口（失败不影响已落的 summary）——
+        _try_finalize_report(store, task_id, light_only=True)
+    except Exception as exc:
+        logger.warning("终稿后任务 completed 标记失败 task=%s: %s", task_id, exc)
+
+    # —— 重路径：步骤4/7 收口（失败不影响已落的 summary / completed）——
     # 终稿已出却留下 step7 子节点 pending → 父节点永久 running；必须先批量 skip 再关父节点
     try:
         from report_04.orchestrator import advance_to_analysis_phase
@@ -1453,15 +1467,12 @@ def _complete_step11_from_report(
         close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
     except Exception as exc:
         logger.warning("终稿后步骤七收口失败 task=%s: %s", task_id, exc)
+    # 重路径可能改回 current_phase；再钉一次 done + completed
     try:
+        store.set_task_phase(task_id, PHASE_DONE)
         from report_04.engine import _try_finalize_report
 
         _try_finalize_report(store, task_id, light_only=True)
-    except Exception as exc:
-        logger.warning("终稿后任务 completed 标记失败 task=%s: %s", task_id, exc)
-    # advance_to_analysis 可能把 current_phase 改回 analysis；终稿后强制 done
-    try:
-        store.set_task_phase(task_id, PHASE_DONE)
     except Exception:
         pass
 

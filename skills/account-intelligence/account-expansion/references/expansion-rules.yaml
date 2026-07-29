@@ -66,11 +66,11 @@ steps:
       - 禁止“只先跑种子 Twitter 发文，再回头补其他平台主页”
       采集范围：
       - 候选账号（summary.accounts，种子平台除外）：采 profile + 发文
-      - 种子账号：步骤1已采 profile，这里**用同源方式补采种子发文**（同一工具，如 Twitter get_user_tweets(50)），
+      - 种子账号：步骤1已采 profile，这里**用同源方式补采种子发文**（同一工具，如 Twitter get_user_tweets(100)），
         供第四步文本流「发文内容」维度做比对基准
       各平台工具：
       - 有 MCP：
-        - Twitter → get_user_info(profile) + get_user_tweets(50)
+        - Twitter → get_user_info(profile) + get_user_tweets(100)
         - YouTube → get_channel_stats(channelId)(profile) + analyze_channel_videos(channelId)(发文)
         - 微博 → get_profile(profile) + get_user_feeds(发文)
         - B站 → get_user_info(uid)(profile)；发文暂无 MCP 批量工具，可跳过或仅 profile

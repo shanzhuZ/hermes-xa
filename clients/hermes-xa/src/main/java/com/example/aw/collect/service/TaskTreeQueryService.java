@@ -257,7 +257,7 @@ public class TaskTreeQueryService {
         }
     }
 
-    /** 规划层/父壳旁白：固定两字段，前端按 status 选用。 */
+    /** 规划层/父壳旁白：固定两字段 + content_flag，前端按 status 选用文案。 */
     private void attachPhaseNarrative(Map<String, Object> node, String stepKey) {
         if (reportPhaseNarrativeConfig == null || stepKey == null || stepKey.isEmpty()) {
             return;
@@ -266,6 +266,7 @@ public class TaskTreeQueryService {
         if (pair == null || pair.isEmpty()) {
             return;
         }
+        node.put("content_flag", Boolean.TRUE);
         node.put("running_content", pair.get("running_content"));
         node.put("completed_content", pair.get("completed_content"));
     }

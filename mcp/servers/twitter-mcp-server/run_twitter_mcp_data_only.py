@@ -104,13 +104,19 @@ def _patch_get_user_tweets_media() -> None:
 
     log = logging.getLogger("twitter-data-only")
 
-    async def get_user_tweets(screen_name: str, count: int = 20) -> str:
+    async def get_user_tweets(screen_name: str, count: int = 100) -> str:
         """Get recent tweets from a specific user（含媒体类型，便于视频分析）。
 
         Args:
             screen_name: Twitter username (without @).
-            count: Number of tweets to fetch (default 20).
+            count: Number of tweets to fetch（默认/下限 100）。
         """
+        # 业务下限 100；单次 twikit 约最多 100，更大值仍按传入尝试
+        try:
+            count = int(count or 100)
+        except (TypeError, ValueError):
+            count = 100
+        count = max(100, count)
         client = await srv._get_client()
         user = await client.get_user_by_screen_name(screen_name)
         tweets = await client.get_user_tweets(user.id, tweet_type="Tweets", count=count)
