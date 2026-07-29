@@ -79,7 +79,12 @@ _ROOT_ORDER = tuple(root_step_keys())
 
 
 def infer_gate_step(task_id: str) -> str:
-    """推断当前应处根的步骤（用于白名单）。"""
+    """推断当前应处根的步骤（用于白名单）。
+
+    编号约定（对外统一）：步骤5=核验 step5_streams；步骤6=认定；
+    步骤4.3=社工库；步骤7=发文 step7_posts；步骤8～11=分析/终稿。
+    禁止把步骤7称作「步骤5发文」。
+    """
     # 仍有 validated 未调发文工具：强制停留步骤7（即使父节点被误标 completed）
     try:
         from report_04.gates import can_run_step7_collect
@@ -90,9 +95,15 @@ def infer_gate_step(task_id: str) -> str:
     except Exception:
         pass
 
-    # 步骤7 已收口 → 分析或报告
+    # 发文实质已齐（父壳可能仍 running）→ 分析或报告
+    try:
+        from report_04.gates import posts_substantively_ready
+
+        posts_ready = posts_substantively_ready(task_id)
+    except Exception:
+        posts_ready = False
     s7 = get_step_status(task_id, "step7_posts")
-    if s7 in {"completed", "skipped"}:
+    if posts_ready or s7 in {"completed", "skipped"}:
         for key in ANALYSIS_STEP_KEYS:
             st = get_step_status(task_id, key)
             if st in {"pending", "running"}:
@@ -298,10 +309,25 @@ def advance_to_analysis_phase(
 
 
 def on_post_tool_step7_close_parent(store: Any, task_id: str) -> None:
-    """子步终态后尝试关闭 step7 父节点（毫秒级，post_tool 末尾调用）。"""
-    from report_04.step_reconcile import close_collect_parent_if_ready
+    """子步终态后立刻关闭 step7 父节点（毫秒级，post_tool 末尾调用）。"""
+    from report_04.step_reconcile import (
+        close_collect_parent_if_ready,
+        ensure_step7_parent_active,
+        force_close_step7_posts_if_ready,
+        reconcile_step7_from_post_tools,
+    )
 
+    try:
+        reconcile_step7_from_post_tools(store, task_id)
+    except Exception as exc:
+        logger.warning("step7 回放发文工具失败 task=%s: %s", task_id, exc)
+    try:
+        ensure_step7_parent_active(store, task_id)
+    except Exception as exc:
+        logger.warning("step7 parent_active 失败 task=%s: %s", task_id, exc)
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+    # 双保险：子步已齐且无 leftover 时强制关父壳，避免 Hook 超时导致长期 running
+    force_close_step7_posts_if_ready(store, task_id)
 
 
 def close_open_steps_for_session_end(

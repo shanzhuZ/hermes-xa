@@ -272,21 +272,50 @@ def _is_redundant_step5_vision(tool_name: str, tool_args: Dict[str, Any], task_i
 
 
 def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
-    """步骤4未终态禁止 vision；步骤5已收口后禁止再 vision（批次闭环，不回开）。"""
+    """步骤4未终态禁止 vision；步骤5已收口后禁止再 vision（批次闭环，不回开）。
+
+    拦截文案按真实编排 gate 分支，禁止在步骤7+ 仍写「请进入步骤6」。
+    """
     if tool_name not in _STEP5_STREAM_TOOLS:
         return None
     s5 = get_step_status(task_id, "step5_streams")
     if s5 in {"completed", "skipped"}:
+        try:
+            from report_04.orchestrator import infer_gate_step
+
+            gate = infer_gate_step(task_id)
+        except Exception:
+            gate = ""
+        if gate == "step7_posts":
+            return (
+                "步骤5图片流已收口，禁止再调用 vision/OCR。"
+                "当前为步骤7发文：请继续调发文工具；发文齐后写步骤8/9/10与终稿，勿回补 vision。"
+            )
+        if gate in {
+            "step8_img_analysis",
+            "step9_context_views",
+            "step10_context_pii",
+            "step11_report",
+        }:
+            return (
+                "步骤5图片流已收口，禁止再调用 vision/OCR。"
+                "当前为研判/写报：请直接输出步骤8/9/10分析正文与「一、账号基本信息」终稿。"
+            )
+        if gate in {"step6_validated", "step6_osint_es"}:
+            return (
+                "步骤5图片流已收口，禁止再调用 vision/OCR。"
+                "当前为步骤6/4.3：保持会话，终态后立刻调步骤7发文工具，勿回补 vision。"
+            )
         return (
             "步骤5图片流已收口，禁止再调用 vision/OCR。"
-            "请进入步骤6收敛可信账号，勿回补 vision（系统不再回开步骤5）。"
+            "请按当前编排步骤继续，勿回补 vision（系统不再回开步骤5）。"
         )
     from report_04.gates import is_stream_compare_ready
 
     if s5 == "running" and is_stream_compare_ready(task_id):
         return (
             "步骤5全部图片流已终态，禁止再 vision/OCR。"
-            "系统正在收口并进入步骤6，请勿重复调用 vision。"
+            "系统正在收口步骤5并推进步骤6/4.3，请勿重复调用 vision。"
         )
     from report_04.gates import step4_profiles_terminal
 
@@ -1494,6 +1523,13 @@ def _sync_platform_collect_steps(
                 post_count=n_post,
                 force_reopen=(cur_post == "skipped"),
             )
+            # 方案 A：发文子步一完成立刻尝试关父壳，不等本轮 LLM / Hook 收尾
+            try:
+                from report_04.step_reconcile import force_close_step7_posts_if_ready
+
+                force_close_step7_posts_if_ready(store, task_id)
+            except Exception as exc:
+                logger.warning("发文入库后强制关 step7 失败 task=%s: %s", task_id, exc)
         elif apify_actor and tool_ok:
             cur = get_step_status(task_id, post_key)
             if cur not in {"completed", "skipped"}:
@@ -1997,7 +2033,9 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if seed_collect:
         return
 
-    if platform and can_update_step4_children(task_id):
+    if platform and (
+        can_update_step4_children(task_id) or can_update_step7_children(task_id)
+    ):
         _sync_platform_collect_steps(
             store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
         )
@@ -2008,6 +2046,13 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     except Exception as exc:
         logger.warning("engine post_tool 失败 task=%s: %s", task_id, exc)
         _try_complete_profiles(store, task_id)
+    # 方案 A 收口：即便 engine 中途异常，发文已齐仍关父壳
+    try:
+        from report_04.step_reconcile import force_close_step7_posts_if_ready
+
+        force_close_step7_posts_if_ready(store, task_id)
+    except Exception:
+        pass
     _maybe_stale_step5(store, task_id)
 
 
@@ -2119,12 +2164,15 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         try:
             from report_04.step_reconcile import (
                 _reconcile_vision_from_tools,
+                force_close_step7_posts_if_ready,
                 maybe_fail_forward_stale_step5,
             )
 
             _reconcile_vision_from_tools(store, task_id)
             maybe_fail_forward_stale_step5(store, task_id, min_wait_seconds=90)
             _maybe_advance_step67(store, task_id)
+            # 方案 A：post_llm 再兜底关发文父壳（防 post_tool Hook 超时未关）
+            force_close_step7_posts_if_ready(store, task_id)
         except Exception as exc:
             logger.warning("post_llm vision 回放失败 task=%s: %s", task_id, exc)
         if _looks_like_wait_for_system_exit(assistant):
@@ -2152,6 +2200,34 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     "【写报硬约束】禁止写「等待系统」后结束会话。"
                     "请保持会话，门禁放行后立刻调发文工具，再写终稿。"
                 )
+        else:
+            # 方案 C：倒写 5/6/4.3/7 回顾却无研判/终稿 → 强制 analysis 续跑
+            try:
+                from report_04.session_continue import (
+                    looks_like_retrospective_without_analysis,
+                    maybe_continue_agent_session,
+                )
+                from report_04.step_reconcile import force_close_step7_posts_if_ready
+
+                if looks_like_retrospective_without_analysis(task_id, assistant):
+                    force_close_step7_posts_if_ready(store, task_id)
+                    followup_ctx = (
+                        "【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
+                        "请立即并行输出步骤8/9/10分析正文，再写以「一、账号基本信息」开头的终稿。"
+                        "禁止调用 vision；禁止 done。"
+                    )
+                    maybe_continue_agent_session(
+                        store,
+                        task_id,
+                        reason="post_llm_retrospective_exit",
+                        kind="analysis",
+                    )
+                    logger.warning(
+                        "post_llm 检测到回顾假完成，已续跑 analysis task=%s",
+                        task_id,
+                    )
+            except Exception as exc:
+                logger.warning("post_llm 回顾假完成续跑失败 task=%s: %s", task_id, exc)
         if not is_progress_only(assistant) and not _looks_like_report_meta_closing(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
     except DbError as exc:
@@ -2200,12 +2276,15 @@ def _load_assistant_output_from_state(session_id: str) -> Optional[str]:
 
 
 def _on_session_end(payload: Dict[str, Any]) -> None:
+    """会话结束：先轻量收口 + 尽快 spawn 续跑，重活外置，避免 Hook 120s 超时。"""
     task_id = _resolve_task_id(payload)
     if not task_id:
         return
     session_id = str(payload.get("session_id") or "").strip() or None
     store = _store()
     fail_reason: Optional[str] = None
+
+    # 1) 轻量：图片 fail-forward；若 5 完 6 未完则跑 validated
     try:
         from report_04.step_reconcile import _fail_forward_step5_pending_images
 
@@ -2217,17 +2296,63 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             and get_step_status(task_id, "step6_validated") != "completed"
         ):
             store.run_validated_accounts(task_id)
-        try:
-            from report_04.osint_es import close_osint_on_session_end, kickoff_osint_if_ready
-
-            s43 = get_step_status(task_id, "step6_osint_es")
-            if s43 not in {"completed", "skipped", "failed"}:
-                kickoff_osint_if_ready(store, task_id)
-            close_osint_on_session_end(store, task_id)
-        except Exception as exc2:
-            logger.warning("on_session_end 社工库收口失败 task=%s: %s", task_id, exc2)
     except Exception as exc:
         logger.warning("on_session_end step5 轻量收口失败 task=%s: %s", task_id, exc)
+
+    s43 = get_step_status(task_id, "step6_osint_es")
+    osint_pending = s43 not in {"completed", "skipped", "failed"}
+
+    # 2) 尽快 spawn 续跑：4.3 未终态交给 osint_worker→osint_done，避免 hold/posts 抢 inflight
+    deferred = False
+    try:
+        from report_04.session_continue import (
+            has_final_report,
+            maybe_continue_agent_session,
+            should_defer_finalize,
+        )
+
+        if not has_final_report(task_id):
+            if osint_pending:
+                deferred = True
+            else:
+                maybe_continue_agent_session(store, task_id, reason="session_end")
+                deferred = should_defer_finalize(task_id)
+    except Exception as exc:
+        logger.warning("on_session_end 续跑失败 task=%s: %s", task_id, exc)
+
+    # 3) 社工库：未终态则外置子进程；已终态只做轻量 close（通常 no-op）
+    try:
+        from report_04.osint_es import close_osint_on_session_end, spawn_detached_osint
+
+        if osint_pending:
+            if not spawn_detached_osint(task_id):
+                # spawn 失败才同步兜底（可能拖慢 Hook，但优于永不跑 4.3）
+                from report_04.osint_es import kickoff_osint_if_ready
+
+                kickoff_osint_if_ready(store, task_id)
+                close_osint_on_session_end(store, task_id)
+                try:
+                    from report_04.session_continue import (
+                        has_final_report,
+                        maybe_continue_agent_session,
+                        should_defer_finalize,
+                    )
+
+                    if not has_final_report(task_id):
+                        maybe_continue_agent_session(
+                            store, task_id, reason="session_end"
+                        )
+                        deferred = should_defer_finalize(task_id)
+                except Exception:
+                    pass
+            else:
+                deferred = True
+        else:
+            close_osint_on_session_end(store, task_id)
+    except Exception as exc2:
+        logger.warning("on_session_end 社工库收口失败 task=%s: %s", task_id, exc2)
+
+    # 4) 终稿解析保持简短（禁止同步 urlopen 读完整 stream）
     try:
         user_message = str(_extra(payload).get("user_message") or "")
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id or "")
@@ -2238,6 +2363,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             if get_step_status(task_id, "step6_validated") != "completed":
                 _maybe_advance_step67(store, task_id)
             _complete_step11_from_report(store, task_id, assistant, session_id)
+            deferred = False
         elif assistant:
             from report_04.report_parser import looks_like_report_attempt
 
@@ -2245,26 +2371,14 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
                 if get_step_status(task_id, "step6_validated") != "completed":
                     _maybe_advance_step67(store, task_id)
                 _complete_step11_from_report(store, task_id, assistant, session_id)
+                deferred = False
             else:
                 _try_parse_seed(store, task_id, assistant, user_message)
                 _try_step3_web_candidates(store, task_id, assistant)
     except Exception as exc:
         logger.warning("on_session_end 兜底失败 task=%s: %s", task_id, exc)
 
-    deferred = False
-    try:
-        from report_04.session_continue import (
-            has_final_report,
-            maybe_continue_agent_session,
-            should_defer_finalize,
-        )
-
-        if not has_final_report(task_id):
-            maybe_continue_agent_session(store, task_id, reason="session_end")
-            deferred = should_defer_finalize(task_id)
-    except Exception as exc:
-        logger.warning("on_session_end 续跑失败 task=%s: %s", task_id, exc)
-
+    # 5) deferred 则保持 running 并跳过重 finalize
     try:
         if not fail_reason and not deferred:
             fail_reason = _early_exit_before_posts_message(task_id)
@@ -2287,7 +2401,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
                     (task_id,),
                 )
                 logger.info(
-                    "on_session_end 暂缓 finalize：已续跑，保持 running task=%s",
+                    "on_session_end 暂缓 finalize：已续跑/社工库外置，保持 running task=%s",
                     task_id,
                 )
             except Exception as exc2:

@@ -181,27 +181,28 @@ def finalize_post_platform_after_posts(
         result = {"skipped": True, "reason": "start_error", "error": str(exc)}
 
     if result.get("started") or result.get("status") in {"pending", "running"}:
+        # 视频走 step7_video_* 旁路，不挡发文子步/父壳收口与进分析
         store.set_step_status(
             task_id,
             post_key,
-            "running",
-            message=f"发文已入库 {post_count} 条，视频分析中",
+            "completed",
+            message=f"已入库发文 {post_count} 条（视频分析后台进行中）",
             payload={"post_count": post_count, "await_video": True},
-            force_reopen=True,
+            force_reopen=force_reopen,
         )
-        return "running"
+        return "completed"
 
     # already_exists 且 running/pending
     if result.get("reason") == "already_exists" and result.get("status") in {"pending", "running"}:
         store.set_step_status(
             task_id,
             post_key,
-            "running",
-            message=f"发文已入库 {post_count} 条，等待视频分析",
+            "completed",
+            message=f"已入库发文 {post_count} 条（视频分析后台进行中）",
             payload={"post_count": post_count, "await_video": True},
-            force_reopen=True,
+            force_reopen=force_reopen,
         )
-        return "running"
+        return "completed"
 
     # no_video / 其它：直接完成发文子步
     store.set_step_status(

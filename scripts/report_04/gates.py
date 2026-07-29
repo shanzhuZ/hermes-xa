@@ -212,12 +212,64 @@ def can_advance_to_step7(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "message": "满足步骤七推进条件"}
 
 
+def _platform_post_count(task_id: str, platform: str) -> int:
+    row = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
+        (task_id, platform),
+    )
+    return int((row or {}).get("c") or 0)
+
+
+def posts_substantively_ready(task_id: str) -> bool:
+    """发文实质已齐：可进分析（不要求 step7_posts 父壳 UI 已 completed）。
+
+    条件：步骤7门禁可过、无未尝试发文平台、现有 step7_post_* 子步均为 completed/skipped
+    （视频分析走 step7_video_* 旁路，不挡此判定）。
+    """
+    if not can_advance_to_step7(task_id).get("ok"):
+        return False
+    try:
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        if list_unattempted_post_platforms(task_id):
+            return False
+    except Exception:
+        return False
+    from report_04.phases import POST_PARENT_STEP_KEY
+
+    rows = db.fetch_all(
+        """
+        SELECT step_key, status FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s
+        """,
+        (task_id, POST_PARENT_STEP_KEY),
+    )
+    if rows:
+        for r in rows:
+            st = str(r.get("status") or "")
+            if st in {"completed", "skipped"}:
+                continue
+            # running 但已有入库：视为实质完成（兼容旧「等视频」钉 running）
+            if st == "running":
+                sk = str(r.get("step_key") or "")
+                plat = sk.replace("step7_post_", "", 1) if sk.startswith("step7_post_") else ""
+                if plat and _platform_post_count(task_id, plat) > 0:
+                    continue
+            return False
+        return True
+    # 无子节点：父已终态或已有发文
+    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+        return True
+    row = db.fetch_one(
+        "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s", (task_id,)
+    )
+    return int((row or {}).get("c") or 0) > 0
+
+
 def can_advance_to_analysis(task_id: str) -> Dict[str, Any]:
     gate = can_advance_to_step7(task_id)
     if not gate.get("ok"):
         return gate
-    if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
-        return {"ok": False, "message": "step7_posts 未完成"}
     # 仍有未尝试发文的 validated：禁止进分析（逼 Agent 先调工具）
     try:
         from report_04.step_reconcile import list_unattempted_post_platforms
@@ -231,7 +283,12 @@ def can_advance_to_analysis(task_id: str) -> Dict[str, Any]:
             }
     except Exception:
         pass
-    return {"ok": True, "message": "满足步骤八～十推进条件"}
+    # 父壳 completed 或发文实质已齐均可进分析
+    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+        return {"ok": True, "message": "满足步骤八～十推进条件"}
+    if posts_substantively_ready(task_id):
+        return {"ok": True, "message": "发文实质已齐，可进步骤八～十"}
+    return {"ok": False, "message": "step7_posts 未完成（发文未齐）"}
 
 
 def analysis_steps_terminal(task_id: str) -> bool:

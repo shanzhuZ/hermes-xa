@@ -168,7 +168,7 @@ def build_agent_context(task_id: str) -> Optional[str]:
                 pass
 
     elif gate == "step7_posts":
-        # UI 步骤5 发文：父节点在首个发文工具前应为 pending；本回合必须调工具
+        # 步骤7 发文（勿称「步骤5/UI步骤5」）
         s7 = get_step_status(task_id, "step7_posts")
         open_posts = db.fetch_all(
             """
@@ -182,13 +182,13 @@ def build_agent_context(task_id: str) -> Optional[str]:
         open_keys = [str(r.get("step_key") or "") for r in (open_posts or [])]
         if s7 in {"pending", None, ""}:
             lines.append(
-                "【步骤5发文·待启动】4.3 已终态，发文父节点等待你调用工具后才会 running。"
+                "【步骤7发文·待启动】4.3 已终态，发文父节点等待你调用工具后才会 running。"
                 "本回合必须对下列 validated 发起发文工具；"
-                "禁止只写 4.1/等待系统、禁止进分析/终稿、禁止结束会话。"
+                "禁止只写步骤5核验/等待系统、禁止进分析/终稿、禁止结束会话。"
             )
         else:
             lines.append(
-                "【步骤5发文·硬强制】本回合继续对各平台调用发文工具。"
+                "【步骤7发文·硬强制】本回合继续对各平台调用发文工具。"
                 "禁止输出分析/终稿；允许工具已调用但失败或 0 条再 skip。主页≠发文。"
             )
         try:
@@ -204,7 +204,11 @@ def build_agent_context(task_id: str) -> Optional[str]:
                         f"- {item.get('platform')}: {item.get('tool_hint')}"
                     )
             else:
-                lines.append("发文工具均已尝试；等待入库/视频子步终态后进入 7.5/步骤8。")
+                lines.append(
+                    "发文工具均已尝试；系统将关 step7 父壳。"
+                    "请立刻写步骤8/9/10 分析正文，再写以「一、账号基本信息」开头的终稿。"
+                    "禁止再调 vision；禁止回写步骤5/6/4.3。"
+                )
         except Exception:
             pass
         if open_keys:
@@ -214,7 +218,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
                 + "。必须继续采集，禁止结束会话空等。"
             )
         lines.append(
-            "发文入库后若有可下载视频，Hook 会挂 5.1.x.1 并后台分析；禁止同步 mcp_video2frame_*。"
+            "发文入库后若有可下载视频，Hook 会挂 step7_video_* 后台分析，不挡步骤7收口；"
+            "禁止同步 mcp_video2frame_*。"
         )
 
     elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
@@ -492,10 +497,16 @@ def pre_tool_allowed(task_id: str, tool_name: str, *, phase: Optional[str] = Non
         "completed",
         "skipped",
     }:
-        return enrich_block_reason(
-            task_id,
-            "步骤5图片流已收口，禁止再调用 vision/OCR。系统已或即将执行步骤6。",
-        )
+        gate = infer_gate_step(task_id)
+        if gate == "step7_posts":
+            tip = "当前为步骤7发文：禁止 vision；请调发文工具或写步骤8～11。"
+        elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
+            tip = "当前为研判/写报阶段：禁止 vision；请直接写步骤8/9/10 与终稿。"
+        elif gate in {"step6_validated", "step6_osint_es"}:
+            tip = "当前为步骤6/4.3：禁止 vision；保持会话，门禁放行后立刻调发文工具。"
+        else:
+            tip = "步骤5已收口，禁止再 vision/OCR；请按当前编排步骤继续。"
+        return enrich_block_reason(task_id, f"步骤5图片流已收口，禁止再调用 vision/OCR。{tip}")
     return None
 
 

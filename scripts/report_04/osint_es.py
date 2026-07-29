@@ -403,6 +403,20 @@ def kickoff_osint_if_ready(store: Any, task_id: str) -> None:
             )
 
 
+def spawn_detached_osint(task_id: str) -> bool:
+    """Hook 内不阻塞：拉起独立进程跑 kickoff + session_end 轻量收口。"""
+    try:
+        from report_04.session_continue import spawn_detached_python_module
+
+        return spawn_detached_python_module(
+            "report_04.osint_worker",
+            ["--task-id", str(task_id)],
+        )
+    except Exception as exc:
+        logger.warning("spawn_detached_osint 失败 task=%s: %s", task_id, exc)
+        return False
+
+
 def _parse_tool_json(tool_output: str) -> Optional[Dict[str, Any]]:
     text = (tool_output or "").strip()
     if not text:

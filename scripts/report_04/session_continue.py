@@ -10,9 +10,12 @@ from __future__ import annotations
 import json
 import logging
 import os
+import subprocess
+import sys
 import threading
 import time
-from typing import Any, Dict, Optional
+from pathlib import Path
+from typing import Any, Dict, List, Optional
 from urllib import request as urlrequest
 
 from collect_01 import db
@@ -22,8 +25,21 @@ logger = logging.getLogger(__name__)
 
 _CONTINUE_MAX = int(os.environ.get("HERMES_REPORT_CONTINUE_MAX", "2") or "2")
 _CONTINUE_HTTP_TIMEOUT = int(os.environ.get("HERMES_REPORT_CONTINUE_TIMEOUT", "120") or "120")
+# inflight 超过墙钟+缓冲视为假在飞，允许自愈（默认约 180s）
+_CONTINUE_STALE_SEC = int(
+    os.environ.get(
+        "HERMES_REPORT_CONTINUE_STALE_SEC",
+        str(_CONTINUE_HTTP_TIMEOUT + 60),
+    )
+    or str(_CONTINUE_HTTP_TIMEOUT + 60)
+)
 _LOCK = threading.Lock()
 _INFLIGHT: Dict[str, bool] = {}
+
+# Windows 脱离 Hook 进程标志
+_DETACHED_PROCESS = 0x00000008
+_CREATE_NEW_PROCESS_GROUP = 0x00000200
+_CREATE_NO_WINDOW = 0x08000000
 
 _WAIT_MARKERS = (
     "等待系统完成",
@@ -54,6 +70,99 @@ def looks_like_wait_exit(text: str) -> bool:
     return any(m in t for m in _WAIT_MARKERS)
 
 
+_RETRO_MARKERS = (
+    "[文本核验结论]",
+    "[社工库核验结论]",
+    "步骤5：",
+    "步骤5:",
+    "步骤6：",
+    "步骤6:",
+    "步骤4.3：",
+    "步骤4.3:",
+    "步骤7：",
+    "步骤7:",
+)
+
+
+def _posts_ready_for_analysis(task_id: str) -> bool:
+    """发文阶段实质已齐（可进研判），不要求父壳一定已 completed。"""
+    try:
+        from report_04.gates import posts_substantively_ready
+
+        return bool(posts_substantively_ready(task_id))
+    except Exception:
+        pass
+    try:
+        from report_04.gates import can_advance_to_analysis
+
+        if can_advance_to_analysis(task_id).get("ok"):
+            return True
+    except Exception:
+        pass
+    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+        return True
+    if post_count(task_id) <= 0:
+        return False
+    try:
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        return not (list_unattempted_post_platforms(task_id) or [])
+    except Exception:
+        return False
+
+
+def looks_like_retrospective_without_analysis(task_id: str, text: str) -> bool:
+    """识别「倒写 5/6/4.3/7 回顾后收束、却未写研判/终稿」的假完成。
+
+    对应：发文已齐 → 模型抢跑失败 → 回写旧结论 → stream 结束 → 六/七父壳不跑。
+    """
+    t = (text or "").strip()
+    if not t or len(t) < 80:
+        return False
+    if has_final_report(task_id):
+        return False
+    try:
+        from report_04.report_parser import is_final_report, looks_like_report_attempt
+
+        if is_final_report(t) or looks_like_report_attempt(t):
+            return False
+    except Exception:
+        if "一、账号基本信息" in t.replace(" ", "").replace("\u3000", ""):
+            return False
+    if not _posts_ready_for_analysis(task_id):
+        return False
+    try:
+        from report_04.gates import analysis_steps_terminal
+
+        if analysis_steps_terminal(task_id):
+            return False
+    except Exception:
+        pass
+    # 分析步仍未实质推进
+    for sk in ("step8_img_analysis", "step9_context_views", "step10_context_pii"):
+        if get_step_status(task_id, sk) in {"completed", "skipped"}:
+            return False
+    hits = sum(1 for m in _RETRO_MARKERS if m in t)
+    if hits < 2:
+        return False
+    # 排除已在写步骤8～10 正文（不仅是 thinking 里提一句）
+    analysis_body_hints = (
+        "步骤8：",
+        "步骤8:",
+        "步骤9：",
+        "步骤9:",
+        "步骤10：",
+        "步骤10:",
+        "[图片流分析]",
+        "[上下文观点]",
+        "[隐私信息]",
+    )
+    # 若同时有回顾标记 + 明确 8/9/10 章节标题，交给正常路径，不强制续跑
+    if sum(1 for m in analysis_body_hints if m in t) >= 2:
+        return False
+    return True
+
+
 def _gateway_base_and_key() -> tuple[str, str]:
     base = (
         os.environ.get("HERMES_GATEWAY_URL")
@@ -69,7 +178,7 @@ def _gateway_base_and_key() -> tuple[str, str]:
 
 
 def gateway_chat_stream_once(session_id: str, task_id: str, message: str) -> bool:
-    """同 session 再开一轮 chat/stream。"""
+    """同 session 再开一轮 chat/stream（带墙钟 deadline，避免子进程挂死占 inflight）。"""
     base, key = _gateway_base_and_key()
     url = f"{base}/api/sessions/{session_id}/chat/stream"
     body = json.dumps({"input": message}, ensure_ascii=False).encode("utf-8")
@@ -84,6 +193,7 @@ def gateway_chat_stream_once(session_id: str, task_id: str, message: str) -> boo
             "X-Hermes-Session-Key": f"task:{task_id}",
         },
     )
+    deadline = time.time() + float(_CONTINUE_HTTP_TIMEOUT)
     try:
         with urlrequest.urlopen(req, timeout=_CONTINUE_HTTP_TIMEOUT) as resp:
             code = getattr(resp, "status", None) or resp.getcode()
@@ -91,6 +201,13 @@ def gateway_chat_stream_once(session_id: str, task_id: str, message: str) -> boo
                 logger.warning("flow continue HTTP %s task=%s", code, task_id)
                 return False
             while True:
+                if time.time() >= deadline:
+                    logger.warning(
+                        "flow continue SSE 墙钟超时 task=%s timeout=%ss",
+                        task_id,
+                        _CONTINUE_HTTP_TIMEOUT,
+                    )
+                    return False
                 line = resp.readline()
                 if not line:
                     break
@@ -99,6 +216,98 @@ def gateway_chat_stream_once(session_id: str, task_id: str, message: str) -> boo
     except Exception as exc:
         logger.warning("flow continue Gateway 失败 task=%s: %s", task_id, exc)
         return False
+
+
+def spawn_detached_python_module(module: str, cli_args: List[str]) -> bool:
+    """脱离当前 Hook 进程拉起 python -m <module> …（Windows/Unix）。"""
+    scripts_dir = Path(__file__).resolve().parent.parent
+    repo_root = scripts_dir.parent
+    cmd = [sys.executable, "-m", module, *cli_args]
+    env = os.environ.copy()
+    prev = (env.get("PYTHONPATH") or "").strip()
+    env["PYTHONPATH"] = (
+        str(scripts_dir) if not prev else f"{scripts_dir}{os.pathsep}{prev}"
+    )
+    if not (env.get("HERMES_HOME") or "").strip():
+        env["HERMES_HOME"] = str(repo_root)
+    kwargs: Dict[str, Any] = {
+        "cwd": str(scripts_dir),
+        "env": env,
+        "stdin": subprocess.DEVNULL,
+        "stdout": subprocess.DEVNULL,
+        "stderr": subprocess.DEVNULL,
+        "close_fds": True,
+    }
+    if sys.platform == "win32":
+        # DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP（CREATE_NO_WINDOW 减少闪窗）
+        kwargs["creationflags"] = (
+            _DETACHED_PROCESS | _CREATE_NEW_PROCESS_GROUP | _CREATE_NO_WINDOW
+        )
+    else:
+        kwargs["start_new_session"] = True
+    try:
+        subprocess.Popen(cmd, **kwargs)
+        logger.info("spawn_detached module=%s args=%s", module, cli_args)
+        return True
+    except Exception as exc:
+        logger.warning("spawn_detached 失败 module=%s: %s", module, exc)
+        return False
+
+
+def spawn_detached_continue(
+    task_id: str,
+    reason: str,
+    kind: str,
+    *,
+    after_max: bool = False,
+) -> bool:
+    """拉起独立续跑子进程（活过 Hook 120s 杀进程）。"""
+    args = ["--task-id", str(task_id), "--reason", str(reason or ""), "--kind", str(kind or "")]
+    if after_max:
+        args.append("--after-max")
+    return spawn_detached_python_module("report_04.continue_worker", args)
+
+
+def clear_continue_inflight(task_id: str, store: Any = None) -> None:
+    """清内存 + DB flow_continue_inflight=0。"""
+    with _LOCK:
+        _INFLIGHT.pop(task_id, None)
+    try:
+        if store is None:
+            from report_04.task_store import TaskStore
+
+            store = TaskStore()
+        p = _payload(task_id)
+        if int(p.get("flow_continue_inflight") or 0) != 0:
+            p["flow_continue_inflight"] = 0
+            _write_payload(store, task_id, p)
+    except Exception as exc:
+        logger.warning("clear_continue_inflight 失败 task=%s: %s", task_id, exc)
+
+
+def heal_stale_continue_inflight(task_id: str, store: Any = None) -> bool:
+    """若 inflight 过期则自清；返回 True 表示已自愈（现视为未在飞）。"""
+    payload = _payload(task_id)
+    if not int(payload.get("flow_continue_inflight") or 0):
+        return False
+    ts = payload.get("flow_continue_started_at")
+    try:
+        started = float(ts) if ts is not None else 0.0
+    except Exception:
+        started = 0.0
+    if not started:
+        return False
+    age = time.time() - started
+    if age <= float(_CONTINUE_STALE_SEC):
+        return False
+    logger.warning(
+        "flow continue stale inflight 自愈 task=%s age=%.0fs stale_sec=%s",
+        task_id,
+        age,
+        _CONTINUE_STALE_SEC,
+    )
+    clear_continue_inflight(task_id, store)
+    return True
 
 
 def _payload(task_id: str) -> Dict[str, Any]:
@@ -247,9 +456,12 @@ def continue_retries(task_id: str) -> int:
 
 
 def continue_inflight(task_id: str) -> bool:
+    """是否有续跑在飞；过期 inflight 会自愈后视为未在飞。"""
     with _LOCK:
         if _INFLIGHT.get(task_id):
             return True
+    if heal_stale_continue_inflight(task_id):
+        return False
     return bool(int(_payload(task_id).get("flow_continue_inflight") or 0))
 
 
@@ -613,6 +825,95 @@ def _should_skip_continue(
     return None
 
 
+def run_after_continue_max(store: Any, task_id: str) -> None:
+    """续跑达上限后：系统发文兜底，再催研判或明确 failed。"""
+    try:
+        ok_posts = try_system_posts_fallback(store, task_id)
+        if ok_posts and not has_final_report(task_id):
+            p2 = _payload(task_id)
+            p2["flow_continue_retries"] = 0
+            p2["flow_posts_fallback"] = 1
+            _write_payload(store, task_id, p2)
+            maybe_continue_agent_session(
+                store,
+                task_id,
+                reason="after_posts_fallback",
+                kind="analysis",
+                force=True,
+            )
+        elif not has_final_report(task_id):
+            fail_task_clearly(
+                store,
+                task_id,
+                "续跑已达上限且未产出终稿（发文系统兜底未成功或 Agent 未写报）。请重跑任务。",
+            )
+    except Exception as exc:
+        logger.warning("continue 上限后处理失败 task=%s: %s", task_id, exc)
+        fail_task_clearly(
+            store, task_id, f"续跑上限后收口失败：{str(exc)[:120]}"
+        )
+
+
+def run_continue_worker_job(
+    store: Any,
+    task_id: str,
+    *,
+    reason: str = "",
+    kind: str = "",
+) -> None:
+    """continue_worker 主逻辑：读 session、打 Gateway，finally 必清 inflight。"""
+    payload = _payload(task_id)
+    next_retry = int(payload.get("flow_continue_retries") or 0)
+    use_kind = str(kind or payload.get("flow_continue_kind") or "").strip() or (
+        infer_continue_kind(task_id) or "hold"
+    )
+    task = db.fetch_one(
+        "SELECT status, session_id FROM hermes_tasks WHERE task_id=%s",
+        (task_id,),
+    ) or {}
+    session_id = str(task.get("session_id") or "").strip()
+    ok = False
+    try:
+        if not session_id:
+            logger.warning("continue_worker 无 session_id task=%s", task_id)
+            return
+        if has_final_report(task_id):
+            logger.info("continue_worker 已有终稿，跳过 task=%s", task_id)
+            return
+        message = build_continue_message(use_kind, task_id)
+        time.sleep(1.5 if next_retry <= 1 else 0.8)
+        logger.info(
+            "continue_worker 开始 SSE task=%s kind=%s attempt=%s/%s reason=%s",
+            task_id,
+            use_kind,
+            next_retry,
+            _CONTINUE_MAX,
+            str(reason or "")[:60],
+        )
+        ok = gateway_chat_stream_once(session_id, task_id, message)
+    except Exception as exc:
+        logger.warning("continue_worker 异常 task=%s: %s", task_id, exc)
+        ok = False
+    finally:
+        clear_continue_inflight(task_id, store)
+
+    # inflight 已清后再决定重试 / 上限检查（避免假在飞挡重试）
+    try:
+        if has_final_report(task_id):
+            return
+        if not ok and next_retry < _CONTINUE_MAX:
+            time.sleep(6.0)
+            maybe_continue_agent_session(
+                store, task_id, reason=f"retry_fail:{reason}"
+            )
+        elif ok and next_retry >= _CONTINUE_MAX:
+            maybe_continue_agent_session(
+                store, task_id, reason="check_after_last", force=False
+            )
+    except Exception as exc:
+        logger.warning("continue_worker 收尾异常 task=%s: %s", task_id, exc)
+
+
 def maybe_continue_agent_session(
     store: Any,
     task_id: str,
@@ -621,7 +922,7 @@ def maybe_continue_agent_session(
     kind: Optional[str] = None,
     force: bool = False,
 ) -> bool:
-    """未出终稿时同 session 续跑。返回是否已发起续跑。"""
+    """未出终稿时同 session 续跑（只 spawn 子进程，不阻塞读 SSE）。返回是否已发起。"""
     if has_final_report(task_id):
         return False
     use_kind = kind or infer_continue_kind(task_id)
@@ -654,48 +955,19 @@ def maybe_continue_agent_session(
     with _LOCK:
         if _INFLIGHT.get(task_id):
             return False
-        # 二次检查：进锁后再判 skip 条件中的 inflight
         payload = _payload(task_id)
         retries = int(payload.get("flow_continue_retries") or 0)
         if not force and retries >= _CONTINUE_MAX:
             logger.info(
-                "flow continue 达上限 task=%s retries=%s → 尝试系统发文兜底",
+                "flow continue 达上限 task=%s retries=%s → spawn 系统发文兜底",
                 task_id,
                 retries,
             )
-            # 达上限：先系统采发文，再决定失败或催研判
-            def _after_max() -> None:
-                try:
-                    ok_posts = try_system_posts_fallback(store, task_id)
-                    if ok_posts and not has_final_report(task_id):
-                        # 重置计数，再催一轮写报
-                        p2 = _payload(task_id)
-                        p2["flow_continue_retries"] = 0
-                        p2["flow_posts_fallback"] = 1
-                        _write_payload(store, task_id, p2)
-                        maybe_continue_agent_session(
-                            store,
-                            task_id,
-                            reason="after_posts_fallback",
-                            kind="analysis",
-                            force=True,
-                        )
-                    elif not has_final_report(task_id):
-                        fail_task_clearly(
-                            store,
-                            task_id,
-                            "续跑已达上限且未产出终稿（发文系统兜底未成功或 Agent 未写报）。请重跑任务。",
-                        )
-                except Exception as exc:
-                    logger.warning("continue 上限后处理失败 task=%s: %s", task_id, exc)
-                    fail_task_clearly(
-                        store, task_id, f"续跑上限后收口失败：{str(exc)[:120]}"
-                    )
-
-            threading.Thread(
-                target=_after_max, name=f"flow-max-{task_id[:8]}", daemon=True
-            ).start()
-            return False
+            # 达上限：脱离 Hook 做发文兜底 / failed
+            spawned = spawn_detached_continue(
+                task_id, reason=str(reason or "max"), kind=use_kind, after_max=True
+            )
+            return bool(spawned)
         _INFLIGHT[task_id] = True
         next_retry = retries + 1
 
@@ -723,10 +995,8 @@ def maybe_continue_agent_session(
     except Exception:
         pass
 
-    message = build_continue_message(use_kind, task_id)
-    # 不再 emit_system_thinking 推前端（已禁用）；续跑文案只进 Gateway chat input
     logger.info(
-        "flow continue 发起 task=%s kind=%s attempt=%s/%s reason=%s",
+        "flow continue 发起(detached) task=%s kind=%s attempt=%s/%s reason=%s",
         task_id,
         use_kind,
         next_retry,
@@ -734,39 +1004,14 @@ def maybe_continue_agent_session(
         reason[:60],
     )
 
-    def _work() -> None:
-        try:
-            time.sleep(1.5 if next_retry == 1 else 0.8)
-            ok = gateway_chat_stream_once(session_id, task_id, message)
-            if not ok and next_retry < _CONTINUE_MAX:
-                time.sleep(6.0)
-                try:
-                    maybe_continue_agent_session(
-                        store, task_id, reason=f"retry_fail:{reason}"
-                    )
-                except Exception as exc:
-                    logger.warning("continue 失败重试异常 task=%s: %s", task_id, exc)
-            elif ok and not has_final_report(task_id) and next_retry >= _CONTINUE_MAX:
-                # 最后一轮结束仍无终稿：走上限逻辑
-                try:
-                    maybe_continue_agent_session(
-                        store, task_id, reason="check_after_last", force=False
-                    )
-                except Exception:
-                    pass
-        finally:
-            with _LOCK:
-                _INFLIGHT.pop(task_id, None)
-            try:
-                p3 = _payload(task_id)
-                p3["flow_continue_inflight"] = 0
-                _write_payload(store, task_id, p3)
-            except Exception:
-                pass
-
-    threading.Thread(
-        target=_work, name=f"flow-continue-{task_id[:8]}", daemon=False
-    ).start()
+    ok = spawn_detached_continue(task_id, str(reason or ""), use_kind)
+    # Hook 进程内不再持有 inflight；真相源在 DB，由 worker finally 清
+    with _LOCK:
+        _INFLIGHT.pop(task_id, None)
+    if not ok:
+        # spawn 失败立刻自清，避免永久卡住
+        clear_continue_inflight(task_id, store)
+        return False
     return True
 
 

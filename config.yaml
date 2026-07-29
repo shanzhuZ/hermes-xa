@@ -1,9 +1,8 @@
 model:
-  # 主对话/Agent：DeepSeek V4 Flash（密钥 DEEPSEEK_API_KEY）
-  # 官方 DeepSeek 用 chat_completions；切回 GPT-5.4 时改 openai-api + codex_responses
-  default: deepseek-v4-flash
-  provider: deepseek
-  api_mode: chat_completions
+  # 主对话/Agent：全程 GPT（密钥 OPENAI_API_KEY）
+  default: gpt-5.4
+  provider: openai-api
+  api_mode: codex_responses
 agent:
   max_turns: 150
   image_input_mode: auto

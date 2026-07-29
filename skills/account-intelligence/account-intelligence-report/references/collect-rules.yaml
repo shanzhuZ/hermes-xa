@@ -96,7 +96,8 @@ steps:
 
   "7_posts":
     do: |
-      【硬强制·UI步骤5】本回合唯一合法动作=调用发文工具；上下文「必须立即调用」列表须本回合并行调完。
+      【硬强制·步骤7发文】本回合唯一合法动作=调用发文工具；上下文「必须立即调用」列表须本回合并行调完。
+      （编号：步骤7=发文 step7_posts；步骤5=4.1核验。禁止把步骤7称作步骤5/UI步骤5。）
       每个 validated（含种子）必须先真实调用对应发文工具，禁止未调用就收口/进分析/结束会话/口头完成。
       禁止输出「等待系统完成 4.2/4.3 后再发文」类收尾；4.3 已终态时本回合必须调工具。
       平台工具：
@@ -107,7 +108,7 @@ steps:
       【种子】发文约 50 条；【其余 validated】同上。
       允许：工具已调用但失败或 0 条再 skip。禁止：未调用就宣称完成。
       全部发文工具调用结束后必须进入 7_5_image_assets，禁止直接写步骤8～11。
-      说明：发文入库后 Hook 可能自动挂 5.1.x.1 视频子节点；禁止调用 mcp_video2frame_*。
+      说明：发文入库后 Hook 可能自动挂 step7_video_* 视频旁路；不挡步骤7收口与进分析；禁止调用 mcp_video2frame_*。
     forbid: [web_search, web_extract, browser_*, clarify, mcp_firecrawl_*, 写最终报告, mcp_video2frame_run_video_pipeline, mcp_video2frame_download_video, 未调用发文工具就进分析, 结束会话空过发文]
 
   "7_5_image_assets":

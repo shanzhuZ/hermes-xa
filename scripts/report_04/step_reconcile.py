@@ -1405,24 +1405,45 @@ def ensure_step4_parent_not_premature(store: Any, task_id: str) -> int:
 
 
 def ensure_step7_parent_not_premature(store: Any, task_id: str) -> int:
-    """步骤六完成前不得将步骤七标为 running/completed。"""
+    """步骤5/6/4.3 未齐时不得将步骤七标为 running/completed。
+
+    已有发文入库或已真实尝试发文的子步禁止打回 pending（避免抹掉进度）。
+    """
     parent = POST_PARENT_STEP_KEY
     if can_advance_to_step7(task_id).get("ok"):
         return 0
     cur = get_step_status(task_id, parent)
     updated = 0
-    if cur in {"running", "completed"}:
-        store.set_step_status(task_id, parent, "pending", message="等待步骤五、六完成")
-        updated += 1
+    wait_msg = "等待步骤5/6/4.3完成后再开放发文"
     rows = db.fetch_all(
         "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, parent),
     )
+    protected = 0
     for row in rows:
         step_key = str(row.get("step_key") or "")
         st = str(row.get("status") or "")
+        plat = (
+            step_key.replace("step7_post_", "", 1)
+            if step_key.startswith("step7_post_")
+            else ""
+        )
+        has_progress = False
+        if plat:
+            try:
+                has_progress = _post_collect_attempted(task_id, plat)
+            except Exception:
+                has_progress = False
+            if not has_progress:
+                cnt = db.fetch_one(
+                    "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
+                    (task_id, plat),
+                )
+                has_progress = int((cnt or {}).get("c") or 0) > 0
+        if has_progress:
+            protected += 1
+            continue
         if st in {"running", "completed", "skipped"}:
-            # 回开时清空旧 message，避免留下「未采集到发文」却仍 pending 的假象
             store.set_step_status(
                 task_id,
                 step_key,
@@ -1430,7 +1451,63 @@ def ensure_step7_parent_not_premature(store: Any, task_id: str) -> int:
                 message="",
             )
             updated += 1
+    if cur in {"running", "completed"}:
+        # 有真实发文进度时只把父壳降回 pending，不抹已完成子步
+        store.set_step_status(task_id, parent, "pending", message=wait_msg)
+        updated += 1
+        if protected:
+            logger.info(
+                "step7 过早推进回退：保留 %s 个已尝试子步 task=%s",
+                protected,
+                task_id,
+            )
     return updated
+
+
+def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
+    """发文实质已齐则立刻关 step7 父壳（避免子步 completed 后父壳长期 running）。"""
+    parent = POST_PARENT_STEP_KEY
+    cur = get_step_status(task_id, parent)
+    if cur in {"completed", "skipped"}:
+        return 0
+    from report_04.gates import posts_substantively_ready
+
+    if not posts_substantively_ready(task_id):
+        return 0
+    # 若仍有仅因视频旁路而 running 的子步，先按已入库收口为 completed
+    rows = db.fetch_all(
+        "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
+        (task_id, parent),
+    )
+    for r in rows or []:
+        st = str(r.get("status") or "")
+        sk = str(r.get("step_key") or "")
+        if st != "running" or not sk.startswith("step7_post_"):
+            continue
+        plat = sk.replace("step7_post_", "", 1)
+        cnt_row = db.fetch_one(
+            "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
+            (task_id, plat),
+        )
+        n = int((cnt_row or {}).get("c") or 0)
+        if n <= 0:
+            continue
+        store.set_step_status(
+            task_id,
+            sk,
+            "completed",
+            message=f"已入库发文 {n} 条",
+            force_reopen=True,
+        )
+    store.set_step_status(
+        task_id,
+        parent,
+        "completed",
+        message="发文采集已尝试完毕",
+        force_reopen=True,
+    )
+    logger.info("force_close step7_posts task=%s (发文实质已齐)", task_id)
+    return 1
 
 
 def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_done: str) -> int:
@@ -1457,8 +1534,13 @@ def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_don
     )
     if rows:
         if any(str(r.get("status") or "") in {"pending", "running"} for r in rows):
+            # 发文：子步仍 running 但实质已齐（含旧版等视频钉 running）→ 强制关
+            if parent == POST_PARENT_STEP_KEY:
+                return force_close_step7_posts_if_ready(store, task_id)
             return 0
     elif get_step_status(task_id, parent) in {"pending", "running"}:
+        if parent == POST_PARENT_STEP_KEY:
+            return force_close_step7_posts_if_ready(store, task_id)
         return 0
     closed = 0
     if get_step_status(task_id, parent) not in {"completed", "skipped"}:
