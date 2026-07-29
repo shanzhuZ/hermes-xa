@@ -73,7 +73,9 @@ steps:
       4.1.2 图片流核验：系统 image_pipeline 入库+分析；完成后 collect_images 可渲染才 completed；无图 skipped
       两子都终态后父壳 completed → 步骤6；步骤5未完成禁止发文工具
       （步骤5只产出核查数据，不输出报告章节）
+      【禁拒步】文本结论只陈述证据；禁止写「不启动步骤6/不宜纳入 validated」——4.2 由系统自动跑（种子必进）
       【禁空等结束】输出 [文本核验结论] / 头像分析进度后，禁止写「等待系统完成 4.2/4.3」并结束会话；
+      【禁跳步】步骤1～4 未完禁止输出 [文本核验结论]
       须保持同一会话继续：系统推进后下一回合立刻调发文工具（勿 done）。
     forbid: [发文工具, get_user_tweets, analyze_channel_videos, get_user_feeds, mcp_weibo_get_feeds, mcp_apify_get_dataset_items发文轮, 写最终报告, web_search, web_extract, browser_*, 等待系统后结束会话]
 

@@ -1,7 +1,7 @@
 ---
 name: account-intelligence-report
 description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/4.2认定/4.3系统社工库ES→发文→7.5图片入库→分析→画像报告。禁search_username。"
-version: 1.23.0
+version: 1.23.1
 author: hermes-xa
 license: MIT
 platforms: [linux, macos, windows]
@@ -29,7 +29,7 @@ metadata:
 - **步骤 2 与步骤 3 的候选合并去重**：Maigret 候选 + web_search 候选按 平台+handle 去重，形成统一候选列表供步骤4遍历
 - **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台（含 youtube/github）；**全部 step4_profile_* 子节点终态前禁止 vision/OCR**
 - **步骤 5（4.1）**：父壳下分 **4.1.1 文本流核验** / **4.1.2 图片流核验**。步骤4全部主页子节点终态后系统启动核验：文本可做规则比对；Agent 应用 `[文本核验结论]` 输出核验正文（无工具）。**4.1.2 由系统 `image_pipeline` 入库分析，完成后才 completed（无图则 skipped）**。两子都终态后父壳 completed 并进步骤6。步骤5未完成禁止发文工具。**禁止**输出「等待系统完成 4.2/4.3 / 会话保持中」后结束会话；无工具可调也须保持会话，系统会同 session 续跑催促下一步
-- **步骤 6（4.2）** 由系统收敛 `validated_accounts`（勿空转宣称完成）；完成前 **禁止**发文工具与 Apify 发文轮；**禁止**空等结束会话
+- **步骤 6（4.2）** 由**系统**收敛 `validated_accounts`（种子必进；勿空转宣称完成）。Agent **无权**因「证据不足」写「不启动步骤6 / 不宜纳入 validated / 不宜前推」——文本核验只陈述证据，收敛由系统执行。完成前 **禁止**发文工具与 Apify 发文轮；**禁止**空等结束会话
 - **步骤 4.3（`step6_osint_es`）**：**主路径由系统自动查 ES**（4.2 完成后 kickoff，不依赖 Agent）。Agent 若见待查 URL 可补调 `mcp_es_search_search_country_wise`；**禁止**默认跑 `search_facebook`/`search_worldpeople`；可选输出 `[社工库核验结论]`。系统无命中 → **skipped**（不阻塞发文）；会话结束/超时有 fail-forward。**4.3 终态后同一会话必须立刻调发文工具**
 - **步骤 7 发文（硬强制·禁止空过）** 须等 4.3 终态后，对 **每一个** `verdict=validated` 平台（含种子）**本回合必须实际调用对应发文工具**（不是口头宣称）。Twitter→`get_user_tweets`；YouTube→`analyze_channel_videos(channelId)`；微博→`get_user_feeds`；其余 Apify→Actor→dataset。**禁止**未调用就收口/进分析/结束会话；**禁止**空过种子 Twitter/YouTube；步骤1/4 主页≠发文。允许：工具已调用但失败或 0 条再 skip。**编号约定：步骤7=发文（树上 `step7_posts`）；切勿把步骤7称作「步骤5/UI步骤5」——步骤5仅指 4.1 核验。**
 - **步骤 7 视频（Hook 自动·旁路）**：发文入库后若有可下载视频，系统自动挂 `step7_video_*` 并后台分析（每平台最多 1 条、只取前 180 秒、3 秒一帧）。**禁止**同步调用 `mcp_video2frame_*`。**视频不挡发文子步/父壳收口，也不挡进入步骤8**；无视频不建节点

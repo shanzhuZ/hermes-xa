@@ -1,0 +1,90 @@
+TASK {'status': 'running', 'session_id': 'api_1785292752_b5c3f674', 'error_message': None, 'updated_at': datetime.datetime(2026, 7, 29, 10, 52, 7, 522000), 'created_at': datetime.datetime(2026, 7, 29, 10, 39, 19, 197000)}
+phase_account_collect                    completed  阶段内业务步骤已全部终态 | 2026-07-29 10:45:49.657000
+phase_analysis                           pending     | 2026-07-29 10:39:19.207000
+phase_collision                          completed  阶段内业务步骤已全部终态 | 2026-07-29 10:48:24.860000
+phase_content                            running    子步骤执行中 | 2026-07-29 10:51:15.911000
+phase_discovery                          completed  阶段内业务步骤已全部终态 | 2026-07-29 10:43:17.850000
+phase_lock_target                        completed  阶段内业务步骤已全部终态 | 2026-07-29 10:40:51.705000
+phase_report                             pending     | 2026-07-29 10:39:19.208000
+step_plan                                completed  已规划好节点：1.锁定目标；2.线索发现；3.账号采集；4.关联碰撞；5.内容采集；6.深度研判；7.报告生成 | 2026-07-29 10:39:25.423000
+step1_seed                               completed  种子 profile 已入库 | 2026-07-29 10:40:48.852000
+step10_context_pii                       pending     | 2026-07-29 10:39:19.220000
+step11_report                            pending    等待终稿（系统续跑中） | 2026-07-29 10:48:31.732000
+step2_maigret                            completed  Maigret 发现 3 个候选 | 2026-07-29 10:41:54.884000
+step3_web_search                         completed  网页检索超时/达上限收口（web_search 已达上限 3 次；search=3 extract=0） | 2026-07-29 10:43:17.348000
+step4_profile_twitter                    completed  种子主页已在步骤一入库（1 条） | 2026-07-29 10:43:37.411000
+step4_profile_youtube                    completed  已入库主页 1 条 | 2026-07-29 10:45:40.717000
+step4_profiles                           completed  候选主页采集已尝试完毕 | 2026-07-29 10:45:47.074000
+step5_stream_image                       completed  图片核验完成 stored=2 analyzed=2 | 2026-07-29 10:47:05.515000
+step5_stream_text                        completed  文本流核验完成，规则通过 3/5 条 | 2026-07-29 10:46:26.316000
+step5_streams                            completed  阶段内业务步骤已全部终态 | 2026-07-29 10:47:09.376000
+step6_osint_es                           skipped    系统社工库核验完成：无命中（查0失败1，31639ms） | 2026-07-29 10:48:21.941000
+step6_validated                          completed  已收敛 2 个可信账号 | 2026-07-29 10:47:36.414000
+step7_post_twitter                       completed  已入库发文 20 条 | 2026-07-29 10:52:07.117000
+step7_post_youtube                       pending     | 2026-07-29 10:47:38.989000
+step7_posts                              running    执行 mcp_twitter_get_user_tweets | 2026-07-29 10:51:20.882000
+step8_img_analysis                       pending     | 2026-07-29 10:39:19.219000
+step9_context_views                      pending     | 2026-07-29 10:39:19.219000
+profiles {'c': 2}
+posts {'c': 20}
+streams [{'stream_type': 'image', 'validation_status': 'pass', 'c': 1}, {'stream_type': 'text', 'validation_status': 'pass', 'c': 4}, {'stream_type': 'image', 'validation_status': 'fail', 'c': 1}, {'stream_type': 'text', 'validation_status': 'fail', 'c': 1}]
+validated [{'platform': 'twitter', 'account_handle': 'jin_people', 'verdict': 'validated'}, {'platform': 'youtube', 'account_handle': '@rebel_history_of_civilization', 'verdict': 'validated'}]
+tools 9
+6473 mcp_twitter_get_user_info success 2026-07-29 10:40:41.461000 {"result": "{\"id\": \"1907167388879204352\", \"screen_name\": \"jin_people\", \"name\": \"大晋民国|晋兰流亡政府|晋兰国教会|晋兰独立党|叛逆的文明史|诸夏副教主|Jinland\", \"description\": \"大晋民国，是位于中国与蒙古之间的文明古国，其
+6474 mcp_maigret_collect_accounts success 2026-07-29 10:41:46.923000 {"result": "{\n  \"username\": \"jin_people\",\n  \"resolve\": {\n    \"source\": \"username\"\n  },\n  \"scan_mode\": \"top_10\",\n  \"json_format\": \"ndjson\",\n  \"enable_recur
+6475 web_search success 2026-07-29 10:42:55.422000 {
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "url": "https://jinland-republic.vercel.app/",
+        "title": "Jinland Republic | Official Site",
+        "descripti
+6476 web_search success 2026-07-29 10:42:55.946000 {
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "url": "https://www.linkedin.com/posts/jiahui-jin_people-ask-me-how-i-find-hackathons-events-activity-7407230638157725
+6477 web_search success 2026-07-29 10:42:56.012000 {
+  "success": true,
+  "data": {
+    "web": [
+      {
+        "url": "https://x.com/jin_people/status/2016480121767465365",
+        "title": "共匪国安部正伪装成受难同胞，利用长治（上党）疫情谣言对 ...",
+    
+6478 web_extract error 2026-07-29 10:44:32.077000 {"error": "当前编排步骤为 step4_profiles，禁止调用 web_extract。请按写报顺序执行；若步骤7已收口，仅允许补采发文类工具。\n\n【系统进度·采集前半段】\n- 步骤1 种子 step1_seed: completed\n- 步骤2 Maigret step2_maigret: completed\n- 步骤3 网页检索 
+6479 web_extract error 2026-07-29 10:44:55.030000 {"error": "当前编排步骤为 step4_profiles，禁止调用 web_extract。请按写报顺序执行；若步骤7已收口，仅允许补采发文类工具。\n\n【系统进度·采集前半段】\n- 步骤1 种子 step1_seed: completed\n- 步骤2 Maigret step2_maigret: completed\n- 步骤3 网页检索 
+6480 mcp_youtube_get_channel_stats success 2026-07-29 10:45:29.334000 {"result": "{\n  \"channelId\": \"UCdQdjh89Y-MUP5UoK1xQzmg\",\n  \"title\": \"叛逆的文明史——刘仲敬嫡传大弟子\",\n  \"createdAt\": \"2026-01-19T15:15:17.149989Z\",\n  \"subscriberCount\": \"2750\
+6481 mcp_twitter_get_user_tweets success 2026-07-29 10:51:24.956000 {"result": "[{\"id\": \"2082266354380398825\", \"text\": \"https://t.co/sjsdjQnfLh\\n劉仲敬: 翻譯的陷阱：被政治閹割的唯物與唯心\\n你以為在學哲學，其實是在吞政治毒藥。\\n#晋国独立唯一出路\", \"created_at\": \"Wed Jul 29 00:46:0
+DLG 870 user 78 2026-07-29 10:39:19.201000 account-intelligence-report account_report 深度画像推特用户@jin_people
+DLG 871 assistant 317 2026-07-29 10:49:47.130000 步骤4完成：已补采候选 YouTube 主页，频道为 UCdQdjh89Y-MUP5UoK1xQzmg，标题“叛逆的文明史——刘仲敬嫡传大弟子”，订阅数 2750，视频数 153，总播放 137938。当前已完成种子 Twitter 主页、Maigret 候选发现，以及唯一待处理的 YouTube 候选主页采集。
+gate step7_posts
+step4_terminal True
+can_step5 {'ok': True, 'message': '满足步骤五推进条件'}
+can_osint {'ok': True, 'message': '满足社工库核验推进条件'}
+can_step7 True
+posts_ready False
+BOARD
+ 【系统进度·四、关联碰撞→五、内容采集】
+- 4.1 信息核验 step5_streams: completed
+- 4.2 可信收敛 step6_validated: completed
+- 4.3 社工库 step6_osint_es: skipped
+- 步骤7 发文 step7_posts: running
+【当前编排】step7_posts
+【下一步】发文已开放 → 本回合必须调发文工具（1 个）：youtube:mcp_youtube_analyze_channel_videos(channelId=UCdQdjh89Y-MUP5UoK1xQzmg)；禁止只写等待句后结束会话。
+CTX
+ 【系统进度·四、关联碰撞→五、内容采集】
+- 4.1 信息核验 step5_streams: completed
+- 4.2 可信收敛 step6_validated: completed
+- 4.3 社工库 step6_osint_es: skipped
+- 步骤7 发文 step7_posts: running
+【当前编排】step7_posts
+【下一步】发文已开放 → 本回合必须调发文工具（1 个）：youtube:mcp_youtube_analyze_channel_videos(channelId=UCdQdjh89Y-MUP5UoK1xQzmg)；禁止只写等待句后结束会话。
+【04引擎 v2】当前编排步骤：step7_posts
+【步骤7发文·硬强制】本回合继续对各平台调用发文工具。禁止输出分析/终稿；允许工具已调用但失败或 0 条再 skip。主页≠发文。
+【必须立即调用·禁止空过】共 1 个平台，请本回合并行发起工具：
+- youtube: mcp_youtube_analyze_channel_videos(channelId=UCdQdjh89Y-MUP5UoK1xQzmg)
+仍有未完成发文子步：step7_post_youtube。必须继续采集，禁止结束会话空等。
+发文入库后若有可下载视频，Hook 会挂 step7_video_* 后台分析，不挡步骤7收口；禁止同步 mcp_video2frame_*。

@@ -2141,19 +2141,30 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return None
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
+        collision_advanced = False
         try:
             from report_04.stream_steps import apply_text_conclusion_from_assistant
 
             if apply_text_conclusion_from_assistant(store, task_id, assistant):
                 _maybe_advance_step67(store, task_id)
-                try:
-                    from report_04.engine import run_pre_llm_auto
-
-                    run_pre_llm_auto(store, task_id)
-                except Exception as exc2:
-                    logger.warning("post_llm 文本核验后自动推进失败 task=%s: %s", task_id, exc2)
+                collision_advanced = True
         except Exception as exc:
             logger.warning("解析文本核验结论失败 task=%s: %s", task_id, exc)
+        # ① 压缩关联碰撞空窗：文本核验后 / 等待句前后，同轮连推 4.1→4.2→4.3
+        try:
+            from report_04.engine import (
+                advance_collision_phase,
+                build_post_llm_followup,
+            )
+
+            if collision_advanced or _looks_like_wait_for_system_exit(assistant):
+                advance_collision_phase(store, task_id, max_rounds=4)
+            else:
+                # 常规回合也推一档，缩短空窗
+                advance_collision_phase(store, task_id, max_rounds=2)
+            followup_ctx = build_post_llm_followup(task_id)
+        except Exception as exc:
+            logger.warning("post_llm 关联碰撞推进失败 task=%s: %s", task_id, exc)
         try:
             from report_04.osint_es import apply_osint_conclusion_from_assistant
 
@@ -2182,11 +2193,17 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     maybe_continue_agent_session,
                 )
                 from report_04.osint_es import kickoff_osint_if_ready
+                from report_04.engine import build_post_llm_followup
 
                 _maybe_advance_step67(store, task_id)
                 if get_step_status(task_id, "step6_validated") == "completed":
                     kickoff_osint_if_ready(store, task_id)
-                followup_ctx = anti_wait_followup_context(task_id)
+                followup_ctx = build_post_llm_followup(task_id)
+                # 叠加 anti_wait 文案
+                try:
+                    followup_ctx = followup_ctx + "\n\n" + anti_wait_followup_context(task_id)
+                except Exception:
+                    pass
                 maybe_continue_agent_session(
                     store, task_id, reason="post_llm_wait_exit"
                 )
@@ -2208,11 +2225,12 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     maybe_continue_agent_session,
                 )
                 from report_04.step_reconcile import force_close_step7_posts_if_ready
+                from report_04.engine import build_post_llm_followup
 
                 if looks_like_retrospective_without_analysis(task_id, assistant):
                     force_close_step7_posts_if_ready(store, task_id)
-                    followup_ctx = (
-                        "【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
+                    followup_ctx = build_post_llm_followup(task_id) + (
+                        "\n【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
                         "请立即并行输出步骤8/9/10分析正文，再写以「一、账号基本信息」开头的终稿。"
                         "禁止调用 vision；禁止 done。"
                     )
@@ -2228,6 +2246,16 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                     )
             except Exception as exc:
                 logger.warning("post_llm 回顾假完成续跑失败 task=%s: %s", task_id, exc)
+        # 无终稿时尽量带回进度看板（即便未命中等待/回顾）
+        if not followup_ctx:
+            try:
+                from report_04.session_continue import has_final_report
+                from report_04.engine import build_post_llm_followup
+
+                if not has_final_report(task_id):
+                    followup_ctx = build_post_llm_followup(task_id)
+            except Exception:
+                pass
         if not is_progress_only(assistant) and not _looks_like_report_meta_closing(assistant):
             store.save_assistant_output(task_id, payload.get("session_id"), assistant)
     except DbError as exc:

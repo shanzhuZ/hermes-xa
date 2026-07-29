@@ -78,6 +78,18 @@ def apply_text_conclusion_from_assistant(store: Any, task_id: str, assistant: st
     conclusion = parse_text_conclusion(assistant)
     if not conclusion:
         return False
+    # 步骤4未终态时禁止收口：防止被进度文案诱导跳步写核验
+    try:
+        from report_04.gates import step4_profiles_terminal
+
+        if not step4_profiles_terminal(task_id):
+            logger.info(
+                "忽略抢跑文本核验结论 task=%s（步骤4未终态）", task_id
+            )
+            return False
+    except Exception as exc:
+        logger.warning("文本核验门禁检查失败 task=%s: %s", task_id, exc)
+        return False
     ensure_stream_child_steps(store, task_id)
     cur = get_step_status(task_id, STREAM_TEXT_STEP_KEY)
     payload = {"conclusion": conclusion, "source": "agent_marker"}

@@ -24,14 +24,17 @@ from report_04.gates import get_step_status
 logger = logging.getLogger(__name__)
 
 _CONTINUE_MAX = int(os.environ.get("HERMES_REPORT_CONTINUE_MAX", "2") or "2")
-_CONTINUE_HTTP_TIMEOUT = int(os.environ.get("HERMES_REPORT_CONTINUE_TIMEOUT", "120") or "120")
-# inflight 超过墙钟+缓冲视为假在飞，允许自愈（默认约 180s）
+# 续跑 SSE 墙钟：须盖住发文+研判+终稿；可用环境变量覆盖
+_CONTINUE_HTTP_TIMEOUT = int(
+    os.environ.get("HERMES_REPORT_CONTINUE_TIMEOUT", "900") or "900"
+)
+# inflight 超过墙钟+缓冲视为假在飞，允许自愈
 _CONTINUE_STALE_SEC = int(
     os.environ.get(
         "HERMES_REPORT_CONTINUE_STALE_SEC",
-        str(_CONTINUE_HTTP_TIMEOUT + 60),
+        str(_CONTINUE_HTTP_TIMEOUT + 120),
     )
-    or str(_CONTINUE_HTTP_TIMEOUT + 60)
+    or str(_CONTINUE_HTTP_TIMEOUT + 120)
 )
 _LOCK = threading.Lock()
 _INFLIGHT: Dict[str, bool] = {}

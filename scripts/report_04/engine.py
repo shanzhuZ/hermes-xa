@@ -50,12 +50,124 @@ def snapshot(task_id: str) -> Dict[str, Any]:
     }
 
 
-def build_agent_context(task_id: str) -> Optional[str]:
-    """注入 Agent：当前 gate + 应做之事（减少只读 error 空转）。"""
+def format_system_progress_board(task_id: str) -> str:
+    """每轮注入：进度 + 下一步。早期步骤禁止催「完成步骤5」（会诱导跳步写核验）。"""
     gate = infer_gate_step(task_id)
-    lines: List[str] = [f"【04引擎 {ENGINE_VERSION}】当前编排步骤：{gate}"]
+    s1 = get_step_status(task_id, "step1_seed") or "pending"
+    s2 = get_step_status(task_id, "step2_maigret") or "pending"
+    s3 = get_step_status(task_id, "step3_web_search") or "pending"
+    s4 = get_step_status(task_id, "step4_profiles") or "pending"
+    s5 = get_step_status(task_id, "step5_streams") or "pending"
+    s6 = get_step_status(task_id, "step6_validated") or "pending"
+    s43 = get_step_status(task_id, "step6_osint_es") or "pending"
+    s7 = get_step_status(task_id, "step7_posts") or "pending"
 
-    if gate == "step4_profiles":
+    # 尚未进入四、关联碰撞：只展示前四步，严禁催核验/发文
+    early_gates = {
+        "step1_seed",
+        "step2_maigret",
+        "step3_web_search",
+        "step4_profiles",
+    }
+    if gate in early_gates and s5 not in {"running", "completed", "skipped"}:
+        lines = [
+            "【系统进度·采集前半段】",
+            f"- 步骤1 种子 step1_seed: {s1}",
+            f"- 步骤2 Maigret step2_maigret: {s2}",
+            f"- 步骤3 网页检索 step3_web_search: {s3}",
+            f"- 步骤4 主页 step4_profiles: {s4}",
+            f"【当前编排】{gate}",
+        ]
+        early_next = {
+            "step1_seed": (
+                "【下一步】先采种子主页（Twitter→mcp_twitter_get_user_info(screen_name=…) 等）；"
+                "禁止跳写步骤5 [文本核验结论]；禁止宣称不启动步骤6；禁止发文。"
+            ),
+            "step2_maigret": (
+                "【下一步】只调 mcp_maigret_collect_accounts；"
+                "禁止跳写步骤5核验/步骤6/发文。"
+            ),
+            "step3_web_search": (
+                "【下一步】做网页线索检索并落候选；禁止跳写步骤5核验/发文。"
+            ),
+            "step4_profiles": (
+                "【下一步】对每个候选平台调主页工具；全部终态后系统才启动 4.1；"
+                "禁止提前输出 [文本核验结论]；禁止发文。"
+            ),
+        }
+        lines.append(early_next.get(gate, "【下一步】按当前编排继续；禁止跳步。"))
+        return "\n".join(lines)
+
+    lines = [
+        "【系统进度·四、关联碰撞→五、内容采集】",
+        f"- 4.1 信息核验 step5_streams: {s5}",
+        f"- 4.2 可信收敛 step6_validated: {s6}",
+        f"- 4.3 社工库 step6_osint_es: {s43}",
+        f"- 步骤7 发文 step7_posts: {s7}",
+        f"【当前编排】{gate}",
+    ]
+    try:
+        from report_04.gates import can_run_step7_collect, posts_substantively_ready
+        from report_04.step_reconcile import list_unattempted_post_platforms
+
+        if posts_substantively_ready(task_id) or s7 in {"completed", "skipped"}:
+            lines.append(
+                "【下一步】发文已齐 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
+                "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
+            )
+        elif can_run_step7_collect(task_id):
+            todo = list_unattempted_post_platforms(task_id) or []
+            if todo:
+                hints = "; ".join(
+                    f"{x.get('platform')}:{x.get('tool_hint')}" for x in todo[:6]
+                )
+                lines.append(
+                    f"【下一步】发文已开放 → 本回合必须调发文工具（{len(todo)} 个）：{hints}；"
+                    "禁止只写等待句后结束会话。"
+                )
+            else:
+                lines.append(
+                    "【下一步】发文门禁已开且待采列表为空 → 保持会话或写步骤8～11；禁止 done。"
+                )
+        elif s5 not in {"completed", "skipped"}:
+            lines.append(
+                "【下一步】在步骤4已终态前提下输出 [文本核验结论]（描述证据即可）；"
+                "4.2 validated 由系统自动跑（至少含种子），禁止写「不启动步骤6/不宜前推」；"
+                "禁止发文；禁止写「等待」后结束会话。"
+            )
+        else:
+            lines.append(
+                "【下一步】4.2/4.3 由系统自动推进（Agent 勿拒绝、勿空等 done）；"
+                "门禁一开必须立刻调步骤7发文工具。"
+            )
+    except Exception:
+        lines.append("【下一步】禁止结束会话；按当前编排继续。")
+    return "\n".join(lines)
+
+
+def build_agent_context(task_id: str) -> Optional[str]:
+    """注入 Agent：系统进度看板 + 当前 gate + 应做之事。"""
+    gate = infer_gate_step(task_id)
+    lines: List[str] = [
+        format_system_progress_board(task_id),
+        f"【04引擎 {ENGINE_VERSION}】当前编排步骤：{gate}",
+    ]
+
+    if gate == "step1_seed":
+        lines.append(
+            "步骤1：必须先调用种子平台主页工具落库；"
+            "禁止跳写步骤5 [文本核验结论]、禁止 session_search、禁止发文。"
+        )
+    elif gate == "step2_maigret":
+        lines.append(
+            "步骤2：只调 mcp_maigret_collect_accounts(username=种子handle)；"
+            "禁止跳写步骤5核验。"
+        )
+    elif gate == "step3_web_search":
+        lines.append(
+            "步骤3：网页线索检索；禁止跳写步骤5核验/发文。"
+        )
+    elif gate == "step4_profiles":
         lines.append(
             "步骤3（账号主页采集）：须对线索发现（步骤2 Maigret + 步骤3 网页）产出的"
             "每个可采集候选平台调用主页工具；禁止因「与种子不相似」跳过；"
@@ -120,14 +232,16 @@ def build_agent_context(task_id: str) -> Optional[str]:
         else:
             lines.append(
                 "步骤5：图片流已齐或由系统管线处理；请输出 [文本核验结论]（若尚未输出）。"
+                "结论只陈述证据；禁止写「暂不启动步骤6/不宜纳入 validated」——"
+                "4.2 由系统自动收敛（种子必进 validated）。"
                 "禁止写「等待系统/会话保持中」并 done；保持会话，门禁放行后立刻调发文。"
             )
 
     elif gate == "step6_validated":
         lines.append(
-            "步骤6（4.2）：系统正在/即将收敛可信账号；你可保持会话。"
-            "禁止输出「等待系统完成 4.2/4.3」后 done；"
-            "4.3 终态后同一会话必须立刻调发文工具。"
+            "步骤6（4.2）：系统正在/即将收敛可信账号（非 Agent 决定是否启动）；"
+            "禁止输出「等待系统/不启动步骤6」后 done；"
+            "系统收口后同一会话必须立刻进入发文。"
         )
 
     elif gate == "step6_osint_es":
@@ -281,6 +395,40 @@ def build_agent_context(task_id: str) -> Optional[str]:
     return "\n".join(lines)
 
 
+def advance_collision_phase(store: Any, task_id: str, *, max_rounds: int = 4) -> None:
+    """压缩「四、关联碰撞」空窗：同轮尽量连推 4.1→4.2→4.3。"""
+    for _ in range(max(1, int(max_rounds))):
+        before = (
+            get_step_status(task_id, "step5_streams"),
+            get_step_status(task_id, "step6_validated"),
+            get_step_status(task_id, "step6_osint_es"),
+        )
+        try:
+            _auto_step5_step6(store, task_id)
+        except Exception as exc:
+            logger.warning("advance_collision 失败 task=%s: %s", task_id, exc)
+            break
+        after = (
+            get_step_status(task_id, "step5_streams"),
+            get_step_status(task_id, "step6_validated"),
+            get_step_status(task_id, "step6_osint_es"),
+        )
+        if after == before:
+            break
+        if after[2] in {"completed", "skipped"}:
+            break
+
+
+def build_post_llm_followup(task_id: str) -> str:
+    """post_llm 回注：进度看板 + 禁止 done。"""
+    board = format_system_progress_board(task_id)
+    return (
+        board
+        + "\n【写报硬约束】禁止以「等待系统/会话保持/等步骤6/4.3」结束本轮。"
+        "无工具可调时保持会话；门禁放行后立刻调发文或写分析/终稿。"
+    )
+
+
 def enrich_block_reason(task_id: str, reason: str) -> str:
     ctx = build_agent_context(task_id)
     if not ctx:
@@ -348,9 +496,9 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
 
 
 def run_pre_llm_auto(store: Any, task_id: str) -> None:
-    """每轮 LLM 前：推进可自动完成的步骤。"""
+    """每轮 LLM 前：推进可自动完成的步骤（关联碰撞尽量连推）。"""
     run_post_tool_light(store, task_id)
-    _auto_step5_step6(store, task_id)
+    advance_collision_phase(store, task_id, max_rounds=3)
     _try_finalize_report(store, task_id, light_only=True)
 
 

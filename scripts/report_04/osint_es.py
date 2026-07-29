@@ -700,6 +700,10 @@ def close_osint_on_session_end(store: Any, task_id: str) -> bool:
     cur = get_step_status(task_id, OSINT_STEP_KEY)
     if cur in {"completed", "skipped"}:
         return False
+    # 尚未到 4.3（4.1/4.2 未完）：禁止抢 skip，否则早期结束会话会污染步骤树
+    if not can_advance_to_osint(task_id).get("ok"):
+        logger.info("会话结束跳过 4.3 收口 task=%s：尚未到社工库阶段", task_id)
+        return False
     if maybe_close_osint_by_coverage(store, task_id, reason="会话结束覆盖度兜底"):
         return True
     n_tools = _count_osint_tool_calls(task_id)
