@@ -5,6 +5,8 @@ model:
   api_mode: codex_responses
 agent:
   max_turns: 150
+  # 写报 Stop 门闩：碰撞真空可能多次 stop，略高于默认 3
+  max_verify_nudges: 8
   image_input_mode: auto
   verbose: false
   reasoning_effort: medium
@@ -143,9 +145,13 @@ hooks:
   post_llm_call:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
     timeout: 120
+  pre_verify:
+  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+    timeout: 120
   on_session_end:
   - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
     timeout: 120
+hooks_auto_accept: true
 hooks_auto_accept: true
 hooks_auto_accept: true
 hooks_auto_accept: true

@@ -1,9 +1,9 @@
 # 04 写报 · 主进程 Stop 门闩方案（草案）
 
-> **状态**：方案文档，**尚未改代码落地**。  
-> **范围**：只解决「主进程在步骤 3（账号采集）之后自行 `stop`」；**不改动现有续跑（`session_continue` / `osint_done`）逻辑**，续跑仍作兜底。  
-> **实证任务**：`b022e968-573b-47d7-adeb-9b89aa06e14c`（主进程步骤 4 后 `finish_reason=stop`；发文由续跑 user 消息拉起并最终跑通）。  
-> **关联**：`scripts/report_04/sink.py`、`session_continue.py`；Hermes `agent/conversation_loop.py`（stop / `pre_verify`）；Skill `account-intelligence-report`。
+> **状态**：第二期已落地——碰撞真空 + 碰撞齐后发文未落地均拦截 stop；续跑逻辑未改。  
+> **范围**：防止主进程因「四、关联碰撞」（含刚齐却复述步骤4收束）而结束；**不改动现有续跑**。  
+> **实证**：`b022` / `7e47`（碰撞齐后仍「步骤4完成」+ stop → 第一期放行；第二期应拦并催发文）。  
+> **关联**：`scripts/report_04/stop_gate.py`、`sink.py`；Hermes `conversation_loop.py`（`pre_verify`）。
 
 ---
 
@@ -73,18 +73,16 @@
 | 实现点 | Hermes 循环 / 扩展 stop-nudge | `maybe_continue_agent_session` |
 | 本次 | **要做** | **不动** |
 
-### 3.2 触发条件（建议）
+### 3.2 触发条件（第二期）
 
-同时满足则拦截：
+`step4_profiles` 已终态，且尚无终稿时：
 
-1. `task_type == account_report`，任务 `running`。  
-2. 尚无合格终稿（`step11_report` 未 completed / 无终稿正文）。  
-3. 下列任一为真：  
-   - **碰撞未齐**：`step4_profiles` 已终态，且 `step5_streams` / `step6_validated` / `step6_osint_es` 任一未终态；或  
-   - **发文门禁已开但仍有未尝试发文平台**；或  
-   - **发文已齐但分析/终稿未齐**（可选第二期，防主进程在发文后再次 stop）。
+| 原因码 | 条件 | 催促 |
+|--------|------|------|
+| `collision` | `step5` / `step6_validated` / `step6_osint_es` 任一未终态 | 保持会话，等碰撞；禁止复述步骤4 |
+| `posts` | 碰撞已齐，且发文门禁开、仍有未尝试平台或帖数为 0 | 立刻调发文工具；禁止再复述步骤4 |
 
-**第一期最小集**：只拦「步骤 3 已完 + 碰撞未完」——正对 b022 断点。
+发文实质已齐（`posts_substantively_ready`）或已有终稿 → **放行 stop**（分析/终稿仍可由续跑兜底）。
 
 ### 3.3 拦截后行为
 
@@ -216,10 +214,17 @@
 
 ---
 
-## 7. 决议记录（待填）
+## 7. 决议记录
 
 | 项 | 选项 | 决议 |
 |----|------|------|
-| Stop 门闩 | 路径 A / A+B | （待定） |
-| 系统步工具化 | 不做 / 仅 4.2+4.3 一键 / 全切 | （待定） |
+| Stop 门闩 | 路径 A / A+B | **已定：仅路径 A（pre_verify Stop 门闩），暂不做 wait_collision** |
+| 系统步工具化 | 不做 / 仅 4.2+4.3 一键 / 全切 | **暂不做** |
 | 续跑 | 本次不动 | **已定：不动** |
+
+### 7.1 落地清单
+
+- 第一期（2026-07-29）：仅 `collision`；`pre_verify` + 不要求改文件；`max_verify_nudges: 8`  
+- **第二期**：增加 `posts`；推进碰撞后若已齐但发文未落地 → **催发文，不再放行 stop**  
+
+**重启 Gateway** 后验证：步骤3后 / 碰撞刚齐写「步骤4完成」时，主进程应被门闩拦住。

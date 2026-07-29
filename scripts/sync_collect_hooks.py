@@ -11,7 +11,14 @@ from datetime import datetime, timezone
 from pathlib import Path
 
 REPO_ROOT = Path(__file__).resolve().parent.parent
-EVENTS = ("pre_llm_call", "pre_tool_call", "post_tool_call", "post_llm_call", "on_session_end")
+EVENTS = (
+    "pre_llm_call",
+    "pre_tool_call",
+    "post_tool_call",
+    "post_llm_call",
+    "pre_verify",
+    "on_session_end",
+)
 
 
 def _hook_command() -> str:

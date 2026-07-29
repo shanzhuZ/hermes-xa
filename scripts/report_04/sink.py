@@ -132,9 +132,33 @@ def handle_event(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         _on_post_tool(payload)
     elif event == "post_llm_call":
         return _on_post_llm_call(payload)
+    elif event == "pre_verify":
+        return _on_pre_verify(payload)
     elif event == "on_session_end":
         _on_session_end(payload)
     return None
+
+
+def _on_pre_verify(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
+    """主进程即将 stop：碰撞真空时返回 continue，拦截结束（不改续跑）。"""
+    ex = _extra(payload)
+    task_id = _resolve_task_id(payload)
+    if not task_id:
+        return None
+    try:
+        attempt = int(ex.get("attempt") or 0)
+    except Exception:
+        attempt = 0
+    try:
+        from report_04.stop_gate import pre_verify_continue_message
+
+        msg = pre_verify_continue_message(_store(), task_id, attempt=attempt)
+    except Exception as exc:
+        logger.warning("pre_verify stop_gate 失败 task=%s: %s", task_id, exc)
+        return None
+    if not msg:
+        return None
+    return {"action": "continue", "message": msg}
 
 
 def _normalize_hook_tool_name(raw: Optional[str]) -> str:
