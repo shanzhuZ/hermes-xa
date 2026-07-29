@@ -1,0 +1,37 @@
+{
+  "_doc": "04写报旁白：step_plan + 七大父壳。tree 在对应节点返回 running_content / completed_content；前端按 status 选用（running→running_content；completed/skipped/failed→completed_content）。改文案只改本文件，重启生效。",
+  "phases": {
+    "step_plan": {
+      "running_content": "正在拆解研判路径，编排锁定、发现、采集、碰撞、研判与成稿全链路…",
+      "completed_content": "执行计划已就绪：七大阶段节点已排定，转入目标锚定。"
+    },
+    "phase_lock_target": {
+      "running_content": "正在锚定种子账号，校准平台身份与基础档案…",
+      "completed_content": "种子目标已锚定，身份基线确立。"
+    },
+    "phase_discovery": {
+      "running_content": "正在跨平台检索关联痕迹，汇聚候选账号线索…",
+      "completed_content": "跨平台线索池已成型，候选范围划定。"
+    },
+    "phase_account_collect": {
+      "running_content": "正在精采候选主页档案，沉淀可核验的账号底稿…",
+      "completed_content": "候选主页档案已齐备，具备碰撞核验条件。"
+    },
+    "phase_collision": {
+      "running_content": "正在多源碰撞核验关联性，筛定同源与相似账号…",
+      "completed_content": "关联碰撞完成，同源边界与相似账号已厘清。"
+    },
+    "phase_content": {
+      "running_content": "正在采集种子与关联账号发文轨迹，构建活动样本…",
+      "completed_content": "跨平台发文样本已入库，活动轨迹可复盘。"
+    },
+    "phase_analysis": {
+      "running_content": "正在综合图文、观点与身份线索，展开深度研判…",
+      "completed_content": "深度研判完成，关键判断依据已沉淀。"
+    },
+    "phase_report": {
+      "running_content": "正在汇总核验与研判结论，编制账号画像报告…",
+      "completed_content": "账号画像报告已成稿，可查阅完整结论。"
+    }
+  }
+}

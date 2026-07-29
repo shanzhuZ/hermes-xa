@@ -38,6 +38,9 @@ public class TaskTreeQueryService {
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
+    @Autowired
+    private ReportPhaseNarrativeConfig reportPhaseNarrativeConfig;
+
     /**
      * 构建整棵进度树，供前端轮询渲染。
      */
@@ -226,6 +229,7 @@ public class TaskTreeQueryService {
      * 04 七大壳进度：阶段锚点（stages + currentStage → progressPct）。
      * 仅壳节点 showProgress=true；子步不展示进度条。
      * progressPct = round(100 * currentStage / (stages.length - 1))；前端可对 pct 做过渡动画。
+     * 旁白仅挂 step_plan + 七大父壳（见 report-phase-narratives.json），不碰其它节点。
      */
     private void applyReportPhaseShellProgress(String taskId, List<Map<String, Object>> nodes) {
         if (nodes == null || nodes.isEmpty()) {
@@ -240,13 +244,30 @@ public class TaskTreeQueryService {
                 node.put("stages", sp.stages);
                 node.put("currentStage", Integer.valueOf(sp.currentStage));
                 node.put("progressPct", Integer.valueOf(sp.progressPct));
+                attachPhaseNarrative(node, stepKey);
                 try {
                     collectTaskMapper.updateStepProgressPctIfChanged(taskId, stepKey, sp.progressPct);
                 } catch (Exception ignored) {
                     // 回写失败不影响树接口；进度仍以响应 progressPct 为准
                 }
+            } else if ("step_plan".equals(stepKey)) {
+                // 规划层：只挂旁白，不走七壳进度条
+                attachPhaseNarrative(node, stepKey);
             }
         }
+    }
+
+    /** 规划层/父壳旁白：固定两字段，前端按 status 选用。 */
+    private void attachPhaseNarrative(Map<String, Object> node, String stepKey) {
+        if (reportPhaseNarrativeConfig == null || stepKey == null || stepKey.isEmpty()) {
+            return;
+        }
+        Map<String, String> pair = reportPhaseNarrativeConfig.get(stepKey);
+        if (pair == null || pair.isEmpty()) {
+            return;
+        }
+        node.put("running_content", pair.get("running_content"));
+        node.put("completed_content", pair.get("completed_content"));
     }
 
     /** 七壳阶段锚点结果。 */
