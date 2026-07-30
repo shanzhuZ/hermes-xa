@@ -542,6 +542,10 @@ def _resolve_task_id(payload: Dict[str, Any], user_message: str = "") -> Optiona
         active = store.get_active_task_by_session(session_id)
         if active:
             return active["task_id"]
+        # 主任务已 completed 时：续跑/Hook 重放仍应落在同 session 原任务，禁止 ensure_task 新建幽灵
+        latest = store.get_latest_task_by_session(session_id)
+        if latest and str(latest.get("task_type") or "") == "account_report":
+            return str(latest["task_id"])
 
     tid = str(ex.get("task_id") or "").strip()
     if tid:

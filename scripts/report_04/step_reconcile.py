@@ -301,7 +301,9 @@ def ensure_step7_awaits_agent_tool(store: Any, task_id: str) -> int:
         "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, parent),
     )
-    if any(str(r.get("status") or "") == "running" for r in (children or [])):
+    child_statuses = [str(r.get("status") or "") for r in (children or [])]
+    # 已有子步 running/completed：发文轮已真实开始，禁止打回 pending（避免空窗）
+    if any(st in {"running", "completed"} for st in child_statuses):
         return 0
 
     # 任一平台已真正尝试发文 → 允许父节点 running
@@ -1506,6 +1508,11 @@ def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
         message="发文采集已尝试完毕",
         force_reopen=True,
     )
+    # 显式收口内容采集壳：深叶点亮 phase_content 后，仅关 step7_posts 时可能漏滚壳
+    try:
+        store._maybe_complete_phase_shell(task_id, parent)
+    except Exception as exc:
+        logger.warning("force_close 后收口 phase_content 失败 task=%s: %s", task_id, exc)
     logger.info("force_close step7_posts task=%s (发文实质已齐)", task_id)
     return 1
 

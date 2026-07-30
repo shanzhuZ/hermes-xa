@@ -427,10 +427,34 @@ def is_phase_shell(step_key: Optional[str]) -> bool:
 
 
 def phase_shell_of_execution_step(step_key: Optional[str]) -> Optional[str]:
-    """若 step_key 是挂在七大壳下的直接业务步，返回壳 key。"""
+    """若 step_key 是挂在七大壳下的直接业务步，返回壳 key。
+
+    注意：EXECUTION_PARENT_SHELL 实际存的是「步 → 直接父」；对 stream 子步父为
+    step5_streams（中间父），不是七大壳。深叶请用 immediate_parent_step_key 再向上走。
+    """
     if not step_key:
         return None
     return EXECUTION_PARENT_SHELL.get(str(step_key))
+
+
+def immediate_parent_step_key(step_key: Optional[str]) -> Optional[str]:
+    """静态/约定上的直接父节点（不查库）。
+
+    - step7_post_* → step7_posts
+    - step7_video_* → step7_post_{platform}
+    - step4_profile_* → step4_profiles
+    - 其余业务步 → EXECUTION_PARENT_SHELL（可能是中间父或七大壳）
+    """
+    if not step_key:
+        return None
+    sk = str(step_key)
+    if is_video_platform_step(sk):
+        return post_platform_step_key(sk.replace("step7_video_", "", 1))
+    if is_post_platform_step(sk):
+        return POST_PARENT_STEP_KEY
+    if is_profile_platform_step(sk):
+        return PROFILE_PARENT_STEP_KEY
+    return EXECUTION_PARENT_SHELL.get(sk)
 
 
 def direct_execution_children(phase_key: str) -> List[str]:

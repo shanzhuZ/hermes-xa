@@ -26,9 +26,11 @@ from report_04.phases import (
     PHASE_VALIDATED,
     POST_PARENT_STEP_KEY,
     PROFILE_PARENT_STEP_KEY,
+    STEP_PLAN_KEY,
     TASK_TYPE,
     PLATFORM_LABELS,
     direct_execution_children,
+    immediate_parent_step_key,
     initial_steps,
     is_phase_shell,
     phase_shell_of_execution_step,
@@ -235,6 +237,19 @@ class TaskStore:
             (session_id, TASK_TYPE),
         )
 
+    def get_latest_task_by_session(self, session_id: str) -> Optional[Dict[str, Any]]:
+        """同 session 最近一条写报任务（含 completed），用于防止 Hook 重放新建幽灵任务。"""
+        if not session_id:
+            return None
+        return db.fetch_one(
+            """
+            SELECT * FROM hermes_tasks
+            WHERE session_id=%s AND task_type=%s
+            ORDER BY created_at DESC LIMIT 1
+            """,
+            (session_id, TASK_TYPE),
+        )
+
     def list_tasks_by_session(self, session_id: str, limit: int = 50) -> List[Dict[str, Any]]:
         if not session_id:
             return []
@@ -393,6 +408,16 @@ class TaskStore:
         existing = self.get_active_task_by_session(session_id) if session_id else None
         if existing:
             return existing["task_id"]
+        # 同 session 已有任务（含刚 completed）：禁止因 Hook 重放 user_message 再建幽灵任务
+        # 新用户请求应由 Java 换新 session_id / 预插新 task_id
+        latest = self.get_latest_task_by_session(session_id) if session_id else None
+        if latest:
+            logger.info(
+                "复用同 session 已有写报任务 task=%s status=%s（跳过新建）",
+                latest.get("task_id"),
+                latest.get("status"),
+            )
+            return str(latest["task_id"])
 
         new_id = task_id or str(uuid.uuid4())
         seed = _parse_seed(user_message)
@@ -856,10 +881,19 @@ class TaskStore:
             f"UPDATE collect_phase_steps SET {', '.join(fields)} WHERE task_id=%s AND step_key=%s",
             tuple(params),
         )
-        phase = step_phase(step_key)
-        # 仅 running/completed 推进 current_phase；pending 回滚不改 phase（避免步骤7误抢 phase=posts）
-        if phase and status in {"running", "completed"}:
-            self.set_task_phase(task_id, phase)
+        try:
+            phase = step_phase(step_key)
+            # 仅 running/completed 推进 current_phase；pending 回滚不改 phase（避免步骤7误抢 phase=posts）
+            if phase and status in {"running", "completed"}:
+                self.set_task_phase(task_id, phase)
+        except Exception as exc:
+            logger.warning(
+                "set_task_phase 失败 task=%s step=%s status=%s: %s",
+                task_id,
+                step_key,
+                status,
+                exc,
+            )
 
         # 业务直接子步终态后：若同壳下直接子步均终态，则父壳 completed
         if (
@@ -867,45 +901,130 @@ class TaskStore:
             and status in {"completed", "skipped", "failed"}
             and not is_phase_shell(step_key)
         ):
-            self._maybe_complete_phase_shell(task_id, step_key)
+            try:
+                self._maybe_complete_phase_shell(task_id, step_key)
+            except Exception as exc:
+                logger.warning(
+                    "phase shell 收口失败 task=%s step=%s: %s",
+                    task_id,
+                    step_key,
+                    exc,
+                )
+
+    def _lookup_parent_step_key(self, task_id: str, step_key: str) -> Optional[str]:
+        """查库 parent_step_key，缺失时回落约定映射。"""
+        row = db.fetch_one(
+            "SELECT parent_step_key FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+            (task_id, step_key),
+        )
+        parent = str((row or {}).get("parent_step_key") or "").strip()
+        if parent:
+            return parent
+        return immediate_parent_step_key(step_key)
+
+    def _parent_chain_to_phase_shell(self, task_id: str, step_key: str) -> List[str]:
+        """从直接父向上到七大壳（含壳，不含 step_plan），近→远。
+
+        例：step7_post_twitter → [step7_posts, phase_content]
+            step5_stream_text → [step5_streams, phase_collision]
+            step7_posts → [phase_content]
+        """
+        chain: List[str] = []
+        seen = set()
+        cur = self._lookup_parent_step_key(task_id, step_key)
+        while cur and cur not in seen and cur != STEP_PLAN_KEY:
+            seen.add(cur)
+            chain.append(cur)
+            if is_phase_shell(cur):
+                break
+            cur = self._lookup_parent_step_key(task_id, cur)
+        return chain
 
     def _ensure_phase_shell_running(self, task_id: str, execution_step_key: str) -> None:
-        shell = phase_shell_of_execution_step(execution_step_key)
-        if not shell:
-            return
-        cur = get_step_status(task_id, shell)
-        if cur == "running":
-            return
-        # pending / completed（补采重开）/ 空 → running；展示上先有壳再有子步
-        self.set_step_status(
-            task_id,
-            shell,
-            "running",
-            message="子步骤执行中",
-            skip_phase_rollup=True,
-        )
+        """业务步变 running 时，沿 parent 链点亮中间父与七大壳（深叶也生效）。
+
+        解决 step7_post_* / step4_profile_* 等深叶不在 EXECUTION_PARENT_SHELL 时，
+        父节点与 phase_* 长时间停在 pending 的空窗。
+        """
+        chain = self._parent_chain_to_phase_shell(task_id, execution_step_key)
+        if not chain:
+            # 兼容：仅映射到壳的旧路径
+            shell = phase_shell_of_execution_step(execution_step_key)
+            chain = [shell] if shell else []
+        for node in chain:
+            cur = get_step_status(task_id, node)
+            if cur == "running":
+                continue
+            # pending / skipped / 空 / completed（补采重开）→ running；展示上先有父再有子
+            force = cur == "completed"
+            self.set_step_status(
+                task_id,
+                node,
+                "running",
+                message="子步骤执行中（晚到补采）" if force else "子步骤执行中",
+                skip_phase_rollup=True,
+                force_reopen=force,
+            )
 
     def _maybe_complete_phase_shell(self, task_id: str, execution_step_key: str) -> None:
-        shell = phase_shell_of_execution_step(execution_step_key)
-        if not shell:
+        """业务步终态后收口父节点/七大壳。
+
+        - 直接业务步（如 step7_posts）：收口其映射父（phase_content）
+        - 深叶（如 step7_post_*）：映射为空，仍向上尝试收口已终态的七大壳
+          （修复：壳被深叶点亮后，仅关 step7_posts 时漏收口导致 phase_content 永久 running）
+        """
+        mapped = phase_shell_of_execution_step(execution_step_key)
+        if mapped:
+            self._try_complete_parent_if_children_done(task_id, mapped)
+            # mapped 可能是中间父（如 step5_streams），继续向七大壳收口
+            if not is_phase_shell(mapped):
+                shell_parent = self._lookup_parent_step_key(task_id, mapped)
+                if shell_parent and is_phase_shell(shell_parent):
+                    self._try_complete_parent_if_children_done(task_id, shell_parent)
             return
-        children = direct_execution_children(shell)
-        if not children:
-            return
-        for child in children:
-            st = get_step_status(task_id, child)
-            if st not in {"completed", "skipped", "failed"}:
+        # 深叶：沿父链找到七大壳再尝试收口
+        parent = self._lookup_parent_step_key(task_id, execution_step_key)
+        seen = set()
+        while parent and parent not in seen and parent != STEP_PLAN_KEY:
+            seen.add(parent)
+            if is_phase_shell(parent):
+                self._try_complete_parent_if_children_done(task_id, parent)
                 return
-        cur = get_step_status(task_id, shell)
-        if cur == "completed":
-            return
+            parent = self._lookup_parent_step_key(task_id, parent)
+
+    def _try_complete_parent_if_children_done(self, task_id: str, parent: str) -> bool:
+        """若 parent 下直接子步均已终态，则标 completed。返回是否已是终态。"""
+        cur = get_step_status(task_id, parent)
+        if cur in {"completed", "skipped"}:
+            return True
+        rows = db.fetch_all(
+            "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
+            (task_id, parent),
+        )
+        statuses: List[str] = []
+        if rows:
+            statuses = [str(r.get("status") or "") for r in rows]
+        else:
+            for child in direct_execution_children(parent):
+                st = get_step_status(task_id, child)
+                statuses.append(st or "")
+        if not statuses:
+            return False
+        if any(st not in {"completed", "skipped", "failed"} for st in statuses):
+            return False
+        msg = (
+            "阶段内业务步骤已全部终态"
+            if is_phase_shell(parent)
+            else "子步骤已全部终态"
+        )
         self.set_step_status(
             task_id,
-            shell,
+            parent,
             "completed",
-            message="阶段内业务步骤已全部终态",
+            message=msg,
             skip_phase_rollup=True,
         )
+        return True
 
     def ensure_step_row(self, task_id: str, step_key: str) -> None:
         """旧任务可能缺少 step4_profiles 等新步骤行。"""

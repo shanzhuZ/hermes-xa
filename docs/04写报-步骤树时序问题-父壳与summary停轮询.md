@@ -1,6 +1,6 @@
 # 04写报 · 步骤树时序问题（父壳点亮 / summary 停轮询）
 
-> 状态：问题 3 已改代码；问题 1/2 已定位，待改  
+> 状态：问题 1、问题 3 已改代码；问题 2 已定位，待改  
 > 样本任务：`2176e502-0faf-4218-8713-9d2a9abd1776`（已手工补标 `completed`）  
 > 日期：2026-07-29
 
@@ -52,13 +52,16 @@ step_plan
 
 任意 `step7_post_*` 变为 `running` 时，`step7_posts` 与 `phase_content` 应 **先于或同时** 变为 `running`。
 
-### 拟改方案（待实施）
+### 已改方案（2026-07-29）
 
-1. **最小修复**：凡将 `step7_post_*` 设为 `running` 的路径（`sink` / `_sync_platform_collect_steps` 等），写子步**之后**立刻再调 `start_step7_if_ready` 或 `ensure_step7_parent_active`。  
-2. **链路补全**：`_ensure_phase_shell_running` 对 `step7_post_*` / `step4_profile_*` 沿 `parent_step_key` 向上：先中间父，再七大壳。  
-3. **（可选）防抢跑收紧**：已有子步 running 或已有发文工具记录时，禁止 `ensure_step7_awaits_agent_tool` 把父壳打回 pending。
+1. **链路补全**（`task_store._ensure_phase_shell_running`）：对深叶沿 `parent_step_key` 向上点亮整条链（先中间父，再七大壳）。约定映射见 `phases.immediate_parent_step_key`。  
+   - `step7_post_*` → `step7_posts` → `phase_content`  
+   - `step4_profile_*` → `step4_profiles` → `phase_account_collect`  
+   - `step5_stream_*` → `step5_streams` → `phase_collision`  
+2. **防抢跑收紧**（`ensure_step7_awaits_agent_tool`）：已有子步 `running`/`completed` 时禁止把父壳/父节点打回 `pending`。  
+3. **收口对称**（2026-07-29 晚间补丁）：深叶点亮壳后，`step7_posts` completed 时必须收口 `phase_content`；`_maybe_complete_phase_shell` 按库内子步判断并沿父链收口；`force_close_step7_posts_if_ready` 后显式再滚一次壳。  
 
-建议落地：**1 + 2**。
+凡 `set_step_status(深叶 → running)` 的路径自动点亮；终态路径对称收口。
 
 ---
 
@@ -152,8 +155,8 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 
 | 主题 | 位置 |
 |------|------|
-| 壳映射 / 深叶不滚壳 | `scripts/report_04/phases.py` → `EXECUTION_PARENT_SHELL`、`phase_shell_of_execution_step` |
-| 点亮壳 | `scripts/report_04/task_store.py` → `_ensure_phase_shell_running`、`start_step7_if_ready` |
+| 壳映射 / 深叶不滚壳 | `scripts/report_04/phases.py` → `EXECUTION_PARENT_SHELL`、`immediate_parent_step_key` |
+| 点亮壳（沿父链） | `scripts/report_04/task_store.py` → `_ensure_phase_shell_running`、`_parent_chain_to_phase_shell` |
 | 父节点滞后补亮 | `scripts/report_04/step_reconcile.py` → `ensure_step7_parent_active` |
 | 防抢跑降级 | `scripts/report_04/step_reconcile.py` → `ensure_step7_awaits_agent_tool` |
 | 终稿 summary + step11 | `scripts/report_04/sink.py` → `_complete_step11_from_report` |
@@ -166,7 +169,7 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 ## 实施清单
 
 - [x] 问题 3：终稿后立刻标 completed；continue 有终稿时补标  
-- [ ] 问题 1：子步 running 后立刻保证 `step7_posts` + `phase_content` running（方案 1+2）  
+- [x] 问题 1：子步 running 时沿父链点亮 `step7_posts` + `phase_content`；防抢跑不打回已开跑子步  
 - [ ] 问题 2：tree 增加停轮询标志位，`account_report` 双条件、其它类型仅 summary  
 - [ ] 与前端约定标志位字段名与取值（`true`/`false`）  
 - [ ] 用新跑 04 任务验收：历史在终稿后变为已完成；发文父壳不晚于子步；停轮询标志位按 taskType 分支  
@@ -179,3 +182,5 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 |------|------|
 | 2026-07-29 | 初稿：问题 1/2 定位、样本时间线、拟改方案与标志位按 taskType 分支说明 |
 | 2026-07-29 | 问题 3：历史「进行中」根因与 sink/continue 补标已落地；样本任务补 completed |
+| 2026-07-29 | 问题 1：`_ensure_phase_shell_running` 沿父链点亮；`ensure_step7_awaits_agent_tool` 收紧 |
+| 2026-07-29 | 问题 1 补丁：壳收口对称 + 同 session 禁止 Hook 重放建幽灵任务；样本 31f9 phase_content 已补 completed |
