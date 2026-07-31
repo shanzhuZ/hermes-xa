@@ -1,6 +1,6 @@
 # 04写报 · 步骤树时序问题（父壳点亮 / summary 停轮询）
 
-> 状态：问题 1、问题 3 已改代码；问题 2 已定位，待改  
+> 状态：问题 1、2、3 已改代码（问题 2 需前端改用 `pollDone`）  
 > 样本任务：`2176e502-0faf-4218-8713-9d2a9abd1776`（已手工补标 `completed`）  
 > 日期：2026-07-29
 
@@ -97,23 +97,25 @@ step_plan
 
 停轮询时，树上「7. 报告生成」已是 `completed`，且 summary 可用。
 
-### 拟改方案（待实施 · 已选 tree 标志位）
+### 拟改方案（已实施 · tree 标志位 `pollDone`）
 
-在 tree 响应中**新增标志位**（字段名待定，如 `pollDone` / `tree_ready` / `report_ready`）：
+在 tree 响应中新增布尔字段 **`pollDone`**：
 
-| 条件 | 标志位 |
+| 条件 | `pollDone` |
 |------|--------|
 | `taskType == account_report` | `summary 有值` **且** `phase_report.status == completed` → `true` |
 | 其它类型（01/02/03） | `summary 有值` → `true`（与现网停轮询语义一致） |
 
-前端改为根据该标志位决定是否继续轮询 tree。
+前端改为根据 `pollDone` 决定是否继续轮询 tree（勿再仅凭 `summary != null`）。
+
+实现：`TaskTreeQueryService.buildTaskTree` → `resolvePollDone`。
 
 ### 对 01/02/03 的影响
 
 - tree 接口四类共用；**不需要**增加请求传参。  
 - `task_type` 已由 `taskId` 查库得到，响应里已有 `taskType`。  
-- **必须按 `taskType` 分支**计算标志位：01/02/03 无 `phase_report`，若统一要求壳 completed，标志位永远 false，会导致一直轮询。  
-- 按上表分支后：**不影响另外三类任务**。
+- **按 `taskType` 分支**计算标志位：01/02/03 无 `phase_report`，不要求壳 completed。  
+- 按上表分支后：**不影响另外三类任务**（逻辑与「有 summary 即停」等价）。
 
 可选兜底（未选，仅备忘）：
 
@@ -162,7 +164,7 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 | 终稿 summary + step11 | `scripts/report_04/sink.py` → `_complete_step11_from_report` |
 | 任务 completed | `scripts/report_04/engine.py` → `_try_finalize_report` |
 | 续跑补标 | `scripts/report_04/session_continue.py` → `_ensure_completed_if_final_report` |
-| tree 组装 | `clients/hermes-xa/.../TaskTreeQueryService.java` → `buildTaskTree` |
+| tree 组装 / pollDone | `clients/hermes-xa/.../TaskTreeQueryService.java` → `buildTaskTree`、`resolvePollDone` |
 
 ---
 
@@ -170,9 +172,9 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 
 - [x] 问题 3：终稿后立刻标 completed；continue 有终稿时补标  
 - [x] 问题 1：子步 running 时沿父链点亮 `step7_posts` + `phase_content`；防抢跑不打回已开跑子步  
-- [ ] 问题 2：tree 增加停轮询标志位，`account_report` 双条件、其它类型仅 summary  
-- [ ] 与前端约定标志位字段名与取值（`true`/`false`）  
-- [ ] 用新跑 04 任务验收：历史在终稿后变为已完成；发文父壳不晚于子步；停轮询标志位按 taskType 分支  
+- [x] 问题 2：tree 增加 `pollDone`，`account_report` 双条件、其它类型仅 summary  
+- [ ] 前端改为按 `pollDone` 停轮询（勿再仅凭 summary）  
+- [ ] 用新跑 04 任务验收：有 summary 但 phase_report 未完成时 `pollDone=false`；壳 completed 后为 true；01/02/03 仅 summary 即 true  
 
 ---
 
@@ -184,3 +186,4 @@ History 映射本身正确：`status=running` → 进行中。根因在写报侧
 | 2026-07-29 | 问题 3：历史「进行中」根因与 sink/continue 补标已落地；样本任务补 completed |
 | 2026-07-29 | 问题 1：`_ensure_phase_shell_running` 沿父链点亮；`ensure_step7_awaits_agent_tool` 收紧 |
 | 2026-07-29 | 问题 1 补丁：壳收口对称 + 同 session 禁止 Hook 重放建幽灵任务；样本 31f9 phase_content 已补 completed |
+| 2026-07-30 | 问题 2：tree 响应增加 `pollDone`（04 双条件 / 其它仅 summary） |

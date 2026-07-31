@@ -83,8 +83,12 @@ public class TaskTreeQueryService {
         root.put("detailRef", "/api/tasks/" + taskId + "/nodes/user_query");
 
         Map<String, Object> summary = null;
+        boolean hasSummary = false;
         if (summaryRow != null && !summaryRow.isEmpty()) {
             String content = stringVal(summaryRow.get("content"));
+            if (!content.isEmpty()) {
+                hasSummary = true;
+            }
             summary = new LinkedHashMap<String, Object>();
             summary.put("id", "summary");
             summary.put("type", "summary");
@@ -99,6 +103,9 @@ public class TaskTreeQueryService {
             summary.put("detailRef", "/api/tasks/" + taskId + "/nodes/summary");
         }
 
+        // 停轮询标志：01/02/03 仅需 summary；04 还须 phase_report 已 completed（避免壳未画完就停）
+        boolean pollDone = resolvePollDone(taskType, hasSummary, steps);
+
         Map<String, Object> tree = new LinkedHashMap<String, Object>();
         tree.put("taskId", taskId);
         tree.put("taskType", task.get("task_type"));
@@ -109,7 +116,39 @@ public class TaskTreeQueryService {
         tree.put("root", root);
         tree.put("nodes", nodes);
         tree.put("summary", summary);
+        tree.put("pollDone", Boolean.valueOf(pollDone));
         return tree;
+    }
+
+    /**
+     * 前端是否可停止轮询 tree。
+     * <ul>
+     *   <li>account_report：有 summary 且 phase_report == completed</li>
+     *   <li>其它类型：有 summary（与现网「见 summary 停轮询」一致）</li>
+     * </ul>
+     */
+    private boolean resolvePollDone(
+            String taskType, boolean hasSummary, List<Map<String, Object>> steps) {
+        if (!hasSummary) {
+            return false;
+        }
+        if (!"account_report".equals(taskType)) {
+            return true;
+        }
+        return "completed".equals(findStepStatus(steps, "phase_report"));
+    }
+
+    /** 从步骤行列表取 step_key 对应 status；找不到返回空串。 */
+    private String findStepStatus(List<Map<String, Object>> steps, String stepKey) {
+        if (steps == null || stepKey == null || stepKey.isEmpty()) {
+            return "";
+        }
+        for (Map<String, Object> step : steps) {
+            if (stepKey.equals(stringVal(step.get("step_key")))) {
+                return stringVal(step.get("status"));
+            }
+        }
+        return "";
     }
 
     /**
