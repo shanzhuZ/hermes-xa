@@ -1,0 +1,91 @@
+[
+  {
+    "id": "summary",
+    "type": "summary",
+    "todayUsage": 5,
+    "historyTaskTotal": 959,
+    "historyTaskCompletionRate": 98,
+    "agentTotal": 1021,
+    "agentOnline": 990,
+    "agentOnlineRate": 97,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-07-28",
+    "type": "daily",
+    "date": "2026-07-28",
+    "verifyCount": 5,
+    "reportCount": 3,
+    "socialCount": 1820,
+    "businessCount": 420,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-07-29",
+    "type": "daily",
+    "date": "2026-07-29",
+    "verifyCount": 4,
+    "reportCount": 6,
+    "socialCount": 1950,
+    "businessCount": 380,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-07-30",
+    "type": "daily",
+    "date": "2026-07-30",
+    "verifyCount": 7,
+    "reportCount": 2,
+    "socialCount": 1680,
+    "businessCount": 450,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-07-31",
+    "type": "daily",
+    "date": "2026-07-31",
+    "verifyCount": 3,
+    "reportCount": 5,
+    "socialCount": 2100,
+    "businessCount": 510,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-08-01",
+    "type": "daily",
+    "date": "2026-08-01",
+    "verifyCount": 6,
+    "reportCount": 4,
+    "socialCount": 1880,
+    "businessCount": 470,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-08-02",
+    "type": "daily",
+    "date": "2026-08-02",
+    "verifyCount": 2,
+    "reportCount": 7,
+    "socialCount": 2050,
+    "businessCount": 490,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  },
+  {
+    "id": "daily_2026-08-03",
+    "type": "daily",
+    "date": "2026-08-03",
+    "verifyCount": 3,
+    "reportCount": 2,
+    "socialCount": 960,
+    "businessCount": 220,
+    "updatedAt": "2026-08-03 12:00:00",
+    "remark": "seed"
+  }
+]

@@ -1,0 +1,16 @@
+[
+  {
+    "user_id": "10001",
+    "username": "admin",
+    "password": "admin123",
+    "status": "active",
+    "createTime": "2026-08-01 10:00:00"
+  },
+  {
+    "user_id": "10002",
+    "username": "demo",
+    "password": "demo123",
+    "status": "active",
+    "createTime": "2026-08-01 10:00:00"
+  }
+]

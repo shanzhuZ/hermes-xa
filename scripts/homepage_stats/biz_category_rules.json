@@ -1,0 +1,42 @@
+{
+  "说明": "L4 MCP 工具 → 首页业务分类。按所属 L2 分类判定；定时脚本增加 accountCount 后按此规则汇总进日表。",
+  "规则": [
+    {
+      "bizType": "social",
+      "中文": "社交类调用统计",
+      "匹配L2": ["cat_collect", "cat_scan"],
+      "L2名称": ["采集智能体", "多平台账号扫描"],
+      "写入字段": "socialCount",
+      "说明": "社交平台采集 + 跨平台扫描类 MCP，accountCount 增量计入社交类曲线"
+    },
+    {
+      "bizType": "business",
+      "中文": "业务专属类调用统计",
+      "匹配L2": ["cat_report"],
+      "L2名称": ["报告生产智能体"],
+      "写入字段": "businessCount",
+      "说明": "报告/API/图表等业务专属 MCP，accountCount 增量计入业务专属曲线"
+    },
+    {
+      "bizType": "verify_mcp",
+      "中文": "核查类 MCP（仅涨节点 accountCount，不进核查图表）",
+      "匹配L2": ["cat_verify"],
+      "L2名称": ["账号核查智能体"],
+      "写入字段": null,
+      "说明": "核查柱状图/调研核查曲线由「今日用量拆分」驱动，与 MCP 增量脱钩，避免和写报+核查=今日用量冲突"
+    }
+  ],
+  "非MCP随机字段": {
+    "todayUsage": "每次定时 +1~3（写死随机）",
+    "reportCount": "写报类，随机拆分",
+    "verifyCount": "账号核查柱状图 = 调研趋势核查曲线，同一字段；与写报拆分之和 = 本次今日用量增量",
+    "约束": "ΔreportCount + ΔverifyCount == ΔtodayUsage"
+  },
+  "写死字段": {
+    "agentTotal": 1021,
+    "agentOnline": 990,
+    "agentOnlineRate": 97,
+    "historyTaskCompletionRate": 98,
+    "说明": "Agent总数/在线数/在线率/历史任务完成率写死，定时脚本不改；比率单位为百分比整数"
+  }
+}

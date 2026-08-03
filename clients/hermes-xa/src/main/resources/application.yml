@@ -8,8 +8,16 @@ server:
     connection-timeout: 600000
   max-http-form-post-size: -1
 
-
-
+# 大屏 agent_node ES（与 scripts/agent_node/seed_es.py 对齐）
+es:
+  host: 192.168.3.226
+  port: 9201
+  scheme: https
+  username: elastic
+  password: "i7Smzj2wVUndynjJXXv76A=="
+  connect-timeout: 10000
+  socket-timeout: 600000
+  agent-node-index: hermes_xa_agent_node
 
 ribbon:
   ReadTimeout: 30000;

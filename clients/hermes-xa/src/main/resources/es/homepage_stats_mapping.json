@@ -1,0 +1,31 @@
+{
+  "settings": {
+    "number_of_shards": 1,
+    "number_of_replicas": 0
+  },
+  "mappings": {
+    "properties": {
+      "id": { "type": "keyword" },
+      "type": { "type": "keyword" },
+      "date": {
+        "type": "date",
+        "format": "yyyy-MM-dd||epoch_millis||strict_date_optional_time"
+      },
+      "todayUsage": { "type": "integer" },
+      "historyTaskTotal": { "type": "integer" },
+      "agentTotal": { "type": "integer" },
+      "agentOnline": { "type": "integer" },
+      "agentOnlineRate": { "type": "integer" },
+      "historyTaskCompletionRate": { "type": "integer" },
+      "verifyCount": { "type": "integer" },
+      "reportCount": { "type": "integer" },
+      "socialCount": { "type": "integer" },
+      "businessCount": { "type": "integer" },
+      "updatedAt": {
+        "type": "date",
+        "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis||strict_date_optional_time"
+      },
+      "remark": { "type": "keyword" }
+    }
+  }
+}

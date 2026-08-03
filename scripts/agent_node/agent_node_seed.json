@@ -1,0 +1,5402 @@
+[
+  {
+    "id": "root",
+    "parentId": "",
+    "name": "共计包含45Agent",
+    "level": 1,
+    "type": "root",
+    "description": "大屏智能体总管节点（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "system",
+    "createTime": "2026-07-01 10:00:00",
+    "badgeCount": 45,
+    "displayConfig": {
+      "show": true,
+      "weight": 1000,
+      "displayCount": 4
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 50493,
+      "platformCount": 45,
+      "lastActive": "刚刚"
+    }
+  },
+  {
+    "id": "cat_collect",
+    "parentId": "root",
+    "name": "采集智能体",
+    "level": 2,
+    "type": "category",
+    "description": "多平台主页/发文 MCP 与 Apify 采集能力集合",
+    "status": "online",
+    "version": "v1.2",
+    "creator": "system",
+    "createTime": "2026-07-01 10:05:00",
+    "badgeCount": 77,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 14,
+      "accountCount": 22960,
+      "platformCount": 14,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cat_scan",
+    "parentId": "root",
+    "name": "多平台账号扫描",
+    "level": 2,
+    "type": "category",
+    "description": "跨平台账号发现与扫描智能体",
+    "status": "online",
+    "version": "v1.2",
+    "creator": "system",
+    "createTime": "2026-07-01 10:05:00",
+    "badgeCount": 47,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 10,
+      "accountCount": 23170,
+      "platformCount": 10,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cat_verify",
+    "parentId": "root",
+    "name": "账号核查智能体",
+    "level": 2,
+    "type": "category",
+    "description": "文本/图片核验与相似账号认定",
+    "status": "online",
+    "version": "v1.2",
+    "creator": "system",
+    "createTime": "2026-07-01 10:05:00",
+    "badgeCount": 42,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 9,
+      "accountCount": 3400,
+      "platformCount": 9,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cat_report",
+    "parentId": "root",
+    "name": "报告生产智能体",
+    "level": 2,
+    "type": "category",
+    "description": "画像报告与外部智能体 API 编排",
+    "status": "online",
+    "version": "v1.2",
+    "creator": "system",
+    "createTime": "2026-07-01 10:05:00",
+    "badgeCount": 54,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 12,
+      "accountCount": 963,
+      "platformCount": 12,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_fb",
+    "parentId": "cat_collect",
+    "name": "Apify-Facebook-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Apify-Facebook-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 8,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 8,
+      "accountCount": 8200,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_weixin",
+    "parentId": "cat_collect",
+    "name": "Weixin-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Weixin-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 1250,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_weibo",
+    "parentId": "cat_collect",
+    "name": "微博-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "微博-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 85,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 1990,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_bilibili",
+    "parentId": "cat_collect",
+    "name": "BILIBILI-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "BILIBILI-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 1600,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_reddit",
+    "parentId": "cat_collect",
+    "name": "Reddit-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Reddit-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 730,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_youtube",
+    "parentId": "cat_collect",
+    "name": "Youtube-MCP采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Youtube-MCP采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 2580,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_tiktok",
+    "parentId": "cat_collect",
+    "name": "TikTok-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "TikTok-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 55,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 1680,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_instagram",
+    "parentId": "cat_collect",
+    "name": "Instagram-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Instagram-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": false,
+      "weight": 50,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 1600,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_github",
+    "parentId": "cat_collect",
+    "name": "GitHub-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "GitHub-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 45,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 860,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_telegram",
+    "parentId": "cat_collect",
+    "name": "Telegram-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Telegram-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": false,
+      "weight": 40,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 790,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_linkedin",
+    "parentId": "cat_collect",
+    "name": "LinkedIn-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "LinkedIn-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": false,
+      "weight": 35,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 740,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_vk",
+    "parentId": "cat_collect",
+    "name": "VK-Apify采集",
+    "level": 3,
+    "type": "agent",
+    "description": "VK-Apify采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 30,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 430,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_twitch",
+    "parentId": "cat_collect",
+    "name": "Twitch频道采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Twitch频道采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 28,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 310,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_discord",
+    "parentId": "cat_collect",
+    "name": "Discord发现采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Discord发现采集",
+    "status": "online",
+    "version": "v1.1",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 25,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "agent_x_api",
+    "parentId": "cat_report",
+    "name": "X智能体API",
+    "level": 3,
+    "type": "agent",
+    "description": "X智能体API",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 133,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_report_writer",
+    "parentId": "cat_report",
+    "name": "画像报告生成Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "画像报告生成Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 95,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 238,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_google_api",
+    "parentId": "cat_report",
+    "name": "Google智能体API",
+    "level": 3,
+    "type": "agent",
+    "description": "Google智能体API",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 98,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_deepseek",
+    "parentId": "cat_report",
+    "name": "DeepSeek分析API",
+    "level": 3,
+    "type": "agent",
+    "description": "DeepSeek分析API",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 85,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 72,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_perplexity",
+    "parentId": "cat_report",
+    "name": "Perplexity智能体API",
+    "level": 3,
+    "type": "agent",
+    "description": "Perplexity智能体API",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 83,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_openai",
+    "parentId": "cat_report",
+    "name": "OpenAI分析API",
+    "level": 3,
+    "type": "agent",
+    "description": "OpenAI分析API",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 75,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 60,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_google_search",
+    "parentId": "cat_report",
+    "name": "Google 搜索引擎",
+    "level": 3,
+    "type": "agent",
+    "description": "Google 搜索引擎",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 64,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_chart",
+    "parentId": "cat_report",
+    "name": "图表叙事Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "图表叙事Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 65,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 41,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_cite_pack",
+    "parentId": "cat_report",
+    "name": "证据打包Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "证据打包Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 44,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_review",
+    "parentId": "cat_report",
+    "name": "报告质检Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "报告质检Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 55,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 37,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_export",
+    "parentId": "cat_report",
+    "name": "报告导出Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "报告导出Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 50,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 53,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_brief",
+    "parentId": "cat_report",
+    "name": "简报压缩Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "简报压缩Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 45,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 40,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_twitter",
+    "parentId": "cat_scan",
+    "name": "Twitter采集",
+    "level": 3,
+    "type": "agent",
+    "description": "Twitter采集",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 8,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 8,
+      "accountCount": 13600,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_seed_lock",
+    "parentId": "cat_scan",
+    "name": "种子锁定扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "种子锁定扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 95,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 2550,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_maigret_scan",
+    "parentId": "cat_scan",
+    "name": "Maigret跨平台扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "Maigret跨平台扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 2350,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_web_scan",
+    "parentId": "cat_scan",
+    "name": "网页检索扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "网页检索扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 3
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 1160,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_handle_norm",
+    "parentId": "cat_scan",
+    "name": "Handle规范化Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "Handle规范化Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 1080,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_email_scan",
+    "parentId": "cat_scan",
+    "name": "邮箱线索扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "邮箱线索扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 520,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_username_guess",
+    "parentId": "cat_scan",
+    "name": "用户名变体扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "用户名变体扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 55,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 700,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_phone_scan",
+    "parentId": "cat_scan",
+    "name": "电话线索扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "电话线索扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 50,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 390,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_url_expand",
+    "parentId": "cat_scan",
+    "name": "短链展开扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "短链展开扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 40,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 420,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_geo_hint",
+    "parentId": "cat_scan",
+    "name": "地理线索扫描",
+    "level": 3,
+    "type": "agent",
+    "description": "地理线索扫描",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 35,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 400,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_text_verify",
+    "parentId": "cat_verify",
+    "name": "文本流核验Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "文本流核验Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 610,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_validate",
+    "parentId": "cat_verify",
+    "name": "相似账号认定Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "相似账号认定Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 95,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 570,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_image_verify",
+    "parentId": "cat_verify",
+    "name": "图片流核验Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "图片流核验Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 5,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 5,
+      "accountCount": 500,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_osint_es",
+    "parentId": "cat_verify",
+    "name": "社工库ES核验Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "社工库ES核验Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 4,
+      "accountCount": 270,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_collision",
+    "parentId": "cat_verify",
+    "name": "关联碰撞Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "关联碰撞Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 420,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_pii_check",
+    "parentId": "cat_verify",
+    "name": "PII风险核验Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "PII风险核验Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 290,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_timeline",
+    "parentId": "cat_verify",
+    "name": "活跃时序核验Agent",
+    "level": 3,
+    "type": "agent",
+    "description": "活跃时序核验Agent",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": true,
+      "weight": 50,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 290,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_lang_verify",
+    "parentId": "cat_verify",
+    "name": "语言一致性核验",
+    "level": 3,
+    "type": "agent",
+    "description": "语言一致性核验",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 45,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 240,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "agent_link_verify",
+    "parentId": "cat_verify",
+    "name": "外链可信核验",
+    "level": 3,
+    "type": "agent",
+    "description": "外链可信核验",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-02 10:00:00",
+    "badgeCount": 3,
+    "displayConfig": {
+      "show": false,
+      "weight": 40,
+      "displayCount": 2
+    },
+    "stats": {
+      "childCount": 3,
+      "accountCount": 210,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_bilibili_user",
+    "parentId": "agent_bilibili",
+    "name": "用户信息采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户信息采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 16,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 500,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_bilibili_video",
+    "parentId": "agent_bilibili",
+    "name": "视频列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "视频列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 93,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 480,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_bilibili_dynamic",
+    "parentId": "agent_bilibili",
+    "name": "动态列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "动态列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 67,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 260,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_bilibili_following",
+    "parentId": "agent_bilibili",
+    "name": "关注列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "关注列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 94,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 190,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_bilibili_stat",
+    "parentId": "agent_bilibili",
+    "name": "频道统计采集",
+    "level": 4,
+    "type": "capability",
+    "description": "频道统计采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 74,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 170,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_brief_one_pager",
+    "parentId": "agent_brief",
+    "name": "一页纸简报",
+    "level": 4,
+    "type": "capability",
+    "description": "一页纸简报（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 16,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_brief_bullet",
+    "parentId": "agent_brief",
+    "name": "要点列表",
+    "level": 4,
+    "type": "capability",
+    "description": "要点列表（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 15,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 14,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_brief_slide",
+    "parentId": "agent_brief",
+    "name": "幻灯提纲",
+    "level": 4,
+    "type": "capability",
+    "description": "幻灯提纲（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 11,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 10,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_chart_timeline",
+    "parentId": "agent_chart",
+    "name": "时间线图表",
+    "level": 4,
+    "type": "capability",
+    "description": "时间线图表（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 16,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 15,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_chart_network",
+    "parentId": "agent_chart",
+    "name": "关系网络图",
+    "level": 4,
+    "type": "capability",
+    "description": "关系网络图（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 15,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 14,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_chart_stats",
+    "parentId": "agent_chart",
+    "name": "统计卡片",
+    "level": 4,
+    "type": "capability",
+    "description": "统计卡片（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 12,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_cite_pack_quote",
+    "parentId": "agent_cite_pack",
+    "name": "原文摘录",
+    "level": 4,
+    "type": "capability",
+    "description": "原文摘录（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 19,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 18,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_cite_pack_link",
+    "parentId": "agent_cite_pack",
+    "name": "证据链接归档",
+    "level": 4,
+    "type": "capability",
+    "description": "证据链接归档（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 16,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_cite_pack_hash",
+    "parentId": "agent_cite_pack",
+    "name": "证据指纹",
+    "level": 4,
+    "type": "capability",
+    "description": "证据指纹（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 11,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 10,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_collision_graph",
+    "parentId": "agent_collision",
+    "name": "关系图构建",
+    "level": 4,
+    "type": "capability",
+    "description": "关系图构建（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_collision_bridge",
+    "parentId": "agent_collision",
+    "name": "桥接账号发现",
+    "level": 4,
+    "type": "capability",
+    "description": "桥接账号发现（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_collision_cluster",
+    "parentId": "agent_collision",
+    "name": "聚类分组",
+    "level": 4,
+    "type": "capability",
+    "description": "聚类分组（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_deepseek_reason",
+    "parentId": "agent_deepseek",
+    "name": "深度推理",
+    "level": 4,
+    "type": "capability",
+    "description": "深度推理（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 27,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 26,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_deepseek_json",
+    "parentId": "agent_deepseek",
+    "name": "结构化结论",
+    "level": 4,
+    "type": "capability",
+    "description": "结构化结论（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 25,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 24,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_deepseek_zh",
+    "parentId": "agent_deepseek",
+    "name": "中文长文生成",
+    "level": 4,
+    "type": "capability",
+    "description": "中文长文生成（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 23,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 22,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_discord_invite",
+    "parentId": "agent_discord",
+    "name": "邀请链接解析",
+    "level": 4,
+    "type": "capability",
+    "description": "邀请链接解析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_discord_guild",
+    "parentId": "agent_discord",
+    "name": "服务器信息采集",
+    "level": 4,
+    "type": "capability",
+    "description": "服务器信息采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 71,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 70,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_discord_member",
+    "parentId": "agent_discord",
+    "name": "成员采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "成员采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 51,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 50,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_email_scan_extract",
+    "parentId": "agent_email_scan",
+    "name": "简介邮箱提取",
+    "level": 4,
+    "type": "capability",
+    "description": "简介邮箱提取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 47,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 240,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_email_scan_domain",
+    "parentId": "agent_email_scan",
+    "name": "域名关联检索",
+    "level": 4,
+    "type": "capability",
+    "description": "域名关联检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_email_scan_verify_fmt",
+    "parentId": "agent_email_scan",
+    "name": "邮箱格式校验",
+    "level": 4,
+    "type": "capability",
+    "description": "邮箱格式校验（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_export_md",
+    "parentId": "agent_export",
+    "name": "Markdown 导出",
+    "level": 4,
+    "type": "capability",
+    "description": "Markdown 导出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 21,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 20,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_export_pdf",
+    "parentId": "agent_export",
+    "name": "PDF 导出",
+    "level": 4,
+    "type": "capability",
+    "description": "PDF 导出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 16,
+    "displayConfig": {
+      "show": false,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 15,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_export_json",
+    "parentId": "agent_export",
+    "name": "结构化 JSON 导出",
+    "level": 4,
+    "type": "capability",
+    "description": "结构化 JSON 导出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 19,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 18,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_following",
+    "parentId": "agent_fb",
+    "name": "关注列表检索",
+    "level": 4,
+    "type": "capability",
+    "description": "关注列表检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 37,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 1200,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_followers",
+    "parentId": "agent_fb",
+    "name": "粉丝列表检索",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝列表检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 11,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 980,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_user_search",
+    "parentId": "agent_fb",
+    "name": "用户检索",
+    "level": 4,
+    "type": "capability",
+    "description": "用户检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 46,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 1500,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_profile",
+    "parentId": "agent_fb",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 2100,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_posts",
+    "parentId": "agent_fb",
+    "name": "历史发文采集",
+    "level": 4,
+    "type": "capability",
+    "description": "历史发文采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 25,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 800,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_keyword",
+    "parentId": "agent_fb",
+    "name": "关键词搜索",
+    "level": 4,
+    "type": "capability",
+    "description": "关键词搜索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 59,
+    "displayConfig": {
+      "show": false,
+      "weight": 50,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 640,
+      "platformCount": 1,
+      "lastActive": "6 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_groups",
+    "parentId": "agent_fb",
+    "name": "群组信息采集",
+    "level": 4,
+    "type": "capability",
+    "description": "群组信息采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 33,
+    "displayConfig": {
+      "show": true,
+      "weight": 40,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 420,
+      "platformCount": 1,
+      "lastActive": "7 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_fb_pages",
+    "parentId": "agent_fb",
+    "name": "公共主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "公共主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 76,
+    "displayConfig": {
+      "show": true,
+      "weight": 30,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 560,
+      "platformCount": 1,
+      "lastActive": "8 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_geo_hint_bio_geo",
+    "parentId": "agent_geo_hint",
+    "name": "简介地名抽取",
+    "level": 4,
+    "type": "capability",
+    "description": "简介地名抽取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_geo_hint_tz",
+    "parentId": "agent_geo_hint",
+    "name": "时区推断",
+    "level": 4,
+    "type": "capability",
+    "description": "时区推断（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": false,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_geo_hint_lang",
+    "parentId": "agent_geo_hint",
+    "name": "语言分布统计",
+    "level": 4,
+    "type": "capability",
+    "description": "语言分布统计（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_github_profile",
+    "parentId": "agent_github",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 50,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 340,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_github_repos",
+    "parentId": "agent_github",
+    "name": "仓库列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "仓库列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 10,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 300,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_github_stars",
+    "parentId": "agent_github",
+    "name": "Star 列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "Star 列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_github_followers",
+    "parentId": "agent_github",
+    "name": "粉丝列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_api_ground",
+    "parentId": "agent_google_api",
+    "name": "检索增强生成",
+    "level": 4,
+    "type": "capability",
+    "description": "检索增强生成（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 31,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 30,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_api_vision",
+    "parentId": "agent_google_api",
+    "name": "多模态分析",
+    "level": 4,
+    "type": "capability",
+    "description": "多模态分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 29,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 28,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_api_code",
+    "parentId": "agent_google_api",
+    "name": "结构化抽取",
+    "level": 4,
+    "type": "capability",
+    "description": "结构化抽取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 23,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 22,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_api_safety",
+    "parentId": "agent_google_api",
+    "name": "安全过滤",
+    "level": 4,
+    "type": "capability",
+    "description": "安全过滤（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 19,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 18,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_search_web",
+    "parentId": "agent_google_search",
+    "name": "网页检索",
+    "level": 4,
+    "type": "capability",
+    "description": "网页检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 21,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 20,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_search_extract",
+    "parentId": "agent_google_search",
+    "name": "页面抽取",
+    "level": 4,
+    "type": "capability",
+    "description": "页面抽取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 19,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 18,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_search_image",
+    "parentId": "agent_google_search",
+    "name": "图片检索",
+    "level": 4,
+    "type": "capability",
+    "description": "图片检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 12,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_google_search_news",
+    "parentId": "agent_google_search",
+    "name": "新闻检索",
+    "level": 4,
+    "type": "capability",
+    "description": "新闻检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 15,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 14,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_handle_norm_normalize",
+    "parentId": "agent_handle_norm",
+    "name": "账号名规范化",
+    "level": 4,
+    "type": "capability",
+    "description": "账号名规范化（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 16,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 500,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_handle_norm_dedupe",
+    "parentId": "agent_handle_norm",
+    "name": "跨平台去重",
+    "level": 4,
+    "type": "capability",
+    "description": "跨平台去重（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 33,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 420,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_handle_norm_alias",
+    "parentId": "agent_handle_norm",
+    "name": "别名映射",
+    "level": 4,
+    "type": "capability",
+    "description": "别名映射（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_image_verify_ocr",
+    "parentId": "agent_image_verify",
+    "name": "OCR文字提取",
+    "level": 4,
+    "type": "capability",
+    "description": "OCR文字提取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_image_verify_vision",
+    "parentId": "agent_image_verify",
+    "name": "Vision头像分析",
+    "level": 4,
+    "type": "capability",
+    "description": "Vision头像分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 34,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 130,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_image_verify_face",
+    "parentId": "agent_image_verify",
+    "name": "人脸相似度",
+    "level": 4,
+    "type": "capability",
+    "description": "人脸相似度（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_image_verify_logo",
+    "parentId": "agent_image_verify",
+    "name": "Logo/水印检测",
+    "level": 4,
+    "type": "capability",
+    "description": "Logo/水印检测（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_image_verify_phash",
+    "parentId": "agent_image_verify",
+    "name": "感知哈希去重",
+    "level": 4,
+    "type": "capability",
+    "description": "感知哈希去重（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 71,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 70,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_instagram_profile",
+    "parentId": "agent_instagram",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 56,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 540,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_instagram_posts",
+    "parentId": "agent_instagram",
+    "name": "帖子列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "帖子列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 93,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 480,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_instagram_stories",
+    "parentId": "agent_instagram",
+    "name": "快拍采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "快拍采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_instagram_followers",
+    "parentId": "agent_instagram",
+    "name": "粉丝列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 27,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 220,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_instagram_following",
+    "parentId": "agent_instagram",
+    "name": "关注列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "关注列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 7,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_lang_verify_detect",
+    "parentId": "agent_lang_verify",
+    "name": "语种识别",
+    "level": 4,
+    "type": "capability",
+    "description": "语种识别（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_lang_verify_mix",
+    "parentId": "agent_lang_verify",
+    "name": "多语混用检测",
+    "level": 4,
+    "type": "capability",
+    "description": "多语混用检测（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_lang_verify_script",
+    "parentId": "agent_lang_verify",
+    "name": "文字体系判断",
+    "level": 4,
+    "type": "capability",
+    "description": "文字体系判断（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 61,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 60,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_link_verify_resolve",
+    "parentId": "agent_link_verify",
+    "name": "外链解析",
+    "level": 4,
+    "type": "capability",
+    "description": "外链解析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_link_verify_brand",
+    "parentId": "agent_link_verify",
+    "name": "品牌域匹配",
+    "level": 4,
+    "type": "capability",
+    "description": "品牌域匹配（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 71,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 70,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_link_verify_risk",
+    "parentId": "agent_link_verify",
+    "name": "高风险域标记",
+    "level": 4,
+    "type": "capability",
+    "description": "高风险域标记（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 51,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 50,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_linkedin_profile",
+    "parentId": "agent_linkedin",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 67,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 260,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_linkedin_posts",
+    "parentId": "agent_linkedin",
+    "name": "动态列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "动态列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 7,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_linkedin_company",
+    "parentId": "agent_linkedin",
+    "name": "公司主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "公司主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 54,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 150,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_linkedin_search",
+    "parentId": "agent_linkedin",
+    "name": "人名检索",
+    "level": 4,
+    "type": "capability",
+    "description": "人名检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 34,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 130,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_maigret_scan_collect",
+    "parentId": "agent_maigret_scan",
+    "name": "用户名跨平台收集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户名跨平台收集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 37,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 1200,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_maigret_scan_sites",
+    "parentId": "agent_maigret_scan",
+    "name": "站点命中汇总",
+    "level": 4,
+    "type": "capability",
+    "description": "站点命中汇总（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 25,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 800,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_maigret_scan_timeout",
+    "parentId": "agent_maigret_scan",
+    "name": "超时站点回看",
+    "level": 4,
+    "type": "capability",
+    "description": "超时站点回看（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 7,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_maigret_scan_export",
+    "parentId": "agent_maigret_scan",
+    "name": "命中结果导出",
+    "level": 4,
+    "type": "capability",
+    "description": "命中结果导出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 54,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 150,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_openai_chat",
+    "parentId": "agent_openai",
+    "name": "对话分析",
+    "level": 4,
+    "type": "capability",
+    "description": "对话分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 25,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 24,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_openai_embed",
+    "parentId": "agent_openai",
+    "name": "向量表征",
+    "level": 4,
+    "type": "capability",
+    "description": "向量表征（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 21,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 20,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_openai_moderation",
+    "parentId": "agent_openai",
+    "name": "内容审核",
+    "level": 4,
+    "type": "capability",
+    "description": "内容审核（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 16,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_osint_es_country",
+    "parentId": "agent_osint_es",
+    "name": "全球身份库检索",
+    "level": 4,
+    "type": "capability",
+    "description": "全球身份库检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_osint_es_facebook",
+    "parentId": "agent_osint_es",
+    "name": "Facebook身份库检索",
+    "level": 4,
+    "type": "capability",
+    "description": "Facebook身份库检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 71,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 70,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_osint_es_worldpeople",
+    "parentId": "agent_osint_es",
+    "name": "全球人口库检索",
+    "level": 4,
+    "type": "capability",
+    "description": "全球人口库检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 61,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 60,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_osint_es_url_probe",
+    "parentId": "agent_osint_es",
+    "name": "URL 命中探测",
+    "level": 4,
+    "type": "capability",
+    "description": "URL 命中探测（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 51,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 50,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_perplexity_search",
+    "parentId": "agent_perplexity",
+    "name": "联网问答",
+    "level": 4,
+    "type": "capability",
+    "description": "联网问答（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 26,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 25,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_perplexity_cite",
+    "parentId": "agent_perplexity",
+    "name": "引用溯源",
+    "level": 4,
+    "type": "capability",
+    "description": "引用溯源（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 23,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 22,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_perplexity_news",
+    "parentId": "agent_perplexity",
+    "name": "时效资讯汇总",
+    "level": 4,
+    "type": "capability",
+    "description": "时效资讯汇总（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 21,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 20,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_perplexity_compare",
+    "parentId": "agent_perplexity",
+    "name": "多源对比",
+    "level": 4,
+    "type": "capability",
+    "description": "多源对比（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 16,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_phone_scan_extract",
+    "parentId": "agent_phone_scan",
+    "name": "简介电话提取",
+    "level": 4,
+    "type": "capability",
+    "description": "简介电话提取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_phone_scan_normalize",
+    "parentId": "agent_phone_scan",
+    "name": "号码规范化",
+    "level": 4,
+    "type": "capability",
+    "description": "号码规范化（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_phone_scan_region",
+    "parentId": "agent_phone_scan",
+    "name": "归属地粗判",
+    "level": 4,
+    "type": "capability",
+    "description": "归属地粗判（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_pii_check_mask",
+    "parentId": "agent_pii_check",
+    "name": "敏感字段脱敏",
+    "level": 4,
+    "type": "capability",
+    "description": "敏感字段脱敏（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 14,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 110,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_pii_check_leak",
+    "parentId": "agent_pii_check",
+    "name": "泄露面评估",
+    "level": 4,
+    "type": "capability",
+    "description": "泄露面评估（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_pii_check_policy",
+    "parentId": "agent_pii_check",
+    "name": "合规策略匹配",
+    "level": 4,
+    "type": "capability",
+    "description": "合规策略匹配（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_reddit_user",
+    "parentId": "agent_reddit",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 27,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 220,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_reddit_posts",
+    "parentId": "agent_reddit",
+    "name": "帖子列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "帖子列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 210,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_reddit_comments",
+    "parentId": "agent_reddit",
+    "name": "评论列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "评论列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_reddit_subreddit",
+    "parentId": "agent_reddit",
+    "name": "版块信息采集",
+    "level": 4,
+    "type": "capability",
+    "description": "版块信息采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_report_writer_basic",
+    "parentId": "agent_report_writer",
+    "name": "账号基本信息章节",
+    "level": 4,
+    "type": "capability",
+    "description": "账号基本信息章节（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 51,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 50,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_report_writer_views",
+    "parentId": "agent_report_writer",
+    "name": "观点与涉华分析",
+    "level": 4,
+    "type": "capability",
+    "description": "观点与涉华分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 49,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 48,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_report_writer_pii",
+    "parentId": "agent_report_writer",
+    "name": "PII与圈层分析",
+    "level": 4,
+    "type": "capability",
+    "description": "PII与圈层分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 46,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 45,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_report_writer_img",
+    "parentId": "agent_report_writer",
+    "name": "图片流分析章节",
+    "level": 4,
+    "type": "capability",
+    "description": "图片流分析章节（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 41,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 40,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_report_writer_final",
+    "parentId": "agent_report_writer",
+    "name": "终稿组装输出",
+    "level": 4,
+    "type": "capability",
+    "description": "终稿组装输出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 56,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 55,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_review_fact",
+    "parentId": "agent_review",
+    "name": "事实一致性检查",
+    "level": 4,
+    "type": "capability",
+    "description": "事实一致性检查（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 15,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 14,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_review_tone",
+    "parentId": "agent_review",
+    "name": "口径风险检查",
+    "level": 4,
+    "type": "capability",
+    "description": "口径风险检查（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 12,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_review_format",
+    "parentId": "agent_review",
+    "name": "章节格式检查",
+    "level": 4,
+    "type": "capability",
+    "description": "章节格式检查（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 12,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 11,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_seed_lock_parse",
+    "parentId": "agent_seed_lock",
+    "name": "种子句柄解析",
+    "level": 4,
+    "type": "capability",
+    "description": "种子句柄解析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 28,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 900,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_seed_lock_platform",
+    "parentId": "agent_seed_lock",
+    "name": "种子平台识别",
+    "level": 4,
+    "type": "capability",
+    "description": "种子平台识别（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 75,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 850,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_seed_lock_confirm",
+    "parentId": "agent_seed_lock",
+    "name": "种子账号确认",
+    "level": 4,
+    "type": "capability",
+    "description": "种子账号确认（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 25,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 800,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_telegram_channel",
+    "parentId": "agent_telegram",
+    "name": "频道主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "频道主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 20,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 310,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_telegram_posts",
+    "parentId": "agent_telegram",
+    "name": "消息列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "消息列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 87,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 280,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_telegram_members",
+    "parentId": "agent_telegram",
+    "name": "成员采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "成员采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_telegram_search",
+    "parentId": "agent_telegram",
+    "name": "频道检索",
+    "level": 4,
+    "type": "capability",
+    "description": "频道检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 14,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 110,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_text_verify_rule",
+    "parentId": "agent_text_verify",
+    "name": "规则比对核验",
+    "level": 4,
+    "type": "capability",
+    "description": "规则比对核验（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 54,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 150,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_text_verify_conclusion",
+    "parentId": "agent_text_verify",
+    "name": "文本核验结论输出",
+    "level": 4,
+    "type": "capability",
+    "description": "文本核验结论输出（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_text_verify_bio_sim",
+    "parentId": "agent_text_verify",
+    "name": "简介相似度",
+    "level": 4,
+    "type": "capability",
+    "description": "简介相似度（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_text_verify_name_sim",
+    "parentId": "agent_text_verify",
+    "name": "昵称相似度",
+    "level": 4,
+    "type": "capability",
+    "description": "昵称相似度（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 14,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 110,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_text_verify_link_match",
+    "parentId": "agent_text_verify",
+    "name": "外链一致性",
+    "level": 4,
+    "type": "capability",
+    "description": "外链一致性（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_tiktok_profile",
+    "parentId": "agent_tiktok",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 39,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 620,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_tiktok_videos",
+    "parentId": "agent_tiktok",
+    "name": "视频列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "视频列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 96,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 580,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_tiktok_comments",
+    "parentId": "agent_tiktok",
+    "name": "评论采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "评论采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 17,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 210,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_tiktok_followers",
+    "parentId": "agent_tiktok",
+    "name": "粉丝列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 94,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 190,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_tiktok_music",
+    "parentId": "agent_tiktok",
+    "name": "音乐关联采集",
+    "level": 4,
+    "type": "capability",
+    "description": "音乐关联采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_timeline_posting",
+    "parentId": "agent_timeline",
+    "name": "发文节奏分析",
+    "level": 4,
+    "type": "capability",
+    "description": "发文节奏分析（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 34,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 130,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_timeline_tz_align",
+    "parentId": "agent_timeline",
+    "name": "时区对齐核验",
+    "level": 4,
+    "type": "capability",
+    "description": "时区对齐核验（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_timeline_burst",
+    "parentId": "agent_timeline",
+    "name": "突发活跃检测",
+    "level": 4,
+    "type": "capability",
+    "description": "突发活跃检测（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 71,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 70,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitch_channel",
+    "parentId": "agent_twitch",
+    "name": "频道主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "频道主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitch_clips",
+    "parentId": "agent_twitch",
+    "name": "精彩片段采集",
+    "level": 4,
+    "type": "capability",
+    "description": "精彩片段采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 14,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 110,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitch_followers",
+    "parentId": "agent_twitch",
+    "name": "粉丝采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 61,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 60,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_tweet_detail",
+    "parentId": "agent_twitter",
+    "name": "单条推文详情采集",
+    "level": 4,
+    "type": "capability",
+    "description": "单条推文详情采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 28,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 900,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_keyword",
+    "parentId": "agent_twitter",
+    "name": "关键词检索",
+    "level": 4,
+    "type": "capability",
+    "description": "关键词检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 34,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 1100,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_raw",
+    "parentId": "agent_twitter",
+    "name": "推文原文采集",
+    "level": 4,
+    "type": "capability",
+    "description": "推文原文采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 97,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 3200,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_replies",
+    "parentId": "agent_twitter",
+    "name": "推文回复列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "推文回复列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 22,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 700,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_profile",
+    "parentId": "agent_twitter",
+    "name": "主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 96,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 6400,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_likes",
+    "parentId": "agent_twitter",
+    "name": "点赞列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "点赞列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": false,
+      "weight": 50,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 400,
+      "platformCount": 1,
+      "lastActive": "6 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_media",
+    "parentId": "agent_twitter",
+    "name": "媒体推文采集",
+    "level": 4,
+    "type": "capability",
+    "description": "媒体推文采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 36,
+    "displayConfig": {
+      "show": true,
+      "weight": 40,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 520,
+      "platformCount": 1,
+      "lastActive": "7 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_twitter_mentions",
+    "parentId": "agent_twitter",
+    "name": "提及检索",
+    "level": 4,
+    "type": "capability",
+    "description": "提及检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 90,
+    "displayConfig": {
+      "show": false,
+      "weight": 30,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 380,
+      "platformCount": 1,
+      "lastActive": "8 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_url_expand_expand",
+    "parentId": "agent_url_expand",
+    "name": "短链还原",
+    "level": 4,
+    "type": "capability",
+    "description": "短链还原（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 27,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 220,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_url_expand_safe_check",
+    "parentId": "agent_url_expand",
+    "name": "危险域过滤",
+    "level": 4,
+    "type": "capability",
+    "description": "危险域过滤（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": false,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_url_expand_archive",
+    "parentId": "agent_url_expand",
+    "name": "网页快照存档",
+    "level": 4,
+    "type": "capability",
+    "description": "网页快照存档（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 81,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 80,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_username_guess_mutate",
+    "parentId": "agent_username_guess",
+    "name": "用户名变体生成",
+    "level": 4,
+    "type": "capability",
+    "description": "用户名变体生成（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 10,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 300,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_username_guess_probe",
+    "parentId": "agent_username_guess",
+    "name": "平台可用性探测",
+    "level": 4,
+    "type": "capability",
+    "description": "平台可用性探测（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 67,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 260,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_username_guess_rank",
+    "parentId": "agent_username_guess",
+    "name": "变体优先级排序",
+    "level": 4,
+    "type": "capability",
+    "description": "变体优先级排序（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 44,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 140,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_validate_seed_in",
+    "parentId": "agent_validate",
+    "name": "种子必进收敛",
+    "level": 4,
+    "type": "capability",
+    "description": "种子必进收敛（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 7,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_validate_score",
+    "parentId": "agent_validate",
+    "name": "相似度打分",
+    "level": 4,
+    "type": "capability",
+    "description": "相似度打分（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_validate_exclude",
+    "parentId": "agent_validate",
+    "name": "排除账号归档",
+    "level": 4,
+    "type": "capability",
+    "description": "排除账号归档（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 4,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 100,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_validate_report",
+    "parentId": "agent_validate",
+    "name": "认定结果摘要",
+    "level": 4,
+    "type": "capability",
+    "description": "认定结果摘要（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_vk_profile",
+    "parentId": "agent_vk",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_vk_posts",
+    "parentId": "agent_vk",
+    "name": "动态列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "动态列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 64,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 160,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_vk_friends",
+    "parentId": "agent_vk",
+    "name": "好友列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "好友列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 91,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 90,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_web_scan_web_search",
+    "parentId": "agent_web_scan",
+    "name": "搜索引擎检索",
+    "level": 4,
+    "type": "capability",
+    "description": "搜索引擎检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 400,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_web_scan_web_extract",
+    "parentId": "agent_web_scan",
+    "name": "页面正文抽取",
+    "level": 4,
+    "type": "capability",
+    "description": "页面正文抽取（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 30,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 320,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_web_scan_browser",
+    "parentId": "agent_web_scan",
+    "name": "浏览器辅助打开",
+    "level": 4,
+    "type": "capability",
+    "description": "浏览器辅助打开（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_web_scan_social_site",
+    "parentId": "agent_web_scan",
+    "name": "社交站点定向检索",
+    "level": 4,
+    "type": "capability",
+    "description": "社交站点定向检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 67,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 260,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weibo_profile",
+    "parentId": "agent_weibo",
+    "name": "用户主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "用户主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 22,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 700,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weibo_feeds",
+    "parentId": "agent_weibo",
+    "name": "动态列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "动态列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 69,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 650,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weibo_followers",
+    "parentId": "agent_weibo",
+    "name": "粉丝列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "粉丝列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 47,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 240,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weibo_following",
+    "parentId": "agent_weibo",
+    "name": "关注列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "关注列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 27,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 220,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weibo_search",
+    "parentId": "agent_weibo",
+    "name": "用户检索",
+    "level": 4,
+    "type": "capability",
+    "description": "用户检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weixin_profile",
+    "parentId": "agent_weixin",
+    "name": "公众号主页采集",
+    "level": 4,
+    "type": "capability",
+    "description": "公众号主页采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 13,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 400,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weixin_article",
+    "parentId": "agent_weixin",
+    "name": "文章列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "文章列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 60,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 350,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weixin_search",
+    "parentId": "agent_weixin",
+    "name": "搜一搜检索",
+    "level": 4,
+    "type": "capability",
+    "description": "搜一搜检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 7,
+    "displayConfig": {
+      "show": false,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 200,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weixin_video",
+    "parentId": "agent_weixin",
+    "name": "视频号采集",
+    "level": 4,
+    "type": "capability",
+    "description": "视频号采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 84,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 180,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_weixin_comment",
+    "parentId": "agent_weixin",
+    "name": "评论采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "评论采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 24,
+    "displayConfig": {
+      "show": true,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 120,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_x_api_chat",
+    "parentId": "agent_x_api",
+    "name": "对话补全",
+    "level": 4,
+    "type": "capability",
+    "description": "对话补全（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 41,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 40,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_x_api_summarize",
+    "parentId": "agent_x_api",
+    "name": "摘要生成",
+    "level": 4,
+    "type": "capability",
+    "description": "摘要生成（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 36,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 35,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_x_api_rewrite",
+    "parentId": "agent_x_api",
+    "name": "措辞润色",
+    "level": 4,
+    "type": "capability",
+    "description": "措辞润色（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 31,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 30,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_x_api_translate",
+    "parentId": "agent_x_api",
+    "name": "多语翻译",
+    "level": 4,
+    "type": "capability",
+    "description": "多语翻译（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 29,
+    "displayConfig": {
+      "show": false,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 28,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_youtube_channel",
+    "parentId": "agent_youtube",
+    "name": "频道统计采集",
+    "level": 4,
+    "type": "capability",
+    "description": "频道统计采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 28,
+    "displayConfig": {
+      "show": true,
+      "weight": 100,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 900,
+      "platformCount": 1,
+      "lastActive": "1 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_youtube_videos",
+    "parentId": "agent_youtube",
+    "name": "视频列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "视频列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 85,
+    "displayConfig": {
+      "show": true,
+      "weight": 90,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 860,
+      "platformCount": 1,
+      "lastActive": "2 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_youtube_comments",
+    "parentId": "agent_youtube",
+    "name": "评论采样采集",
+    "level": 4,
+    "type": "capability",
+    "description": "评论采样采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 10,
+    "displayConfig": {
+      "show": true,
+      "weight": 80,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 300,
+      "platformCount": 1,
+      "lastActive": "3 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_youtube_playlist",
+    "parentId": "agent_youtube",
+    "name": "播放列表采集",
+    "level": 4,
+    "type": "capability",
+    "description": "播放列表采集（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 47,
+    "displayConfig": {
+      "show": true,
+      "weight": 70,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 240,
+      "platformCount": 1,
+      "lastActive": "4 分钟前"
+    }
+  },
+  {
+    "id": "cap_agent_youtube_search",
+    "parentId": "agent_youtube",
+    "name": "频道检索",
+    "level": 4,
+    "type": "capability",
+    "description": "频道检索（假数据）",
+    "status": "online",
+    "version": "v1.0",
+    "creator": "ops",
+    "createTime": "2026-07-03 12:00:00",
+    "badgeCount": 87,
+    "displayConfig": {
+      "show": false,
+      "weight": 60,
+      "displayCount": 0
+    },
+    "stats": {
+      "childCount": 0,
+      "accountCount": 280,
+      "platformCount": 1,
+      "lastActive": "5 分钟前"
+    }
+  }
+]

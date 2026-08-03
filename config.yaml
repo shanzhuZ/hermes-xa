@@ -1,11 +1,9 @@
 model:
-  # 主对话/Agent：全程 GPT（密钥 OPENAI_API_KEY）
-  default: gpt-5.4
-  provider: openai-api
-  api_mode: codex_responses
+  default: grok-4.5
+  provider: xai-oauth
+  base_url: https://api.x.ai/v1
 agent:
   max_turns: 150
-  # 写报 Stop 门闩：碰撞真空可能多次 stop，略高于默认 3
   max_verify_nudges: 8
   image_input_mode: auto
   verbose: false
@@ -134,27 +132,23 @@ command_allowlist:
   - recursive delete
 hooks:
   pre_llm_call:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
   pre_tool_call:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
   post_tool_call:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
   post_llm_call:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
   pre_verify:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
   on_session_end:
-  - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
-    timeout: 120
-hooks_auto_accept: true
-hooks_auto_accept: true
-hooks_auto_accept: true
-hooks_auto_accept: true
+    - command: D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py
+      timeout: 120
 hooks_auto_accept: true
 code_execution:
   timeout: 300
@@ -254,7 +248,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-  # Pplx/Sonar 对 tools 数量有硬上限（约 ≤134）。trends_hub 占 ~21 个且账号任务不需要，先关掉。
   trends_hub:
     enabled: false
     command: D:/environment/node/node_cache/mcp-trends-hub.cmd
@@ -284,7 +277,6 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
-  # Skill 已 forbid firecrawl；再占 ~20 个 tools，易触发 Perplexity invalid request，默认关掉。
   firecrawl:
     enabled: false
     command: D:/environment/node/node_cache/firecrawl-mcp.cmd
@@ -423,7 +415,6 @@ mcp_servers:
       include:
         - get-channel-stats
         - analyze-channel-videos
-  # 独立视频抽帧分析 MCP（01 由 Hook 后台调用，禁止 Agent 同步长等）
   video2frame:
     enabled: true
     command: D:/environment/python/python.exe
@@ -436,7 +427,6 @@ mcp_servers:
       HERMES_VIDEO_VLM_MODEL: sonar
       HERMES_VIDEO_FRAME_INTERVAL_SEC: '3'
       HERMES_VIDEO_MAX_ANALYZE_SEC: '120'
-      # YouTube 反爬：Netscape cookies.txt（勿提交 git）
       HERMES_VIDEO_YTDLP_COOKIES: D:/hermes-xa/mcp/data/youtube-cookies.txt
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
@@ -464,7 +454,6 @@ custom_providers:
         context_length: 1048576
       gemini-2.5-flash:
         context_length: 1048576
-  # Vision / OCR 用，密钥：PERPLEXITY_API_KEY
   - name: pplx
     base_url: https://api.perplexity.ai
     key_env: PERPLEXITY_API_KEY
@@ -474,7 +463,6 @@ custom_providers:
         context_length: 128000
       sonar-pro:
         context_length: 200000
-  # 主 Agent 用，密钥：PERPLEXITY_AGENT_API_KEY（与 vision 分开）
   - name: pplx-agent
     base_url: https://api.perplexity.ai
     key_env: PERPLEXITY_AGENT_API_KEY
@@ -496,41 +484,3 @@ custom_providers:
 known_plugin_toolsets:
   cli:
     - spotify
-
-# ── Security ──────────────────────────────────────────────────────────
-# Secret redaction is ON by default — strings that look like API keys,
-# tokens, and passwords are masked in tool output, logs, and chat
-# responses before the model or user ever sees them. Set redact_secrets
-# to false to disable (e.g. when developing the redactor itself).
-# tirith pre-exec scanning is enabled by default when the tirith binary
-# is available. Configure via security.tirith_* keys or env vars
-# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
-#
-# security:
-#   redact_secrets: true
-#   tirith_enabled: true
-#   tirith_path: "tirith"
-#   tirith_timeout: 5
-#   tirith_fail_open: true
-
-# ── Fallback Model ────────────────────────────────────────────────────
-# Automatic provider failover when primary is unavailable.
-# Uncomment and configure to enable. Triggers on rate limits (429),
-# overload (529), service errors (503), or connection failures.
-#
-# Supported providers:
-#   openrouter   (OPENROUTER_API_KEY)  — routes to any model
-#   openai-codex (OAuth — hermes auth) — OpenAI Codex
-#   nous         (OAuth — hermes auth) — Nous Portal
-#   zai          (ZAI_API_KEY)         — Z.AI / GLM
-#   kimi-coding  (KIMI_API_KEY)        — Kimi / Moonshot
-#   kimi-coding-cn (KIMI_CN_API_KEY)   — Kimi / Moonshot (China)
-#   minimax      (MINIMAX_API_KEY)     — MiniMax
-#   minimax-cn   (MINIMAX_CN_API_KEY)  — MiniMax (China)
-#   bedrock      (AWS IAM / boto3)     — AWS Bedrock (Converse API)
-#
-# For custom OpenAI-compatible endpoints, add base_url and key_env.
-#
-# fallback_model:
-#   provider: openrouter
-#   model: anthropic/claude-sonnet-4
