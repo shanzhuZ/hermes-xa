@@ -1,7 +1,7 @@
 model:
-  default: grok-4.5
-  provider: xai-oauth
-  base_url: https://api.x.ai/v1
+  default: deepseek-v4-flash
+  provider: deepseek
+  base_url: https://api.deepseek.com
 agent:
   max_turns: 150
   max_verify_nudges: 8
@@ -444,6 +444,57 @@ mcp_servers:
         - extract_frames
         - analyze_frames
         - run_video_pipeline
+  # 全球情报 MCP（113 工具；默认只开放写报/OSINT 常用子集，避免撑爆工具列表）
+  # 源码：mcp/servers/world-intel-mcp ；全量工具可删掉下方 tools.include
+  world_intel:
+    enabled: true
+    command: D:/environment/python/Scripts/world-intel-mcp.exe
+    args: []
+    env:
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      ALL_PROXY: ${HTTPS_PROXY}
+      ACLED_ACCESS_TOKEN: ${ACLED_ACCESS_TOKEN}
+      NASA_FIRMS_API_KEY: ${NASA_FIRMS_API_KEY}
+      EIA_API_KEY: ${EIA_API_KEY}
+      FRED_API_KEY: ${FRED_API_KEY}
+      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
+      OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID}
+      OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET}
+      WORLD_INTEL_LOG_LEVEL: INFO
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: '1'
+    supports_parallel_tool_calls: true
+    timeout: 180
+    connect_timeout: 90
+    tools:
+      include:
+        - intel_news_feed
+        - intel_gdelt_search
+        - intel_trending_keywords
+        - intel_country_brief
+        - intel_country_dossier
+        - intel_acled_events
+        - intel_ucdp_events
+        - intel_unrest_events
+        - intel_humanitarian_summary
+        - intel_military_flights
+        - intel_theater_posture
+        - intel_usni_fleet
+        - intel_sanctions_search
+        - intel_cyber_threats
+        - intel_earthquakes
+        - intel_disaster_alerts
+        - intel_company_profile
+        - intel_sec_filings
+        - intel_company_filings
+        - intel_world_brief
+        - intel_strategic_posture
+        - intel_risk_scores
+        - intel_instability_index
+        - intel_signal_convergence
+        - intel_status
 custom_providers:
   - name: google
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/

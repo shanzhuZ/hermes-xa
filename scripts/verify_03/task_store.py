@@ -37,6 +37,8 @@ from verify_03.phases import (
     step_phase,
 )
 
+from common.source_tag import source_tag_json
+
 logger = logging.getLogger(__name__)
 
 _VERIFY_INTENT = re.compile(
@@ -213,8 +215,8 @@ class TaskStore:
                     cur.execute(
                         """
                         INSERT IGNORE INTO collect_phase_steps
-                          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, %s)
+                          (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
                         """,
                         (
                             new_id,
@@ -223,6 +225,7 @@ class TaskStore:
                             step.step_order,
                             step.step_node,
                             step.title,
+                            source_tag_json(step.step_key, streams_as_self=True),
                             status,
                         ),
                     )
@@ -279,8 +282,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -289,13 +292,14 @@ class TaskStore:
                     profile_step_order(plat),
                     profile_step_node(plat),
                     f"{profile_step_title(plat)}{handle_label}",
+                    source_tag_json(prof_key),
                 ),
             )
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -304,6 +308,7 @@ class TaskStore:
                     post_step_order(plat),
                     post_step_node(plat),
                     f"{post_step_title(plat)}{handle_label}",
+                    source_tag_json(post_key),
                 ),
             )
 
@@ -446,10 +451,18 @@ class TaskStore:
                 db.execute(
                     """
                     INSERT IGNORE INTO collect_phase_steps
-                      (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                      (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                     """,
-                    (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                    (
+                        task_id,
+                        step.step_key,
+                        step.parent_step_key,
+                        step.step_order,
+                        step.step_node,
+                        step.title,
+                        source_tag_json(step.step_key, streams_as_self=True),
+                    ),
                 )
                 return
         if is_profile_platform_step(step_key):
@@ -457,8 +470,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -467,6 +480,7 @@ class TaskStore:
                     profile_step_order(platform),
                     profile_step_node(platform),
                     profile_step_title(platform),
+                    source_tag_json(step_key),
                 ),
             )
             return
@@ -475,8 +489,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -485,6 +499,7 @@ class TaskStore:
                     post_step_order(platform),
                     post_step_node(platform),
                     post_step_title(platform),
+                    source_tag_json(step_key),
                 ),
             )
             return

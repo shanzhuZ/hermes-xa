@@ -49,6 +49,8 @@ from report_04.phases import (
 from report_04.gates import get_step_status, discovery_steps_terminal
 from report_04.report_parser import is_final_report
 
+from common.source_tag import source_tag_json
+
 logger = logging.getLogger(__name__)
 
 _REPORT_INTENT = re.compile(
@@ -382,10 +384,18 @@ class TaskStore:
                     cur.execute(
                         """
                         INSERT IGNORE INTO collect_phase_steps
-                          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                          (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                         """,
-                        (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                        (
+                            task_id,
+                            step.step_key,
+                            step.parent_step_key,
+                            step.step_order,
+                            step.step_node,
+                            step.title,
+                            source_tag_json(step.step_key, seed_platform=seed.get("platform")),
+                        ),
                     )
         logger.info("预建写报任务 task_id=%s session=%s", task_id, session_id)
         return task_id
@@ -451,10 +461,18 @@ class TaskStore:
                     cur.execute(
                         """
                         INSERT IGNORE INTO collect_phase_steps
-                          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                          (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                         """,
-                        (new_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                        (
+                            new_id,
+                            step.step_key,
+                            step.parent_step_key,
+                            step.step_order,
+                            step.step_node,
+                            step.title,
+                            source_tag_json(step.step_key, seed_platform=seed.get("platform")),
+                        ),
                     )
         # 建树保持 pending；业务步由 sink/工具触发后再 running（与 Java 规划门闩一致）
         logger.info("创建写报任务 task_id=%s session=%s", new_id, session_id)
@@ -661,14 +679,23 @@ class TaskStore:
         return str((seed or {}).get("platform") or "twitter")
 
     def init_phase_steps(self, task_id: str) -> None:
-        for step in root_steps_for_platform(self._seed_platform(task_id)):
+        seed_plat = self._seed_platform(task_id)
+        for step in root_steps_for_platform(seed_plat):
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                (
+                    task_id,
+                    step.step_key,
+                    step.parent_step_key,
+                    step.step_order,
+                    step.step_node,
+                    step.title,
+                    source_tag_json(step.step_key, seed_platform=seed_plat),
+                ),
             )
 
     def ensure_profile_steps(self, task_id: str, platforms: List[str]) -> None:
@@ -678,8 +705,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -688,6 +715,7 @@ class TaskStore:
                     profile_step_order(platform),
                     profile_step_node(platform),
                     profile_step_title(platform),
+                    source_tag_json(key),
                 ),
             )
 
@@ -769,10 +797,18 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, key, parent, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
+                (
+                    task_id,
+                    key,
+                    parent,
+                    post_step_order(platform),
+                    post_step_node(platform),
+                    post_step_title(platform),
+                    source_tag_json(key),
+                ),
             )
 
     def set_task_phase(self, task_id: str, phase: str) -> None:
@@ -1028,15 +1064,24 @@ class TaskStore:
 
     def ensure_step_row(self, task_id: str, step_key: str) -> None:
         """旧任务可能缺少 step4_profiles 等新步骤行。"""
-        for step in root_steps_for_platform(self._seed_platform(task_id)):
+        seed_plat = self._seed_platform(task_id)
+        for step in root_steps_for_platform(seed_plat):
             if step.step_key == step_key:
                 db.execute(
                     """
                     INSERT IGNORE INTO collect_phase_steps
-                      (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                    VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                      (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                     """,
-                    (task_id, step.step_key, step.parent_step_key, step.step_order, step.step_node, step.title),
+                    (
+                        task_id,
+                        step.step_key,
+                        step.parent_step_key,
+                        step.step_order,
+                        step.step_node,
+                        step.title,
+                        source_tag_json(step.step_key, seed_platform=seed_plat),
+                    ),
                 )
                 return
         if step_key.startswith("step7_post_"):
@@ -1044,10 +1089,18 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
-                (task_id, step_key, POST_PARENT_STEP_KEY, post_step_order(platform), post_step_node(platform), post_step_title(platform)),
+                (
+                    task_id,
+                    step_key,
+                    POST_PARENT_STEP_KEY,
+                    post_step_order(platform),
+                    post_step_node(platform),
+                    post_step_title(platform),
+                    source_tag_json(step_key),
+                ),
             )
             return
         if step_key.startswith("step7_video_"):
@@ -1064,8 +1117,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -1074,6 +1127,7 @@ class TaskStore:
                     video_step_order(platform),
                     video_step_node(platform),
                     video_step_title(platform),
+                    source_tag_json(step_key),
                 ),
             )
             return
@@ -1082,8 +1136,8 @@ class TaskStore:
             db.execute(
                 """
                 INSERT IGNORE INTO collect_phase_steps
-                  (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-                VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+                  (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+                VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
                 """,
                 (
                     task_id,
@@ -1092,6 +1146,7 @@ class TaskStore:
                     profile_step_order(platform),
                     profile_step_node(platform),
                     profile_step_title(platform),
+                    source_tag_json(step_key),
                 ),
             )
 

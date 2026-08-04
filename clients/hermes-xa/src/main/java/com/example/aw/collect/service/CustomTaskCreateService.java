@@ -68,7 +68,7 @@ public class CustomTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertUserDialogue(taskId, sessionId, clipped, payloadJson);
 
         // 启动即可见：制定计划；真正业务节点由 flow.upsert 追加
-        collectTaskMapper.insertPhaseStep(taskId, "step_plan", null, 10, "1", "制定执行计划");
+        collectTaskMapper.insertPhaseStep(taskId, "step_plan", null, 10, "1", "制定执行计划", null);
         collectTaskMapper.updateStepStatus(taskId, "step_plan", "running", "分析用户问题并生成步骤计划");
         return taskId;
     }

@@ -10,6 +10,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional  # noqa: F401 — Any 用于 _video_python 扫描
 
 from collect_01 import db
+from common.source_tag import source_tag_json
 from collect_01.gates import get_step_status
 from collect_01.phases import (
     post_step_key,
@@ -155,8 +156,8 @@ def ensure_video_step(store, task_id: str, platform: str) -> str:
     db.execute(
         """
         INSERT IGNORE INTO collect_phase_steps
-          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+          (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
         """,
         (
             task_id,
@@ -165,6 +166,7 @@ def ensure_video_step(store, task_id: str, platform: str) -> str:
             video_step_order(platform),
             video_step_node(platform),
             video_step_title(platform),
+            source_tag_json(key),
         ),
     )
     return key

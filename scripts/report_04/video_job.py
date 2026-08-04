@@ -13,6 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, Optional
 
 from collect_01 import db
+from common.source_tag import source_tag_json
 from collect_01.video_job import (
     _isolated_video_env,
     _scripts_dir,
@@ -50,8 +51,8 @@ def ensure_video_step(store: Any, task_id: str, platform: str) -> str:
         db.execute(
             """
             INSERT IGNORE INTO collect_phase_steps
-              (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-            VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+              (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+            VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
             """,
             (
                 task_id,
@@ -60,14 +61,15 @@ def ensure_video_step(store: Any, task_id: str, platform: str) -> str:
                 post_step_order(platform),
                 post_step_node(platform),
                 post_step_title(platform),
+                source_tag_json(parent),
             ),
         )
     key = video_step_key(platform)
     db.execute(
         """
         INSERT IGNORE INTO collect_phase_steps
-          (task_id, step_key, parent_step_key, step_order, step_node, title, status)
-        VALUES (%s, %s, %s, %s, %s, %s, 'pending')
+          (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
+        VALUES (%s, %s, %s, %s, %s, %s, %s, 'pending')
         """,
         (
             task_id,
@@ -76,6 +78,7 @@ def ensure_video_step(store: Any, task_id: str, platform: str) -> str:
             video_step_order(platform),
             video_step_node(platform),
             video_step_title(platform),
+            source_tag_json(key),
         ),
     )
     return key

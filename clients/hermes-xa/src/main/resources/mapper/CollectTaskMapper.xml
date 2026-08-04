@@ -118,9 +118,9 @@
 
     <insert id="insertPhaseStep">
         INSERT IGNORE INTO collect_phase_steps
-            (task_id, step_key, parent_step_key, step_order, step_node, title, status)
+            (task_id, step_key, parent_step_key, step_order, step_node, title, source_tag, status)
         VALUES
-            (#{taskId}, #{stepKey}, #{parentStepKey}, #{stepOrder}, #{stepNode}, #{title}, 'pending')
+            (#{taskId}, #{stepKey}, #{parentStepKey}, #{stepOrder}, #{stepNode}, #{title}, #{sourceTag}, 'pending')
     </insert>
 
     <update id="updateStepSkipped">
@@ -347,7 +347,7 @@
     </select>
 
     <select id="selectPhaseSteps" resultType="java.util.HashMap">
-        SELECT step_key, parent_step_key, step_order, step_node, title,
+        SELECT step_key, parent_step_key, step_order, step_node, title, source_tag,
                status, message, progress_pct, started_at, finished_at
         FROM collect_phase_steps
         WHERE task_id = #{taskId}
@@ -387,7 +387,7 @@
     </select>
 
     <select id="selectPhaseStep" resultType="java.util.HashMap">
-        SELECT step_key, title, status, message, payload_json, started_at, finished_at
+        SELECT step_key, title, source_tag, status, message, payload_json, started_at, finished_at
         FROM collect_phase_steps
         WHERE task_id = #{taskId} AND step_key = #{stepKey}
         LIMIT 1

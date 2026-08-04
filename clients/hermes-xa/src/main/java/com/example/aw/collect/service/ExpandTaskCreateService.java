@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.SourceTag;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -129,14 +130,21 @@ public class ExpandTaskCreateService implements TaskCreateService {
      * 扩建步骤树（共用 step_key，Agent 风格标题，与 expand_02/phases.py 一致）。
      */
     private void insertExpandSteps(String taskId, String seedPlatform) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", seedAgentTitle(seedPlatform));
-        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "1.2", "Maigret Agent 跨平台收集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2", "MCP/Apify Agent 主页与发文采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3", "信息核验流 Agent 拆分");
+        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1",
+                seedAgentTitle(seedPlatform), SourceTag.jsonForStep("step1_seed", seedPlatform));
+        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "1.2",
+                "Maigret Agent 跨平台收集", SourceTag.jsonForStep("step2_cross_platform"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2",
+                "MCP/Apify Agent 主页与发文采集", SourceTag.jsonForStep("step3_profiles"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3",
+                "信息核验流 Agent 拆分", SourceTag.jsonForStep("step3_streams"));
         // 3.1 / 3.2 挂在步骤3（step3_streams）下
-        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "3.1", "文本流 Agent 对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "3.2", "图片流 Agent 分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "4", "可信账号核验 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "3.1",
+                "文本流 Agent 对比", SourceTag.jsonForStep("step4_text_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "3.2",
+                "图片流 Agent 分析", SourceTag.jsonForStep("step4_image_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "4",
+                "可信账号核验 Agent", SourceTag.jsonForStep("step5_validated"));
         // 02 不再插入 step6_posts(2.9)：发文子步骤直接挂在 step3_profiles 下
     }
 

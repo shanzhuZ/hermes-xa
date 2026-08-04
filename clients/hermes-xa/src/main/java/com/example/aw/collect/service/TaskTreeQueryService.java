@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.SourceTag;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -207,6 +208,7 @@ public class TaskTreeQueryService {
         out.put("type", "step");
         out.put("stepKey", row.get("step_key"));
         out.put("title", row.get("title"));
+        out.put("sourceTag", SourceTag.parseStored(row.get("source_tag")));
         out.put("status", status);
         out.put("statusLabel", statusLabel(status));
         out.put("message", row.get("message"));
@@ -545,6 +547,7 @@ public class TaskTreeQueryService {
         node.put("stepNode", step.get("step_node"));
         node.put("parentStepKey", step.get("parent_step_key"));
         node.put("title", step.get("title"));
+        node.put("sourceTag", SourceTag.parseStored(step.get("source_tag")));
         node.put("status", status);
         node.put("statusLabel", statusLabel(status));
         node.put("message", step.get("message"));

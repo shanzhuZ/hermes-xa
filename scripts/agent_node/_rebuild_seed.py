@@ -528,9 +528,10 @@ def recompute(docs: List[Dict[str, Any]]) -> None:
     root["stats"]["childCount"] = len(l2)
     root["stats"]["accountCount"] = sum(int(c["stats"]["accountCount"] or 0) for c in l2)
     root["stats"]["platformCount"] = sum(int(c["stats"]["platformCount"] or 0) for c in l2)
-    # 角标：全部 agent(L3) 数量，贴近「共计包含 N Agent」
-    agent_n = sum(1 for d in docs if d["level"] == 3)
+    # 角标/标题：大屏展示用固定总数（非真实 L3 计数）
+    agent_n = 220
     root["badgeCount"] = agent_n
+    root["stats"]["platformCount"] = agent_n
     root["name"] = f"共计包含{agent_n}Agent"
 
 

@@ -2,7 +2,7 @@
   {
     "id": "root",
     "parentId": "",
-    "name": "共计包含45Agent",
+    "name": "共计包含220Agent",
     "level": 1,
     "type": "root",
     "description": "大屏智能体总管节点（假数据）",
@@ -10,7 +10,7 @@
     "version": "v1.0",
     "creator": "system",
     "createTime": "2026-07-01 10:00:00",
-    "badgeCount": 45,
+    "badgeCount": 220,
     "displayConfig": {
       "show": true,
       "weight": 1000,
@@ -19,7 +19,7 @@
     "stats": {
       "childCount": 4,
       "accountCount": 50493,
-      "platformCount": 45,
+      "platformCount": 220,
       "lastActive": "刚刚"
     }
   },

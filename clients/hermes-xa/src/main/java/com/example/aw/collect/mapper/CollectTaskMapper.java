@@ -43,7 +43,8 @@ public interface CollectTaskMapper {
                          @Param("parentStepKey") String parentStepKey,
                          @Param("stepOrder") int stepOrder,
                          @Param("stepNode") String stepNode,
-                         @Param("title") String title);
+                         @Param("title") String title,
+                         @Param("sourceTag") String sourceTag);
 
     void updateStepSkipped(@Param("taskId") String taskId,
                            @Param("stepKey") String stepKey,

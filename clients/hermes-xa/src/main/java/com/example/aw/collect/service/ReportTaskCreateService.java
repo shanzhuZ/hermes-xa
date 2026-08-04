@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.SourceTag;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -142,44 +143,66 @@ public class ReportTaskCreateService implements TaskCreateService {
      * 规划收口与启动 Agent 由 {@link ReportPlanBootstrap} / CollectSubmitService 负责。
      */
     private void insertReportSteps(String taskId, String seedPlatform) {
-        collectTaskMapper.insertPhaseStep(taskId, STEP_PLAN, null, 5, "0", "制定执行计划");
+        collectTaskMapper.insertPhaseStep(taskId, STEP_PLAN, null, 5, "0", "制定执行计划",
+                SourceTag.jsonForStep(STEP_PLAN));
 
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_LOCK_TARGET, STEP_PLAN, 100, "1", "1. 锁定目标");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_DISCOVERY, STEP_PLAN, 200, "2", "2. 线索发现");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, STEP_PLAN, 300, "3", "3. 账号采集");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, STEP_PLAN, 400, "4", "4. 关联碰撞");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, STEP_PLAN, 500, "5", "5. 内容采集");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, STEP_PLAN, 600, "6", "6. 深度研判");
-        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, STEP_PLAN, 700, "7", "7. 报告生成");
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_LOCK_TARGET, STEP_PLAN, 100, "1", "1. 锁定目标",
+                SourceTag.jsonForStep(PHASE_LOCK_TARGET));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_DISCOVERY, STEP_PLAN, 200, "2", "2. 线索发现",
+                SourceTag.jsonForStep(PHASE_DISCOVERY));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ACCOUNT_COLLECT, STEP_PLAN, 300, "3", "3. 账号采集",
+                SourceTag.jsonForStep(PHASE_ACCOUNT_COLLECT));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_COLLISION, STEP_PLAN, 400, "4", "4. 关联碰撞",
+                SourceTag.jsonForStep(PHASE_COLLISION));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_CONTENT, STEP_PLAN, 500, "5", "5. 内容采集",
+                SourceTag.jsonForStep(PHASE_CONTENT));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_ANALYSIS, STEP_PLAN, 600, "6", "6. 深度研判",
+                SourceTag.jsonForStep(PHASE_ANALYSIS));
+        collectTaskMapper.insertPhaseStep(taskId, PHASE_REPORT, STEP_PLAN, 700, "7", "7. 报告生成",
+                SourceTag.jsonForStep(PHASE_REPORT));
 
         collectTaskMapper.insertPhaseStep(
-                taskId, "step1_seed", PHASE_LOCK_TARGET, 110, "1.1", seedAgentTitle(seedPlatform));
+                taskId, "step1_seed", PHASE_LOCK_TARGET, 110, "1.1",
+                seedAgentTitle(seedPlatform), SourceTag.jsonForStep("step1_seed", seedPlatform));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step2_maigret", PHASE_DISCOVERY, 210, "2.1", "Maigret Agent 跨平台收集");
+                taskId, "step2_maigret", PHASE_DISCOVERY, 210, "2.1",
+                "Maigret Agent 跨平台收集", SourceTag.jsonForStep("step2_maigret"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step3_web_search", PHASE_DISCOVERY, 220, "2.2", "网页检索 Agent 候选发现");
+                taskId, "step3_web_search", PHASE_DISCOVERY, 220, "2.2",
+                "网页检索 Agent 候选发现", SourceTag.jsonForStep("step3_web_search"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step4_profiles", PHASE_ACCOUNT_COLLECT, 310, "3.1", "MCP/Apify Agent 候选主页采集");
+                taskId, "step4_profiles", PHASE_ACCOUNT_COLLECT, 310, "3.1",
+                "MCP/Apify Agent 候选主页采集", SourceTag.jsonForStep("step4_profiles"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step5_streams", PHASE_COLLISION, 410, "4.1", "信息核验流 Agent 核查");
+                taskId, "step5_streams", PHASE_COLLISION, 410, "4.1",
+                "信息核验流 Agent 核查", SourceTag.jsonForStep("step5_streams"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step5_stream_text", "step5_streams", 411, "4.1.1", "文本流核验 Agent");
+                taskId, "step5_stream_text", "step5_streams", 411, "4.1.1",
+                "文本流核验 Agent", SourceTag.jsonForStep("step5_stream_text"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step5_stream_image", "step5_streams", 412, "4.1.2", "图片流核验 Agent");
+                taskId, "step5_stream_image", "step5_streams", 412, "4.1.2",
+                "图片流核验 Agent", SourceTag.jsonForStep("step5_stream_image"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step6_validated", PHASE_COLLISION, 420, "4.2", "相似账号认定 Agent");
+                taskId, "step6_validated", PHASE_COLLISION, 420, "4.2",
+                "相似账号认定 Agent", SourceTag.jsonForStep("step6_validated"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step6_osint_es", PHASE_COLLISION, 430, "4.3", "社工库核验 Agent");
+                taskId, "step6_osint_es", PHASE_COLLISION, 430, "4.3",
+                "社工库核验 Agent", SourceTag.jsonForStep("step6_osint_es"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step7_posts", PHASE_CONTENT, 510, "5.1", "跨平台发文采集 Agent");
+                taskId, "step7_posts", PHASE_CONTENT, 510, "5.1",
+                "跨平台发文采集 Agent", SourceTag.jsonForStep("step7_posts"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step8_img_analysis", PHASE_ANALYSIS, 610, "6.1", "图片流 Agent 分析");
+                taskId, "step8_img_analysis", PHASE_ANALYSIS, 610, "6.1",
+                "图片流 Agent 分析", SourceTag.jsonForStep("step8_img_analysis"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step9_context_views", PHASE_ANALYSIS, 620, "6.2", "观点与涉华分析 Agent");
+                taskId, "step9_context_views", PHASE_ANALYSIS, 620, "6.2",
+                "观点与涉华分析 Agent", SourceTag.jsonForStep("step9_context_views"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step10_context_pii", PHASE_ANALYSIS, 630, "6.3", "PII 与圈层分析 Agent");
+                taskId, "step10_context_pii", PHASE_ANALYSIS, 630, "6.3",
+                "PII 与圈层分析 Agent", SourceTag.jsonForStep("step10_context_pii"));
         collectTaskMapper.insertPhaseStep(
-                taskId, "step11_report", PHASE_REPORT, 710, "7.1", "画像报告 Agent");
+                taskId, "step11_report", PHASE_REPORT, 710, "7.1",
+                "画像报告 Agent", SourceTag.jsonForStep("step11_report"));
     }
 
     private String seedAgentTitle(String platform) {

@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.SourceTag;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -152,15 +153,23 @@ public class CollectTaskCreateService implements TaskCreateService {
      * 跨平台任务：插入完整步骤树（与 collect_01/phases.py root_steps_for_platform 一致，Agent 风格标题）。
      */
     private void insertCrossPlatformSteps(String taskId, String seedPlatform) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1", seedAgentTitle(seedPlatform));
-        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "2", "Maigret Agent 跨平台收集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "3", "MCP/Apify Agent 候选主页采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "4", "信息核验流 Agent 拆分");
+        collectTaskMapper.insertPhaseStep(taskId, "step1_seed", null, 10, "1",
+                seedAgentTitle(seedPlatform), SourceTag.jsonForStep("step1_seed", seedPlatform));
+        collectTaskMapper.insertPhaseStep(taskId, "step2_cross_platform", null, 20, "2",
+                "Maigret Agent 跨平台收集", SourceTag.jsonForStep("step2_cross_platform"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "3",
+                "MCP/Apify Agent 候选主页采集", SourceTag.jsonForStep("step3_profiles"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "4",
+                "信息核验流 Agent 拆分", SourceTag.jsonForStep("step3_streams"));
         // 4.1 / 4.2 挂在步骤4（step3_streams）下，tree 接口靠 parent_step_key 组装 children
-        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "4.1", "文本流 Agent 对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "4.2", "图片流 Agent 分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "可信账号核验 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step6_posts", null, 60, "6", "跨平台发文采集 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "4.1",
+                "文本流 Agent 对比", SourceTag.jsonForStep("step4_text_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "4.2",
+                "图片流 Agent 分析", SourceTag.jsonForStep("step4_image_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5",
+                "可信账号核验 Agent", SourceTag.jsonForStep("step5_validated"));
+        collectTaskMapper.insertPhaseStep(taskId, "step6_posts", null, 60, "6",
+                "跨平台发文采集 Agent", SourceTag.jsonForStep("step6_posts"));
     }
 
     /**

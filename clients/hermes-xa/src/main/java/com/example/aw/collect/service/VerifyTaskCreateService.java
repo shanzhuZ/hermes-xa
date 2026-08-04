@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.SourceTag;
 import com.example.aw.collect.mapper.CollectTaskMapper;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
@@ -79,13 +80,19 @@ public class VerifyTaskCreateService implements TaskCreateService {
      * 03 核查步骤树：step1_input_accounts 初始 running，其余 pending（Agent 风格标题）。
      */
     private void insertVerifySteps(String taskId) {
-        collectTaskMapper.insertPhaseStep(taskId, "step1_input_accounts", null, 10, "1", "种子账号确认 Agent");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2", "MCP/Apify Agent 主页与发文采集");
-        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3", "发文风格与领域归纳 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step1_input_accounts", null, 10, "1",
+                "种子账号确认 Agent", SourceTag.jsonForStep("step1_input_accounts"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_profiles", null, 30, "2",
+                "MCP/Apify Agent 主页与发文采集", SourceTag.jsonForStep("step3_profiles"));
+        collectTaskMapper.insertPhaseStep(taskId, "step3_streams", null, 40, "3",
+                "发文风格与领域归纳 Agent", SourceTag.jsonForStep("step3_streams", null, true));
         // 4.1 / 4.2 挂在 step3_streams 下（与粗同步 parentsToEnsureRunning 一致）
-        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "4.1", "文本流 Agent 对比");
-        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "4.2", "图片流 Agent 分析");
-        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5", "账号核验 Agent");
+        collectTaskMapper.insertPhaseStep(taskId, "step4_text_compare", "step3_streams", 41, "4.1",
+                "文本流 Agent 对比", SourceTag.jsonForStep("step4_text_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step4_image_compare", "step3_streams", 42, "4.2",
+                "图片流 Agent 分析", SourceTag.jsonForStep("step4_image_compare"));
+        collectTaskMapper.insertPhaseStep(taskId, "step5_validated", null, 50, "5",
+                "账号核验 Agent", SourceTag.jsonForStep("step5_validated"));
         collectTaskMapper.updateStepStatus(
                 taskId,
                 "step1_input_accounts",
