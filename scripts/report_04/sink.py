@@ -739,6 +739,25 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             phase = str(ex.get("phase") or payload.get("phase") or "").strip() or None
         except Exception:
             phase = None
+        # [COLLISION_DEMO_FAKE] 禁止 Agent 以假节点为 phase 调工具 — 正式版删除本段
+        try:
+            from report_04.collision_demo_steps import block_agent_tool_for_demo_step
+
+            demo_reason = block_agent_tool_for_demo_step(phase, None)
+            if demo_reason:
+                logger.warning(
+                    "[COLLISION_DEMO_FAKE] 拦截工具 task=%s tool=%s: %s",
+                    task_id,
+                    tool_name,
+                    demo_reason[:160],
+                )
+                return {
+                    "decision": "block",
+                    "reason": demo_reason,
+                }
+        except Exception:
+            pass
+        # [COLLISION_DEMO_FAKE] end
         reason = (
             _is_invalid_youtube_channel_id(tool_name, tool_args)
             or _is_premature_step5_tool(tool_name, task_id)

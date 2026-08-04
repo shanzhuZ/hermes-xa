@@ -188,6 +188,17 @@ public class ReportTaskCreateService implements TaskCreateService {
         collectTaskMapper.insertPhaseStep(
                 taskId, "step6_osint_es", PHASE_COLLISION, 430, "4.3",
                 "社工库核验 Agent", SourceTag.jsonForStep("step6_osint_es"));
+        // [COLLISION_DEMO_FAKE] 关联碰撞假节点 4.4/4.5/4.6 — 正式版删除本段三行 insert
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step6_geo_verify", PHASE_COLLISION, 440, "4.4",
+                "地理位置核验 Agent", SourceTag.jsonForStep("step6_geo_verify"));
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step6_relation_graph", PHASE_COLLISION, 450, "4.5",
+                "关系网络分析 Agent", SourceTag.jsonForStep("step6_relation_graph"));
+        collectTaskMapper.insertPhaseStep(
+                taskId, "step6_rumor_sx", PHASE_COLLISION, 460, "4.6",
+                "陕西谣言特色库 Agent", SourceTag.jsonForStep("step6_rumor_sx"));
+        // [COLLISION_DEMO_FAKE] end
         collectTaskMapper.insertPhaseStep(
                 taskId, "step7_posts", PHASE_CONTENT, 510, "5.1",
                 "跨平台发文采集 Agent", SourceTag.jsonForStep("step7_posts"));

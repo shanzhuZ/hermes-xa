@@ -67,6 +67,11 @@ _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
             "mcp_es-search_es_cluster_health",
         }
     ),
+    # [COLLISION_DEMO_FAKE] 假节点禁止一切工具 — 正式版删除下列三行
+    "step6_geo_verify": frozenset(),
+    "step6_relation_graph": frozenset(),
+    "step6_rumor_sx": frozenset(),
+    # [COLLISION_DEMO_FAKE] end
     "step7_posts": POST_TOOLS | APIFY_POST_TOOLS | frozenset({"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}),
     "step8_img_analysis": frozenset(),
     "step9_context_views": frozenset(),
@@ -147,10 +152,30 @@ def block_tool_reason(
     """当前步骤不允许该工具时返回拦截原因。"""
     if not tool_name:
         return None
+    # [COLLISION_DEMO_FAKE] 禁止 Agent 以假节点为 phase/gate 调工具 — 正式版删除本段
+    try:
+        from report_04.collision_demo_steps import block_agent_tool_for_demo_step
+
+        demo_block = block_agent_tool_for_demo_step(phase, None)
+        if demo_block:
+            return demo_block
+    except Exception:
+        pass
+    # [COLLISION_DEMO_FAKE] end
     if _allow_late_step7_post_collect(task_id, tool_name, phase):
         return None
 
     gate = infer_gate_step(task_id)
+    # [COLLISION_DEMO_FAKE]
+    try:
+        from report_04.collision_demo_steps import block_agent_tool_for_demo_step
+
+        demo_block = block_agent_tool_for_demo_step(None, gate)
+        if demo_block:
+            return demo_block
+    except Exception:
+        pass
+    # [COLLISION_DEMO_FAKE] end
     allowed = _STEP_WHITELIST.get(gate, frozenset())
 
     # 社工库工具：仅 4.3；名称可能含 sanitize 后的 es_search

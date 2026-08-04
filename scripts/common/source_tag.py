@@ -24,6 +24,10 @@ FIXED_SOURCE_TAGS = {
     "step3_web_search": [TAG_OPEN],
     "step6_osint_es": [TAG_SELF, TAG_OFFLINE],
     "step1_input_accounts": [TAG_SELF],
+    # [COLLISION_DEMO_FAKE] 关联碰撞假节点标签 — 正式版删除下列三行
+    "step6_geo_verify": [TAG_OPEN],
+    "step6_relation_graph": [TAG_OPEN],
+    "step6_rumor_sx": [TAG_OFFLINE, TAG_SELF],
 }
 
 # 纯研判（01/02 的 step3_streams 是父壳，不在此集合；03 用 streams_as_self）

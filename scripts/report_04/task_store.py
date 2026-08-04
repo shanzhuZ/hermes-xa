@@ -872,6 +872,27 @@ class TaskStore:
         ):
             logger.info("拒绝 step5_streams completed→running task=%s", task_id)
             return
+        # [COLLISION_DEMO_FAKE] 假节点完成后禁止改回 pending/running — 正式版删除本段
+        try:
+            from report_04.phases import is_collision_demo_step
+
+            if (
+                is_collision_demo_step(step_key)
+                and cur_status in {"completed", "skipped", "failed"}
+                and status in {"pending", "running"}
+                and not force_reopen
+            ):
+                logger.info(
+                    "[COLLISION_DEMO_FAKE] 拒绝 %s %s→%s task=%s",
+                    step_key,
+                    cur_status,
+                    status,
+                    task_id,
+                )
+                return
+        except Exception:
+            pass
+        # [COLLISION_DEMO_FAKE] end
 
         fields = ["status=%s"]
         params: List[Any] = [status]
@@ -982,6 +1003,8 @@ class TaskStore:
         解决 step7_post_* / step4_profile_* 等深叶不在 EXECUTION_PARENT_SHELL 时，
         父节点与 phase_* 长时间停在 pending 的空窗。
         """
+        from report_04.phases import PHASE_COLLISION  # [COLLISION_DEMO_FAKE] 触发用
+
         chain = self._parent_chain_to_phase_shell(task_id, execution_step_key)
         if not chain:
             # 兼容：仅映射到壳的旧路径
@@ -990,6 +1013,9 @@ class TaskStore:
         for node in chain:
             cur = get_step_status(task_id, node)
             if cur == "running":
+                # [COLLISION_DEMO_FAKE] 壳已 running 也尝试幂等拉起假节点
+                if node == PHASE_COLLISION:
+                    self._kickoff_collision_demo_fake(task_id)
                 continue
             # pending / skipped / 空 / completed（补采重开）→ running；展示上先有父再有子
             force = cur == "completed"
@@ -1001,6 +1027,18 @@ class TaskStore:
                 skip_phase_rollup=True,
                 force_reopen=force,
             )
+            # [COLLISION_DEMO_FAKE] 「4. 关联碰撞」变 running → 启动 4.4/4.5/4.6 假节点
+            if node == PHASE_COLLISION:
+                self._kickoff_collision_demo_fake(task_id)
+
+    def _kickoff_collision_demo_fake(self, task_id: str) -> None:
+        """[COLLISION_DEMO_FAKE] 正式版删除本方法及所有调用点。"""
+        try:
+            from report_04.collision_demo_steps import kickoff_collision_demo_steps
+
+            kickoff_collision_demo_steps(self, task_id)
+        except Exception as exc:
+            logger.warning("[COLLISION_DEMO_FAKE] kickoff 失败 task=%s: %s", task_id, exc)
 
     def _maybe_complete_phase_shell(self, task_id: str, execution_step_key: str) -> None:
         """业务步终态后收口父节点/七大壳。
@@ -1030,6 +1068,12 @@ class TaskStore:
 
     def _try_complete_parent_if_children_done(self, task_id: str, parent: str) -> bool:
         """若 parent 下直接子步均已终态，则标 completed。返回是否已是终态。"""
+        from report_04.phases import (
+            COLLISION_DEMO_STEP_KEYS,  # [COLLISION_DEMO_FAKE]
+            PHASE_COLLISION,
+            is_collision_demo_step,  # [COLLISION_DEMO_FAKE]
+        )
+
         cur = get_step_status(task_id, parent)
         if cur in {"completed", "skipped"}:
             return True
@@ -1039,9 +1083,19 @@ class TaskStore:
         )
         statuses: List[str] = []
         if rows:
-            statuses = [str(r.get("status") or "") for r in rows]
+            for r in rows:
+                sk = str(r.get("step_key") or "")
+                # [COLLISION_DEMO_FAKE] 壳「4. 关联碰撞」收口不等 4.4/4.5/4.6
+                if parent == PHASE_COLLISION and sk in COLLISION_DEMO_STEP_KEYS:
+                    continue
+                if is_collision_demo_step(sk) and parent == PHASE_COLLISION:
+                    continue
+                statuses.append(str(r.get("status") or ""))
         else:
             for child in direct_execution_children(parent):
+                # [COLLISION_DEMO_FAKE]
+                if parent == PHASE_COLLISION and child in COLLISION_DEMO_STEP_KEYS:
+                    continue
                 st = get_step_status(task_id, child)
                 statuses.append(st or "")
         if not statuses:

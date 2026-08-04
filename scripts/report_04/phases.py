@@ -53,6 +53,20 @@ STREAM_TEXT_CONCLUSION_MARKER = "[文本核验结论]"
 OSINT_ES_STEP_KEY = "step6_osint_es"
 OSINT_CONCLUSION_MARKER = "[社工库核验结论]"
 
+# ---------------------------------------------------------------------------
+# [COLLISION_DEMO_FAKE] 假流程节点（演示用）— 正式版请整段删除
+# 文档约定：挂在「4. 关联碰撞」下；不挡发文门禁；壳收口不等它们。
+# 实现：collision_demo_steps.py ；触发：phase_collision → running
+# 检索关键字：COLLISION_DEMO_FAKE
+# ---------------------------------------------------------------------------
+STEP6_GEO_VERIFY = "step6_geo_verify"  # 4.4 地理位置核验 Agent
+STEP6_RELATION_GRAPH = "step6_relation_graph"  # 4.5 关系网络分析 Agent
+STEP6_RUMOR_SX = "step6_rumor_sx"  # 4.6 陕西谣言特色库 Agent
+COLLISION_DEMO_STEP_KEYS = frozenset(
+    {STEP6_GEO_VERIFY, STEP6_RELATION_GRAPH, STEP6_RUMOR_SX}
+)
+# ---------------------------------------------------------------------------
+
 
 @dataclass(frozen=True)
 class StepDef:
@@ -157,6 +171,32 @@ def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDe
             PHASE_COLLISION,
             PHASE_VALIDATED,
         ),
+        # [COLLISION_DEMO_FAKE] 开始 — 正式版删除下列三步
+        StepDef(
+            STEP6_GEO_VERIFY,
+            "地理位置核验 Agent",
+            440,
+            "4.4",
+            PHASE_COLLISION,
+            PHASE_STREAM_VALIDATE,
+        ),
+        StepDef(
+            STEP6_RELATION_GRAPH,
+            "关系网络分析 Agent",
+            450,
+            "4.5",
+            PHASE_COLLISION,
+            PHASE_STREAM_VALIDATE,
+        ),
+        StepDef(
+            STEP6_RUMOR_SX,
+            "陕西谣言特色库 Agent",
+            460,
+            "4.6",
+            PHASE_COLLISION,
+            PHASE_STREAM_VALIDATE,
+        ),
+        # [COLLISION_DEMO_FAKE] 结束
         StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
         StepDef("step8_img_analysis", "图片流 Agent 分析", 610, "6.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
         StepDef("step9_context_views", "观点与涉华分析 Agent", 620, "6.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
@@ -401,7 +441,17 @@ def tool_collect_step_key(tool_name: str, platform: Optional[str]) -> str:
 
 
 def root_step_keys() -> List[str]:
-    return [s.step_key for s in execution_steps_for_platform("twitter")]
+    """门禁推断用的业务根步（排除 [COLLISION_DEMO_FAKE] 假节点，避免卡在 4.4～4.6）。"""
+    return [
+        s.step_key
+        for s in execution_steps_for_platform("twitter")
+        if s.step_key not in COLLISION_DEMO_STEP_KEYS  # [COLLISION_DEMO_FAKE]
+    ]
+
+
+def is_collision_demo_step(step_key: Optional[str]) -> bool:
+    """[COLLISION_DEMO_FAKE] 是否为关联碰撞演示假节点。正式版可整函数删除。"""
+    return bool(step_key) and str(step_key) in COLLISION_DEMO_STEP_KEYS
 
 
 def initial_steps(platform: Optional[str] = None) -> List[StepDef]:

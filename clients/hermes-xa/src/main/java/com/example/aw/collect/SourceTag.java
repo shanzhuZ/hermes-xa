@@ -75,6 +75,14 @@ public final class SourceTag {
         if ("step6_osint_es".equals(key)) {
             return Arrays.asList(SELF, OFFLINE);
         }
+        // [COLLISION_DEMO_FAKE] 关联碰撞假节点 — 正式版删除本段
+        if ("step6_geo_verify".equals(key) || "step6_relation_graph".equals(key)) {
+            return Collections.singletonList(OPEN);
+        }
+        if ("step6_rumor_sx".equals(key)) {
+            return Arrays.asList(OFFLINE, SELF);
+        }
+        // [COLLISION_DEMO_FAKE] end
         if ("step3_streams".equals(key)) {
             return streamsAsSelf ? Collections.singletonList(SELF) : null;
         }
