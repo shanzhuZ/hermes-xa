@@ -332,7 +332,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
                 + "。必须继续采集，禁止结束会话空等。"
             )
         lines.append(
-            "发文入库后若有可下载视频，Hook 会挂 step7_video_* 后台分析，不挡步骤7收口；"
+            "发文入库后若有可下载视频，Hook 会挂 step7_video_* 后台分析："
+            "不挡发文子步完成与进深度研判，但 step7_posts / 内容采集壳会等视频终态；"
             "禁止同步 mcp_video2frame_*。"
         )
 

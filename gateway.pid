@@ -1,1 +1,1 @@
-{"pid": 2864, "kind": "hermes-gateway", "argv": ["D:\\hermes-xa\\hermes-agent\\venv\\Scripts\\hermes", "gateway"], "start_time": 178582493415}
+{"pid": 30412, "kind": "hermes-gateway", "argv": ["D:\\hermes-xa\\hermes-agent\\venv\\Scripts\\hermes", "gateway", "run"], "start_time": 178609600664}

@@ -1,7 +1,9 @@
 """04：平台发文完成后短触发后台视频分析（防 Hook 超时）。
 
 节点：step7_post_{platform} → step7_video_{platform}（5.1.x.1）。
-无可用视频不建节点；有则后台跑，发文子步等视频终态再 completed。
+无可用视频不建节点；有则后台跑。
+方案 A：发文子步入库即可 completed（不挡进分析）；
+step7_posts / phase_content 须等全部 step7_video_* 终态再收口。
 """
 
 from __future__ import annotations
@@ -142,9 +144,12 @@ def finalize_post_platform_after_posts(
     post_count: int,
     force_reopen: bool = False,
 ) -> str:
-    """发文已入库后的统一收口：尝试视频；有视频则发文子步保持 running，无则 completed。
+    """发文已入库后的统一收口：尝试拉起视频；发文子步一律可 completed。
 
-    返回最终发文子步状态：running / completed。
+    有视频时：发文子步 completed（旁路，不挡进分析）；
+    step7_posts / phase_content 由收口逻辑等视频孙节点终态。
+
+    返回最终发文子步状态：completed（无发文时可能仍为 pending）。
     """
     platform = str(platform or "").strip().lower()
     if not platform or post_count <= 0:
@@ -154,17 +159,17 @@ def finalize_post_platform_after_posts(
     video_key = video_step_key(platform)
     v_st = get_step_status(task_id, video_key)
 
-    # 视频已在跑/已成功/已跳过：按规则处理发文父步
+    # 视频已在跑：发文子步旁路 completed（父壳另等视频终态）
     if v_st in {"pending", "running"}:
         store.set_step_status(
             task_id,
             post_key,
-            "running",
-            message=f"发文已入库 {post_count} 条，等待视频分析",
+            "completed",
+            message=f"已入库发文 {post_count} 条（视频分析后台进行中）",
             payload={"post_count": post_count, "await_video": True},
             force_reopen=True,
         )
-        return "running"
+        return "completed"
     if v_st in {"completed", "failed", "skipped"}:
         store.set_step_status(
             task_id,
@@ -183,20 +188,15 @@ def finalize_post_platform_after_posts(
         logger.warning("04 拉起视频失败 task=%s platform=%s: %s", task_id, platform, exc)
         result = {"skipped": True, "reason": "start_error", "error": str(exc)}
 
-    if result.get("started") or result.get("status") in {"pending", "running"}:
-        # 视频走 step7_video_* 旁路，不挡发文子步/父壳收口与进分析
-        store.set_step_status(
-            task_id,
-            post_key,
-            "completed",
-            message=f"已入库发文 {post_count} 条（视频分析后台进行中）",
-            payload={"post_count": post_count, "await_video": True},
-            force_reopen=force_reopen,
+    if (
+        result.get("started")
+        or result.get("status") in {"pending", "running"}
+        or (
+            result.get("reason") == "already_exists"
+            and result.get("status") in {"pending", "running"}
         )
-        return "completed"
-
-    # already_exists 且 running/pending
-    if result.get("reason") == "already_exists" and result.get("status") in {"pending", "running"}:
+    ):
+        # 视频旁路：不挡发文子步 completed / 进分析；挡 step7_posts 与 phase_content
         store.set_step_status(
             task_id,
             post_key,
@@ -220,7 +220,7 @@ def finalize_post_platform_after_posts(
 
 
 def complete_post_after_video(store: Any, task_id: str, platform: str) -> None:
-    """视频节点终态后，若发文已入库则收口 step7_post_*。"""
+    """视频节点终态后：补收口仍未终态的发文子步，并尝试关 step7_posts / phase_content。"""
     platform = str(platform or "").strip().lower()
     if not platform:
         return
@@ -236,19 +236,22 @@ def complete_post_after_video(store: Any, task_id: str, platform: str) -> None:
     if cnt <= 0:
         return
     cur = get_step_status(task_id, post_key)
-    if cur in {"completed", "skipped", "failed"}:
-        return
-    store.set_step_status(
-        task_id,
-        post_key,
-        "completed",
-        message=f"已入库发文 {cnt} 条（视频 {v_st}）",
-        payload={"post_count": cnt, "video_status": v_st},
-    )
+    if cur not in {"completed", "skipped", "failed"}:
+        store.set_step_status(
+            task_id,
+            post_key,
+            "completed",
+            message=f"已入库发文 {cnt} 条（视频 {v_st}）",
+            payload={"post_count": cnt, "video_status": v_st},
+        )
     try:
         from report_04.step_reconcile import close_collect_parent_if_ready
 
-        close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
+        close_collect_parent_if_ready(
+            store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕"
+        )
+        if hasattr(store, "_maybe_complete_phase_shell"):
+            store._maybe_complete_phase_shell(task_id, POST_PARENT_STEP_KEY)
     except Exception as exc:
         logger.warning("04 视频后关 step7 父节点失败 task=%s: %s", task_id, exc)
 

@@ -1466,17 +1466,10 @@ def ensure_step7_parent_not_premature(store: Any, task_id: str) -> int:
     return updated
 
 
-def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
-    """发文实质已齐则立刻关 step7 父壳（避免子步 completed 后父壳长期 running）。"""
+def _flush_running_post_children_with_posts(store: Any, task_id: str) -> int:
+    """把已入库但仍 running 的 step7_post_* 收成 completed（不关父壳）。"""
     parent = POST_PARENT_STEP_KEY
-    cur = get_step_status(task_id, parent)
-    if cur in {"completed", "skipped"}:
-        return 0
-    from report_04.gates import posts_substantively_ready
-
-    if not posts_substantively_ready(task_id):
-        return 0
-    # 若仍有仅因视频旁路而 running 的子步，先按已入库收口为 completed
+    n = 0
     rows = db.fetch_all(
         "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, parent),
@@ -1491,16 +1484,43 @@ def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
             "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
             (task_id, plat),
         )
-        n = int((cnt_row or {}).get("c") or 0)
-        if n <= 0:
+        cnt = int((cnt_row or {}).get("c") or 0)
+        if cnt <= 0:
             continue
         store.set_step_status(
             task_id,
             sk,
             "completed",
-            message=f"已入库发文 {n} 条",
+            message=f"已入库发文 {cnt} 条（视频分析后台进行中）",
             force_reopen=True,
         )
+        n += 1
+    return n
+
+
+def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
+    """发文实质已齐时：先收口卡住的发文子步；视频孙节点均终态后才关 step7 父壳。"""
+    parent = POST_PARENT_STEP_KEY
+    cur = get_step_status(task_id, parent)
+    if cur in {"completed", "skipped"}:
+        return 0
+    from report_04.gates import posts_substantively_ready
+    from report_04.video_report import video_steps_terminal
+
+    if not posts_substantively_ready(task_id):
+        return 0
+    # 若仍有仅因旧「等视频」而 running 的子步，先按已入库收口为 completed
+    _flush_running_post_children_with_posts(store, task_id)
+
+    vt = video_steps_terminal(task_id)
+    if not vt.get("ok"):
+        logger.info(
+            "force_close 暂不关 step7_posts：视频未终态 task=%s open=%s",
+            task_id,
+            vt.get("open"),
+        )
+        return 0
+
     store.set_step_status(
         task_id,
         parent,
@@ -1513,7 +1533,7 @@ def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
         store._maybe_complete_phase_shell(task_id, parent)
     except Exception as exc:
         logger.warning("force_close 后收口 phase_content 失败 task=%s: %s", task_id, exc)
-    logger.info("force_close step7_posts task=%s (发文实质已齐)", task_id)
+    logger.info("force_close step7_posts task=%s (发文实质已齐且视频终态)", task_id)
     return 1
 
 
@@ -1535,13 +1555,25 @@ def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_don
                 ",".join(str(x.get("platform") or "") for x in leftover[:8]),
             )
             return 0
+        # 方案 A：视频孙节点未终态时，不关发文父壳（可先 flush 子步）
+        from report_04.video_report import video_steps_terminal
+
+        vt = video_steps_terminal(task_id)
+        if not vt.get("ok"):
+            _flush_running_post_children_with_posts(store, task_id)
+            logger.info(
+                "拒绝关闭 step7_posts：视频未终态 task=%s open=%s",
+                task_id,
+                vt.get("open"),
+            )
+            return 0
     rows = db.fetch_all(
         "SELECT status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, parent),
     )
     if rows:
         if any(str(r.get("status") or "") in {"pending", "running"} for r in rows):
-            # 发文：子步仍 running 但实质已齐（含旧版等视频钉 running）→ 强制关
+            # 发文：子步仍 running 但实质已齐（含旧版等视频钉 running）→ 尝试强制关
             if parent == POST_PARENT_STEP_KEY:
                 return force_close_step7_posts_if_ready(store, task_id)
             return 0

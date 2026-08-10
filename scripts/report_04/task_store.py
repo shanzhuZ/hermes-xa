@@ -173,7 +173,7 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
             )
             updated += 1
             continue
-        # 等视频中的 running：视频终态后补 completed
+        # 旧版「等视频」钉 running：视频终态后补 completed，并尝试关父壳
         if cur == "running":
             from report_04.video_job import complete_post_after_video
 
@@ -1003,7 +1003,11 @@ class TaskStore:
         解决 step7_post_* / step4_profile_* 等深叶不在 EXECUTION_PARENT_SHELL 时，
         父节点与 phase_* 长时间停在 pending 的空窗。
         """
-        from report_04.phases import PHASE_COLLISION  # [COLLISION_DEMO_FAKE] 触发用
+        from report_04.phases import (
+            PHASE_COLLISION,  # [COLLISION_DEMO_FAKE] 触发用
+            is_post_platform_step,
+            is_video_platform_step,
+        )
 
         chain = self._parent_chain_to_phase_shell(task_id, execution_step_key)
         if not chain:
@@ -1011,6 +1015,10 @@ class TaskStore:
             shell = phase_shell_of_execution_step(execution_step_key)
             chain = [shell] if shell else []
         for node in chain:
+            # 方案 A：视频旁路不把已 completed 的发文子步重新钉成 running；
+            # 仍点亮 step7_posts / phase_content，保证树上层与视频进行中一致
+            if is_video_platform_step(execution_step_key) and is_post_platform_step(node):
+                continue
             cur = get_step_status(task_id, node)
             if cur == "running":
                 # [COLLISION_DEMO_FAKE] 壳已 running 也尝试幂等拉起假节点
@@ -1071,12 +1079,27 @@ class TaskStore:
         from report_04.phases import (
             COLLISION_DEMO_STEP_KEYS,  # [COLLISION_DEMO_FAKE]
             PHASE_COLLISION,
+            PHASE_CONTENT,
+            POST_PARENT_STEP_KEY,
             is_collision_demo_step,  # [COLLISION_DEMO_FAKE]
         )
 
         cur = get_step_status(task_id, parent)
         if cur in {"completed", "skipped"}:
             return True
+        # 方案 A：发文父壳 / 内容采集壳须等视频孙节点终态（发文子步可先 completed）
+        if parent in {POST_PARENT_STEP_KEY, PHASE_CONTENT}:
+            try:
+                from report_04.video_report import video_steps_terminal
+
+                vt = video_steps_terminal(task_id)
+                if not vt.get("ok"):
+                    return False
+            except Exception as exc:
+                logger.warning(
+                    "视频终态检查失败，暂不收口 %s task=%s: %s", parent, task_id, exc
+                )
+                return False
         rows = db.fetch_all(
             "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
             (task_id, parent),

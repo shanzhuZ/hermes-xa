@@ -224,7 +224,8 @@ def posts_substantively_ready(task_id: str) -> bool:
     """发文实质已齐：可进分析（不要求 step7_posts 父壳 UI 已 completed）。
 
     条件：步骤7门禁可过、无未尝试发文平台、现有 step7_post_* 子步均为 completed/skipped
-    （视频分析走 step7_video_* 旁路，不挡此判定）。
+    （视频分析走 step7_video_* 旁路，不挡此判定与进分析；
+    但 step7_posts / phase_content 壳收口另等视频终态）。
     """
     if not can_advance_to_step7(task_id).get("ok"):
         return False

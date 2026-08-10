@@ -8,7 +8,7 @@ import java.util.List;
 import java.util.Set;
 
 /**
- * collect_phase_steps.source_tag：JSON 列表（付费/开源/离线/自研）。
+ * collect_phase_steps.source_tag：JSON 列表（付费/开源/离线/自研/特色）。
  * 对照：docs/collect_phase_steps_source_tag.md
  */
 public final class SourceTag {
@@ -17,6 +17,7 @@ public final class SourceTag {
     public static final String OPEN = "开源";
     public static final String OFFLINE = "离线";
     public static final String SELF = "自研";
+    public static final String FEATURE = "特色";
 
     private static final Set<String> MCP_PLATFORMS = new HashSet<String>(
             Arrays.asList("twitter", "weibo", "youtube", "bilibili"));
@@ -80,7 +81,7 @@ public final class SourceTag {
             return Collections.singletonList(OPEN);
         }
         if ("step6_rumor_sx".equals(key)) {
-            return Arrays.asList(OFFLINE, SELF);
+            return Arrays.asList(OFFLINE, SELF, FEATURE);
         }
         // [COLLISION_DEMO_FAKE] end
         if ("step3_streams".equals(key)) {

@@ -26,7 +26,12 @@ _FINAL_MARKERS = (
     "二、账号全网关联账号",
     "三、账号网络活动情况",
     "四、核查思路",
+    "五、个人画像情况",
+    "六、综合研判与核查情况",
 )
+
+_SECTION5_HEAD = "五、个人画像情况"
+_SECTION6_HEAD = "六、综合研判与核查情况"
 
 _SECTION1_HEAD = "一、账号基本信息"
 
@@ -142,7 +147,7 @@ def looks_like_report_attempt(content: str) -> bool:
 
 
 def is_final_report(content: str) -> bool:
-    """合法步骤11终稿：够长、含≥2个章节、以第一节开头；脏行先清洗再判定。
+    """合法步骤11终稿：够长、含≥2个旧章、且含五/六两章；以第一节开头；脏行先清洗再判定。
 
     允许 Agent 在第一节前写进度句；判定时先剥前缀再清洗脏行。
     清洗后仍含脏词或结构不够 → False（由调用方 fail-forward，禁止停在 running）。
@@ -155,7 +160,15 @@ def is_final_report(content: str) -> bool:
         return False
     if has_report_dirty_meta(body):
         return False
-    return _section_marker_hits(body) >= 2
+    if _section_marker_hits(body) < 2:
+        return False
+    # 五、六为必含章节（可与第四章内容重叠）
+    compact = (body or "").replace(" ", "").replace("\u3000", "")
+    if _SECTION5_HEAD.replace(" ", "") not in compact:
+        return False
+    if _SECTION6_HEAD.replace(" ", "") not in compact:
+        return False
+    return True
 
 
 def parse_standalone_analysis_blocks(text: str) -> Dict[str, str]:
@@ -201,7 +214,8 @@ def backfill_analysis_from_report(text: str) -> Dict[str, str]:
     if "2.3" in s2 or "图片流" in s2:
         s8_parts.append(s2)
     s9 = _extract_section(body, "三、账号网络活动情况", ("四、", "## 四"))
-    s10 = _extract_section(body, "四、核查思路", ())
+    # 四章在五、处截断，避免五/六灌进 step10 回填
+    s10 = _extract_section(body, "四、核查思路", ("五、", "## 五"))
     if not s10 and s9:
         s10 = s9
     out: Dict[str, str] = {}

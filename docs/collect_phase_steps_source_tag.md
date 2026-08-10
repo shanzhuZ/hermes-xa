@@ -25,7 +25,7 @@
 |----|------|
 | 列名 | `source_tag` |
 | 类型 | `VARCHAR(64) NULL`（JSON 文本） |
-| 取值 | JSON 数组；元素为 `付费` / `开源` / `离线` / `自研` |
+| 取值 | JSON 数组；元素为 `付费` / `开源` / `离线` / `自研` / `特色` |
 | `NULL` 含义 | 阶段壳、父汇总、`step_plan` 等，不打标 |
 | 历史任务 | 不强制回填；SQL 018 可将旧单字符串规范为单元素数组 |
 | 树接口 | `sourceTag`: `string[]` 或 `null` |
@@ -116,6 +116,7 @@
 | step5_stream_image | 图片流核验 Agent | `["自研"]` | |
 | step6_validated | 相似账号认定 Agent | `["自研"]` | |
 | step6_osint_es | 社工库核验 Agent | `["自研","离线"]` | |
+| step6_rumor_sx | 陕西谣言特色库 Agent | `["离线","自研","特色"]` | 演示假节点 |
 | step7_posts | 跨平台发文采集 Agent | NULL | 父汇总 |
 | step7_post_* | 各平台 Agent 发文采集 | `["开源"]` / `["付费"]` | |
 | step7_video_* | *视频分析 | `["自研"]` | |

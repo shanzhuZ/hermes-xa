@@ -1,6 +1,6 @@
 """collect_phase_steps.source_tag 取值规则（01/02/03/04 共用）。
 
-库内存 JSON 列表文本：["付费"] / ["开源"] / ["自研"] / ["自研","离线"]；壳为 None。
+库内存 JSON 列表文本：["付费"] / ["开源"] / ["自研"] / ["自研","离线"] / ["离线","自研","特色"] 等；壳为 None。
 对照：docs/collect_phase_steps_source_tag.md
 """
 
@@ -13,6 +13,7 @@ TAG_PAID = "付费"
 TAG_OPEN = "开源"
 TAG_OFFLINE = "离线"
 TAG_SELF = "自研"
+TAG_FEATURE = "特色"
 
 MCP_PLATFORMS = frozenset({"twitter", "weibo", "youtube", "bilibili"})
 APIFY_PLATFORMS = frozenset({"facebook", "instagram", "tiktok", "telegram", "github"})
@@ -27,7 +28,7 @@ FIXED_SOURCE_TAGS = {
     # [COLLISION_DEMO_FAKE] 关联碰撞假节点标签 — 正式版删除下列三行
     "step6_geo_verify": [TAG_OPEN],
     "step6_relation_graph": [TAG_OPEN],
-    "step6_rumor_sx": [TAG_OFFLINE, TAG_SELF],
+    "step6_rumor_sx": [TAG_OFFLINE, TAG_SELF, TAG_FEATURE],
 }
 
 # 纯研判（01/02 的 step3_streams 是父壳，不在此集合；03 用 streams_as_self）
