@@ -24,6 +24,7 @@
         "format": "yyyy-MM-dd HH:mm:ss||yyyy-MM-dd||epoch_millis||strict_date_optional_time"
       },
       "badgeCount": { "type": "integer" },
+      "allCount": { "type": "integer" },
       "displayConfig": {
         "properties": {
           "show": { "type": "boolean" },
