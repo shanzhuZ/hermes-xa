@@ -1,6 +1,7 @@
 package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
+import com.example.aw.collect.mapper.AgentL4DetailMapper;
 import com.example.aw.entity.Result;
 import org.elasticsearch.action.get.GetRequest;
 import org.elasticsearch.action.get.GetResponse;
@@ -35,6 +36,9 @@ public class HomePageService {
 
     @Resource
     private RestHighLevelClient restHighLevelClient5602;
+
+    @Resource
+    private AgentL4DetailMapper agentL4DetailMapper;
 
     private static Logger logger = LoggerFactory.getLogger(HomePageService.class);
 
@@ -175,6 +179,48 @@ public class HomePageService {
             logger.error("getNodeDetail error nodeId={}", nodeId, e);
             return new Result(400, "查询失败", 0, 0, null);
         }
+    }
+
+    /**
+     * 按 ES 节点 id 查询 MySQL L4 详情（hermes_agent_l4_detail 整行）。
+     */
+    public Result getL4DetailByEsId(String esId) {
+        try {
+            if (esId == null || esId.trim().isEmpty()) {
+                return new Result(400, "esId不能为空", 0, 0, null);
+            }
+            String nodeId = esId.trim();
+            Map<String, Object> row = agentL4DetailMapper.selectByNodeId(nodeId);
+            if (row == null || row.isEmpty()) {
+                return new Result(404, "未查询到L4详情", 0, 0, null);
+            }
+            // image_examples / image_row_keys 可能以 JSON 字符串返回，统一解析为数组
+            parseJsonArrayField(row, "imageExamples", "image_examples");
+            parseJsonArrayField(row, "imageRowKeys", "image_row_keys");
+            row.put("esId", nodeId);
+            return new Result(200, "查询成功", 1, 1, row);
+        } catch (Exception e) {
+            logger.error("getL4DetailByEsId error esId={}", esId, e);
+            return new Result(400, "查询失败", 0, 0, null);
+        }
+    }
+
+    /** 将 Map 中可能为字符串的 JSON 数组字段解析为对象 */
+    private void parseJsonArrayField(Map<String, Object> row, String camelKey, String snakeKey) {
+        Object val = row.get(camelKey);
+        String useKey = camelKey;
+        if (val == null) {
+            val = row.get(snakeKey);
+            useKey = snakeKey;
+        }
+        if (!(val instanceof String)) {
+            return;
+        }
+        String raw = ((String) val).trim();
+        if (raw.isEmpty()) {
+            return;
+        }
+        row.put(useKey, JSON.parse(raw));
     }
 
     /**
@@ -360,7 +406,7 @@ public class HomePageService {
                 if (cb instanceof Map && ((Map) cb).get("weight") instanceof Number) {
                     wb = ((Number) ((Map) cb).get("weight")).intValue();
                 }
-                return Integer.compare(wb, wa);
+                return Integer.compare(wa, wb);
             }
         });
 

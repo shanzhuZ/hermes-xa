@@ -5,6 +5,7 @@ import com.example.aw.entity.Result;
 import org.springframework.web.bind.annotation.GetMapping;
 import org.springframework.web.bind.annotation.PathVariable;
 import org.springframework.web.bind.annotation.RequestMapping;
+import org.springframework.web.bind.annotation.RequestParam;
 import org.springframework.web.bind.annotation.RestController;
 
 import javax.annotation.Resource;
@@ -15,6 +16,7 @@ import javax.annotation.Resource;
  * 前缀 {@code /api/agent}：
  * <ul>
  *   <li>节点树：{@code /tree/display}、{@code /node/{id}/children}</li>
+ *   <li>L4 详情：{@code /l4/detail?esId=}</li>
  *   <li>看板统计：{@code /homepage/dashboard}</li>
  * </ul>
  */
@@ -47,6 +49,16 @@ public class HomePageController {
     @GetMapping("/node/{id}")
     public Result nodeDetail(@PathVariable("id") String id) {
         return homePageService.getNodeDetail(id);
+    }
+
+    /**
+     * L4 详情：按 ES 节点 id 查 MySQL hermes_agent_l4_detail 整行。
+     * <p>
+     * 请求：{@code GET /api/agent/l4/detail?esId=cap_agent_twitter_posts}
+     */
+    @GetMapping("/l4/detail")
+    public Result l4Detail(@RequestParam("esId") String esId) {
+        return homePageService.getL4DetailByEsId(esId);
     }
 
     /**
