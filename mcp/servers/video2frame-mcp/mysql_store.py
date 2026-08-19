@@ -85,6 +85,27 @@ def mark_video_stored(video_id: str, meta: Dict[str, Any]) -> None:
     )
 
 
+def public_video_error(message: str) -> str:
+    """写入 MySQL 的对外文案：yt-dlp/ffmpeg/403 签名 URL 一律收成「下载失败」。"""
+    text = (message or "").strip()
+    if not text:
+        return "下载失败"
+    dump_marks = (
+        "yt-dlp",
+        "ffmpeg exited",
+        "Error opening input",
+        "403 Forbidden",
+        "googlevideo",
+        "access denied",
+        "sig=",
+        "clen=",
+        "vprv=",
+    )
+    if any(m in text for m in dump_marks):
+        return "下载失败"
+    return text[:200]
+
+
 def mark_video_failed(video_id: str, message: str) -> None:
     dbutil.execute(
         """
@@ -96,7 +117,7 @@ def mark_video_failed(video_id: str, message: str) -> None:
             updated_at=CURRENT_TIMESTAMP(3)
         WHERE video_id=%s
         """,
-        ((message or "")[:1000], video_id),
+        (public_video_error(message), video_id),
     )
 
 

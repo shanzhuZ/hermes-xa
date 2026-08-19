@@ -87,8 +87,38 @@ def video_steps_terminal(task_id: str) -> Dict[str, Any]:
 
 
 def can_write_report_after_videos(task_id: str) -> Dict[str, Any]:
-    """终稿前门禁：视频节点须终态（失败也放行）；无节点直接放行。"""
+    """终稿前门禁：发文实质已齐，且视频节点须终态（失败也放行；无视频节点只看发文）。"""
+    try:
+        from report_04.gates import get_step_status, posts_substantively_ready
+
+        s7 = get_step_status(task_id, "step7_posts")
+        if not (posts_substantively_ready(task_id) or s7 in {"completed", "skipped"}):
+            return {
+                "ok": False,
+                "open": [{"step_key": "step7_posts", "status": s7 or "pending"}],
+                "message": "发文未齐",
+            }
+    except Exception as exc:
+        logger.warning("写报发文门禁检查失败 task=%s: %s", task_id, exc)
+        return {"ok": False, "open": [], "message": f"发文门禁检查失败:{exc}"}
     return video_steps_terminal(task_id)
+
+
+def format_report_wait_hint(task_id: str) -> str:
+    """视频/发文未齐时注入 Agent：禁止终稿。已齐则返回空串。"""
+    gate = can_write_report_after_videos(task_id)
+    if gate.get("ok"):
+        return ""
+    open_rows = gate.get("open") or []
+    keys = ",".join(
+        str(x.get("step_key") or "") for x in open_rows[:8] if isinstance(x, dict)
+    )
+    extra = keys or str(gate.get("message") or "未齐")
+    return (
+        f"【写报门禁】发文与视频都完成后才能写终稿（当前未齐：{extra}）。"
+        "禁止输出「一、账号基本信息」终稿；可写步骤8/9/10；"
+        "禁止结束会话；禁止同步 mcp_video2frame_*。"
+    )
 
 
 def collect_video_observations(task_id: str) -> List[Dict[str, str]]:

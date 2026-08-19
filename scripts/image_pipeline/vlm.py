@@ -13,9 +13,8 @@ import logging
 import time
 from typing import Any, Dict, Optional
 
-import requests
-
 from image_pipeline.config import vlm_config
+from image_pipeline.proxy_http import requests_post_proxy_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -94,12 +93,12 @@ def analyze_image_bytes(
 
     started = time.time()
     try:
-        resp = requests.post(
+        # 先 Clash/HTTPS_PROXY，连接失败再直连（阿里云直连 pplx 常超时）
+        resp = requests_post_proxy_fallback(
             api_url,
             json=payload,
             headers=headers,
             timeout=timeout,
-            proxies={"http": None, "https": None},
         )
         elapsed = round(time.time() - started, 2)
         if resp.status_code != 200:

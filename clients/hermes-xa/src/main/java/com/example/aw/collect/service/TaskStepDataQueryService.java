@@ -2,6 +2,7 @@ package com.example.aw.collect.service;
 
 import com.alibaba.fastjson.JSON;
 import com.example.aw.collect.mapper.CollectTaskMapper;
+import com.example.aw.util.EscapedTextDecoder;
 import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
@@ -229,9 +230,18 @@ public class TaskStepDataQueryService {
 
     /**
      * 按 step_key 查询展示层 records（统一 [{label,value}] 结构）。
+     * 04 发文步骤是 step7_post_*，但展示层沿用 01 的 step6_post_* 写入，查不到时回退。
      */
     private List<Map<String, Object>> loadDisplayRecords(String taskId, String stepKey) {
         List<Map<String, Object>> rows = collectTaskMapper.selectDisplayRecordsByStepKey(taskId, stepKey);
+        if ((rows == null || rows.isEmpty()) && stepKey != null) {
+            if (stepKey.startsWith("step7_post_")) {
+                String fallback = "step6_post_" + stepKey.substring("step7_post_".length());
+                rows = collectTaskMapper.selectDisplayRecordsByStepKey(taskId, fallback);
+            } else if ("step7_posts".equals(stepKey)) {
+                rows = collectTaskMapper.selectDisplayRecordsByStepKey(taskId, "step6_posts");
+            }
+        }
         if (rows == null || rows.isEmpty()) {
             return new ArrayList<Map<String, Object>>();
         }
@@ -258,12 +268,12 @@ public class TaskStepDataQueryService {
                 return new ArrayList<Object>();
             }
             try {
-                return JSON.parse(text);
+                return EscapedTextDecoder.decodeDisplayFields(JSON.parse(text));
             } catch (Exception e) {
                 return new ArrayList<Object>();
             }
         }
-        return raw;
+        return EscapedTextDecoder.decodeDisplayFields(raw);
     }
 
     /**

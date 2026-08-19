@@ -24,9 +24,9 @@ from typing import Any, Dict, Optional
 
 # ========== 大屏专用 ES（自行填写，勿与 MCP ES 混用）==========
 CONFIG: Dict[str, str] = {
-    "host": "https://192.168.3.226:9201",
+    "host": "http://localhost:9200",
     "username": "elastic",
-    "password": "i7Smzj2wVUndynjJXXv76A==",
+    "password": "123456",
 }
 # ============================================================
 

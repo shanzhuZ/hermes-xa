@@ -9,6 +9,7 @@ from typing import Any, Dict, List, Optional
 import yaml
 
 from collect_01 import db
+from collect_01.normalizers.base import decode_escaped_text
 from collect_01.phases import PLATFORM_LABELS, post_step_key
 
 logger = logging.getLogger(__name__)
@@ -108,7 +109,8 @@ def _map_value(field: str, value: Any) -> str:
         return f"{int(value):,}"
     if field == "confidence" and isinstance(value, (int, float)):
         return f"{float(value):.2%}" if float(value) <= 1 else str(value)
-    text = str(value).strip()
+    # Apify Facebook 等可能把 \\uXXXX 当字面量入库，展示前解码
+    text = decode_escaped_text(str(value).strip()) or ""
     if len(text) > 2000:
         return text[:2000] + "…"
     return text

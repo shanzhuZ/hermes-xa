@@ -38,7 +38,7 @@ metadata:
 
 1. 确认已执行迁移：`scripts/sql/012_collect_images.sql`
 2. 确认 `.env` 中 MySQL 可用；HBase 走现成 HTTP 入库接口：
-   - `HERMES_HBASE_INSERT_URL=http://192.168.3.171:6666/insertHbaseData`
+   - `HERMES_HBASE_INSERT_URL=http://47.110.83.229:6666/insertHbaseData`
    - `HERMES_HBASE_IMAGE_TABLE=collect_image_bytes`
    - `HERMES_HBASE_COLUMN_FAMILY=info`
    - Java 读图 ZK：`HERMES_HBASE_ZK` 必须指向 insert 实际落库集群

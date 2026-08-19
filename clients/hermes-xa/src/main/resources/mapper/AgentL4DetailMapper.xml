@@ -1,0 +1,24 @@
+<?xml version="1.0" encoding="UTF-8" ?>
+<!DOCTYPE mapper PUBLIC "-//mybatis.org//DTD Mapper 3.0//EN"
+        "http://mybatis.org/dtd/mybatis-3-mapper.dtd">
+<mapper namespace="com.example.aw.collect.mapper.AgentL4DetailMapper">
+
+    <select id="selectByNodeId" resultType="java.util.HashMap">
+        SELECT
+            id,
+            node_id,
+            node_name,
+            parent_agent_id,
+            intro,
+            system_help,
+            text_example,
+            image_examples,
+            image_row_keys,
+            created_at,
+            updated_at
+        FROM hermes_agent_l4_detail
+        WHERE node_id = #{nodeId}
+        LIMIT 1
+    </select>
+
+</mapper>

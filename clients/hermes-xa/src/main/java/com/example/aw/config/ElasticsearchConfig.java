@@ -34,19 +34,19 @@ public class ElasticsearchConfig {
     @Value("${es.socket-timeout:600000}")
     private int socketTimeout;
 
-    @Value("${es.host:192.168.3.226}")
+    @Value("${es.host:127.0.0.1}")
     private String host;
 
-    @Value("${es.port:9201}")
+    @Value("${es.port:9200}")
     private int port;
 
-    @Value("${es.scheme:https}")
+    @Value("${es.scheme:http}")
     private String scheme;
 
     @Value("${es.username:elastic}")
     private String username;
 
-    @Value("${es.password:i7Smzj2wVUndynjJXXv76A==}")
+    @Value("${es.password:123456}")
     private String password;
 
     @Bean(name = "restHighLevelClient5602")

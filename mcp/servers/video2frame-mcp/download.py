@@ -5,6 +5,7 @@ from __future__ import annotations
 import hashlib
 import logging
 import mimetypes
+import os
 import re
 import shutil
 import subprocess
@@ -183,6 +184,33 @@ def sys_executable() -> str:
     return sys.executable
 
 
+def _find_node() -> Optional[str]:
+    """yt-dlp YouTube n-challenge 需要 Node；本机常装了但不在 PATH。"""
+    exe = shutil.which("node") or shutil.which("node.exe")
+    if exe:
+        return exe
+    for p in (
+        Path(r"C:\Program Files\nodejs\node.exe"),
+        Path(r"C:\Program Files (x86)\nodejs\node.exe"),
+        Path(r"D:\environment\nodejs\node.exe"),
+    ):
+        if p.is_file():
+            return str(p)
+    return None
+
+
+def _ytdlp_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    node = _find_node()
+    if not node:
+        return env
+    node_dir = str(Path(node).parent)
+    prev = env.get("PATH") or ""
+    if node_dir.lower() not in prev.lower():
+        env["PATH"] = node_dir + os.pathsep + prev
+    return env
+
+
 def download_with_ytdlp(
     url: str,
     dest_path: Path,
@@ -191,7 +219,8 @@ def download_with_ytdlp(
 ) -> Dict[str, Any]:
     """用 yt-dlp 下载页面视频（YouTube / Twitter 等）。
 
-    max_duration_sec>0 时只下载前 N 秒（--download-sections），避免整片 20 分钟全量拉取。
+    非 YouTube：max_duration_sec>0 时只下前 N 秒。
+    YouTube：不下 section（ffmpeg 直拉 googlevideo 易 403），抽帧仍只分析前 N 秒。
     """
     url = (url or "").strip()
     if not url.startswith(("http://", "https://")):
@@ -204,15 +233,15 @@ def download_with_ytdlp(
     outtmpl = str(dest_path.parent / f"{dest_path.stem}.%(ext)s")
     section_end = float(max_duration_sec) if max_duration_sec and float(max_duration_sec) > 0 else 0.0
 
+    youtube = is_youtube_url(url)
+    node = _find_node()
+
     def _build_cmd(*, use_cookies_file: bool, use_browser: bool) -> list:
         c = _ytdlp_cmd() + [
             "--no-playlist",
             "--no-warnings",
-            # YouTube n-challenge 需要 JS runtime + yt-dlp-ejs（pip: yt-dlp[default]）
-            "--js-runtimes",
-            "node",
             "-f",
-            "bv*[height<=720]+ba/b[height<=720]/b",
+            "b[height<=720]/bv*[height<=720]+ba/b",
             "--merge-output-format",
             "mp4",
             "-o",
@@ -222,8 +251,19 @@ def download_with_ytdlp(
             "--retries",
             str(int(cfg["max_retries"])),
         ]
-        # 只下前 N 秒，与抽帧/分析上限对齐
-        if section_end > 0:
+        # YouTube n-challenge：必须把真实 node 交给 yt-dlp，否则会落到 ANDROID_VR 再 403
+        if node:
+            c.extend(["--js-runtimes", "node"])
+        if youtube:
+            c.extend(
+                [
+                    "--extractor-args",
+                    "youtube:player_client=web,android,ios",
+                ]
+            )
+        # YouTube 的 --download-sections 会让 ffmpeg 直拉 googlevideo，易 403；
+        # 抽帧阶段仍只分析前 N 秒。其它平台可继续按段下载。
+        if section_end > 0 and not youtube:
             c.extend(
                 [
                     "--download-sections",
@@ -256,10 +296,17 @@ def download_with_ytdlp(
         if use_browser and not str(cfg.get("ytdlp_cookies_from_browser") or "").strip():
             continue
         cmd = _build_cmd(use_cookies_file=use_file, use_browser=use_browser)
+        if youtube:
+            section_label = (
+                f"full(analyze={section_end:g}s)" if section_end > 0 else "full"
+            )
+        else:
+            section_label = f"0-{section_end:g}s" if section_end > 0 else "full"
         logger.info(
-            "yt-dlp 下载(%s) section=%s: %s",
+            "yt-dlp 下载(%s) section=%s node=%s: %s",
             name,
-            f"0-{section_end:g}s" if section_end > 0 else "full",
+            section_label,
+            bool(node),
             url[:160],
         )
         proc = subprocess.run(
@@ -269,6 +316,7 @@ def download_with_ytdlp(
             encoding="utf-8",
             errors="replace",
             timeout=int(cfg["read_timeout"]) + 60,
+            env=_ytdlp_env(),
         )
         if proc.returncode == 0:
             ok = True
@@ -276,7 +324,8 @@ def download_with_ytdlp(
         last_err = (proc.stderr or proc.stdout or "").strip()[-800:]
         logger.warning("yt-dlp 尝试失败 mode=%s err=%s", name, last_err[:240])
     if not ok:
-        raise RuntimeError(f"yt-dlp 失败: {last_err}")
+        logger.warning("yt-dlp 全部失败 url=%s err=%s", url[:160], last_err[:400])
+        raise RuntimeError("下载失败")
 
     # 找刚下的文件
     candidates = sorted(

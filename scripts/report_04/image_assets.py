@@ -27,6 +27,41 @@ def has_stored_images(task_id: str) -> bool:
     return count_stored_images(task_id) > 0
 
 
+def spawn_second_image_pipeline(
+    task_id: str,
+    *,
+    timeout_sec: int = _HOOK_TIMEOUT_SEC,
+    skip_if_stored: bool = True,
+) -> bool:
+    """发文后第二次图片管线：独立进程后台跑，超时由子进程自杀。
+
+    不阻塞步骤 6/7。4.1.2 第一次核验请继续用 run_image_pipeline_for_report
+    （stream_steps.start_step5_image_pipeline），不要走本函数。
+    """
+    if not task_id:
+        return False
+    sec = int(timeout_sec or _HOOK_TIMEOUT_SEC)
+    if sec <= 0:
+        sec = _HOOK_TIMEOUT_SEC
+    args = ["--task-id", str(task_id), "--timeout-sec", str(sec)]
+    if skip_if_stored:
+        args.append("--skip-if-stored")
+    try:
+        from report_04.session_continue import spawn_detached_python_module
+
+        ok = spawn_detached_python_module("report_04.post_image_job", args)
+        if ok:
+            logger.info(
+                "已后台拉起第二次图片管线 task=%s timeout=%ss",
+                task_id,
+                sec,
+            )
+        return bool(ok)
+    except Exception as exc:
+        logger.warning("spawn 第二次图片管线失败 task=%s: %s", task_id, exc)
+        return False
+
+
 def run_image_pipeline_for_report(
     task_id: str,
     *,
@@ -34,10 +69,9 @@ def run_image_pipeline_for_report(
     skip_if_stored: bool = True,
     timeout_sec: Optional[int] = _HOOK_TIMEOUT_SEC,
 ) -> Optional[Dict[str, Any]]:
-    """写报场景跑图片管线。失败只打日志，不抛出。
+    """4.1.2 第一次图片核验使用的同步管线（stream_steps 后台线程内调用）。
 
-    skip_if_stored=True：已有 stored 图则跳过（Agent 主路径已跑过时 Hook 秒回）。
-    timeout_sec：Hook 等待上限；超时放弃等待（后台线程可能仍在跑，不拖垮主任务）。
+    发文后第二次补图请用 spawn_second_image_pipeline，勿在 7→8 热路径同步调用本函数。
     """
     if not task_id:
         return None

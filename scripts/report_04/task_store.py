@@ -517,7 +517,7 @@ class TaskStore:
             gate = can_write_report_after_videos(task_id)
             if not gate.get("ok"):
                 logger.warning(
-                    "画像终稿被视频门禁拦截 task=%s open=%s",
+                    "画像终稿被写报门禁拦截（发文或视频未齐） task=%s open=%s",
                     task_id,
                     gate.get("open"),
                 )
@@ -655,7 +655,7 @@ class TaskStore:
         )
 
         # 有主页进展超时才 fail-forward；抢跑 4.3 时不 skip
-        updated = maybe_close_abandoned_step4(self, task_id, min_quiet_seconds=180.0, force=False)
+        updated = maybe_close_abandoned_step4(self, task_id, min_quiet_seconds=60.0, force=False)
         updated += reconcile_step4_and_step7_children(self, task_id)
         updated += ensure_step4_parent_not_premature(self, task_id)
         updated += ensure_osint_not_premature(self, task_id)
@@ -668,6 +668,12 @@ class TaskStore:
             updated += close_collect_parent_if_ready(self, task_id, parent, msg_done)
         # 步骤四仍未终态时，回滚 Java 粗同步误点的步骤五
         updated += ensure_step5_not_premature(self, task_id)
+        try:
+            from report_04.session_continue import maybe_nudge_stalled_analysis
+
+            maybe_nudge_stalled_analysis(self, task_id, min_quiet_seconds=90.0)
+        except Exception:
+            pass
         return updated
 
     def _seed_platform(self, task_id: str) -> str:
@@ -773,14 +779,7 @@ class TaskStore:
                     "skipped",
                     message=f"{plat} 线索发现无候选，跳过",
                 )
-            elif plat in relevant_set and cur == "skipped":
-                # 曾被误 skip 的可采集平台：恢复 pending，避免父步骤提前收口后晚到 Apify 把步骤树打乱
-                self.set_step_status(
-                    task_id,
-                    sk,
-                    "pending",
-                    message=f"{plat} 待主页采集",
-                )
+            # skipped 为终态：禁止改回 pending 补采（无论当初为何 skip）
         parent = PROFILE_PARENT_STEP_KEY
         # 仅物化子节点；父步骤等首个主页采集工具再 running，避免步骤3 web 尚未停就假 running
         if get_step_status(task_id, parent) is None:
@@ -830,20 +829,22 @@ class TaskStore:
         force_reopen: bool = False,
         skip_phase_rollup: bool = False,
     ) -> None:
-        # 软顺序：业务子步变 running 前，先点亮所属七大壳
-        if (
-            not skip_phase_rollup
-            and status == "running"
-            and not is_phase_shell(step_key)
-        ):
-            self._ensure_phase_shell_running(task_id, step_key)
-
         self.ensure_step_row(task_id, step_key)
         current = db.fetch_one(
             "SELECT status, finished_at, payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
             (task_id, step_key),
         )
         cur_status = str((current or {}).get("status") or "")
+
+        # skipped 终态：禁止回 pending/running（含 force_reopen）。允许升为 completed/failed。
+        if cur_status == "skipped" and status in {"pending", "running"}:
+            logger.info(
+                "拒绝 skipped→%s step=%s task=%s",
+                status,
+                step_key,
+                task_id,
+            )
+            return
 
         # 父步骤四一旦 completed，默认禁止再打回 running；晚到补采可 force_reopen
         if (
@@ -894,13 +895,21 @@ class TaskStore:
             pass
         # [COLLISION_DEMO_FAKE] end
 
+        # 软顺序：确认本步会写成 running 后，再点亮所属七大壳（避免拒绝回开时误亮父壳）
+        if (
+            not skip_phase_rollup
+            and status == "running"
+            and not is_phase_shell(step_key)
+        ):
+            self._ensure_phase_shell_running(task_id, step_key)
+
         fields = ["status=%s"]
         params: List[Any] = [status]
         if touch_updated_at:
             fields.append("updated_at=NOW(3)")
         if status == "running":
             fields.append("started_at=COALESCE(started_at, NOW(3))")
-            # 子步骤允许 skipped→running（补采）；父步骤已在上面拦截（除非 force）
+            # skipped 已在入口拦截；此处只清 completed/failed 回开后的 finished_at
             if cur_status in {"completed", "failed", "skipped"} and step_key != PROFILE_PARENT_STEP_KEY:
                 fields.append("finished_at=NULL")
             elif cur_status in {"completed", "failed", "skipped"} and step_key == PROFILE_PARENT_STEP_KEY:
@@ -1020,12 +1029,14 @@ class TaskStore:
             if is_video_platform_step(execution_step_key) and is_post_platform_step(node):
                 continue
             cur = get_step_status(task_id, node)
+            if cur == "skipped":
+                continue
             if cur == "running":
                 # [COLLISION_DEMO_FAKE] 壳已 running 也尝试幂等拉起假节点
                 if node == PHASE_COLLISION:
                     self._kickoff_collision_demo_fake(task_id)
                 continue
-            # pending / skipped / 空 / completed（补采重开）→ running；展示上先有父再有子
+            # pending / 空 / completed（补采重开）→ running；skipped 终态不点亮
             force = cur == "completed"
             self.set_step_status(
                 task_id,
@@ -1859,7 +1870,7 @@ class TaskStore:
             return False
         self.prepare_step7_children_pending(task_id)
         cur = get_step_status(task_id, "step7_posts")
-        if cur in {"pending", None, "skipped"}:
+        if cur in {"pending", None}:
             self.set_step_status(
                 task_id,
                 "step7_posts",
@@ -2148,18 +2159,14 @@ class TaskStore:
                 summary_ok if ready_done else summary_partial,
             ),
         )
-        # 图片资产兜底：Agent 在 7→8 已跑则跳过；漏跑则补一次（失败不拖垮任务）
+        # 发文后第二次图片管线：后台独立进程，超时自杀；不阻塞 finalize
         if ready_done or step7_ok or session_ended:
             try:
-                from report_04.image_assets import run_image_pipeline_for_report
+                from report_04.image_assets import spawn_second_image_pipeline
 
-                run_image_pipeline_for_report(
-                    task_id,
-                    force_analyze=True,
-                    skip_if_stored=True,
-                )
+                spawn_second_image_pipeline(task_id)
             except Exception as exc:
-                logger.warning("finalize 图片资产兜底异常 task=%s: %s", task_id, exc)
+                logger.warning("finalize 后台第二次图片管线异常 task=%s: %s", task_id, exc)
         if ready_done:
             db.execute(
                 "UPDATE hermes_tasks SET status='completed', current_phase=%s, finished_at=COALESCE(finished_at, NOW(3)), error_message=NULL WHERE task_id=%s AND status NOT IN ('failed', 'cancelled')",

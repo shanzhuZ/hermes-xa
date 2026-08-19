@@ -72,14 +72,18 @@ def hbase_config() -> Dict[str, Any]:
         not in {"0", "false", "no", "off"},
         "insert_url": os.environ.get(
             "HERMES_HBASE_INSERT_URL",
-            "http://192.168.3.171:6666/insertHbaseData",
+            "http://47.110.83.229:6666/insertHbaseData",
         ).strip(),
         "table": os.environ.get("HERMES_HBASE_IMAGE_TABLE", "collect_image_bytes").strip()
         or "collect_image_bytes",
         # 与现成接口 / 历史配置一致：列族 info
         "column_family": os.environ.get("HERMES_HBASE_COLUMN_FAMILY", "info").strip()
         or "info",
-        "timeout_ms": int(os.environ.get("HERMES_HBASE_TIMEOUT_MS", "30000")),
+        "timeout_ms": int(os.environ.get("HERMES_HBASE_TIMEOUT_MS", "8000")),
+        # 连接超时单独收紧，避免不可达时每帧卡满 read timeout
+        "connect_timeout_sec": float(
+            os.environ.get("HERMES_HBASE_CONNECT_TIMEOUT_SEC", "3") or "3"
+        ),
         # Java 侧 ZK（仅作文档式配置，Python 写不走 ZK）
         "zk": os.environ.get("HERMES_HBASE_ZK", "192.168.3.171").strip() or "192.168.3.171",
         "zk_port": int(os.environ.get("HERMES_HBASE_ZK_PORT", "2181")),

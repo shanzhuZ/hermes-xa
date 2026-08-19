@@ -8,6 +8,66 @@ dotenv.config();
 
 const TRANSCRIPT_CACHE_TTL = 3600; // Cache transcripts for 1 hour
 
+/** TLS/代理抖动等瞬态错误：有限重试，避免卡死流程 */
+const YT_TRANSIENT_RETRY_MAX = 3; // 含首次，最多 3 次
+const YT_TRANSIENT_RETRY_BASE_MS = 800;
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isTransientYoutubeNetworkError(error: unknown): boolean {
+  const msg = String(error ?? '').toLowerCase();
+  if (!msg.trim()) {
+    return true;
+  }
+  return (
+    msg.includes('tls') ||
+    msg.includes('socket disconnected') ||
+    msg.includes('secure tls connection') ||
+    msg.includes('econnreset') ||
+    msg.includes('econnrefused') ||
+    msg.includes('etimedout') ||
+    msg.includes('eai_again') ||
+    msg.includes('enotfound') ||
+    msg.includes('network') ||
+    msg.includes('fetch failed') ||
+    msg.includes('socket hang up') ||
+    msg.includes('proxy') ||
+    msg.includes('temporarily unavailable') ||
+    msg.includes('503') ||
+    msg.includes('502') ||
+    msg.includes('429')
+  );
+}
+
+async function withTransientRetry<T>(
+  label: string,
+  fn: () => Promise<T>,
+  maxAttempts: number = YT_TRANSIENT_RETRY_MAX
+): Promise<T> {
+  let lastError: unknown;
+  const attempts = Math.max(1, Math.min(maxAttempts, 3));
+  for (let i = 1; i <= attempts; i++) {
+    try {
+      return await fn();
+    } catch (error) {
+      lastError = error;
+      const transient = isTransientYoutubeNetworkError(error);
+      if (!transient || i >= attempts) {
+        throw error;
+      }
+      const waitMs = YT_TRANSIENT_RETRY_BASE_MS * i;
+      console.error(
+        `[youtube-retry] ${label} attempt ${i}/${attempts} transient, wait ${waitMs}ms:`,
+        error
+      );
+      await sleep(waitMs);
+    }
+  }
+  throw lastError;
+}
+
 export class YouTubeService {
   public youtube: youtube_v3.Youtube;
   private transcriptCache: NodeCache;
@@ -44,20 +104,22 @@ export class YouTubeService {
     } = {}
   ): Promise<youtube_v3.Schema$SearchListResponse> {
     try {
-      const response = await this.youtube.search.list({
-        part: ['snippet'],
-        q: query,
-        maxResults,
-        type: options.type ? [options.type] : ['video'],
-        channelId: options.channelId,
-        order: options.order,
-        videoDuration: options.videoDuration,
-        publishedAfter: options.publishedAfter,
-        publishedBefore: options.publishedBefore,
-        videoCaption: options.videoCaption,
-        videoDefinition: options.videoDefinition,
-        regionCode: options.regionCode
-      });
+      const response = await withTransientRetry('search.list', () =>
+        this.youtube.search.list({
+          part: ['snippet'],
+          q: query,
+          maxResults,
+          type: options.type ? [options.type] : ['video'],
+          channelId: options.channelId,
+          order: options.order,
+          videoDuration: options.videoDuration,
+          publishedAfter: options.publishedAfter,
+          publishedBefore: options.publishedBefore,
+          videoCaption: options.videoCaption,
+          videoDefinition: options.videoDefinition,
+          regionCode: options.regionCode
+        })
+      );
       return response.data;
     } catch (error) {
       console.error('Error searching videos:', error);
@@ -135,10 +197,12 @@ export class YouTubeService {
 
     // 1) 正式 handle（YouTube Data API forHandle，不含 @）
     try {
-      const byHandle = await this.youtube.channels.list({
-        part: ['id', 'snippet'],
-        forHandle: handle,
-      });
+      const byHandle = await withTransientRetry('channels.list/forHandle', () =>
+        this.youtube.channels.list({
+          part: ['id', 'snippet'],
+          forHandle: handle,
+        })
+      );
       const id = byHandle.data.items?.[0]?.id;
       if (id && this.isOfficialChannelId(id)) {
         return { channelId: id, resolvedFrom: handle, source: 'forHandle' };
@@ -149,10 +213,12 @@ export class YouTubeService {
 
     // 2) 老用户名 forUsername
     try {
-      const byUser = await this.youtube.channels.list({
-        part: ['id', 'snippet'],
-        forUsername: handle,
-      });
+      const byUser = await withTransientRetry('channels.list/forUsername', () =>
+        this.youtube.channels.list({
+          part: ['id', 'snippet'],
+          forUsername: handle,
+        })
+      );
       const id = byUser.data.items?.[0]?.id;
       if (id && this.isOfficialChannelId(id)) {
         return { channelId: id, resolvedFrom: handle, source: 'forUsername' };
@@ -181,10 +247,12 @@ export class YouTubeService {
   async getChannelDetails(channelIdOrHandle: string): Promise<youtube_v3.Schema$ChannelListResponse> {
     try {
       const { channelId } = await this.resolveChannelId(channelIdOrHandle);
-      const response = await this.youtube.channels.list({
-        part: ['snippet', 'statistics'],
-        id: [channelId]
-      });
+      const response = await withTransientRetry('channels.list/id', () =>
+        this.youtube.channels.list({
+          part: ['snippet', 'statistics'],
+          id: [channelId]
+        })
+      );
       return response.data;
     } catch (error) {
       console.error('Error getting channel details:', error);

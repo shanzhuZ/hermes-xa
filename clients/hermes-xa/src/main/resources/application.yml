@@ -10,11 +10,11 @@ server:
 
 # 大屏 agent_node ES（与 scripts/agent_node/seed_es.py 对齐）
 es:
-  host: 192.168.3.226
-  port: 9201
-  scheme: https
+  host: 127.0.0.1
+  port: 9200
+  scheme: http
   username: elastic
-  password: "i7Smzj2wVUndynjJXXv76A=="
+  password: "123456"
   connect-timeout: 10000
   socket-timeout: 600000
   agent-node-index: hermes_xa_agent_node
@@ -63,7 +63,7 @@ hermes:
     # 历史详情会短超时尝试读 HBase；失败自动回退本地，并冷却避免连环卡住
     enabled: ${HERMES_HBASE_ENABLED:true}
     zookeeper:
-      # insertHbaseData(171:6666) 若落到 171 本机集群则用 192.168.3.171；若落到 hp1 则改 192.168.3.124
+      # insertHbaseData 现为 http://47.110.83.229:6666/insertHbaseData；ZK 须指向同一落库集群
       quorum: ${HERMES_HBASE_ZK:192.168.3.171}
       port: ${HERMES_HBASE_ZK_PORT:2181}
     image-table: ${HERMES_HBASE_IMAGE_TABLE:collect_image_bytes}

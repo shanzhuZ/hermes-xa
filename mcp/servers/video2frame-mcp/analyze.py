@@ -10,10 +10,10 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
-import requests
 from PIL import Image
 
 from config import vlm_config
+from proxy_http import requests_post_proxy_fallback
 
 logger = logging.getLogger(__name__)
 
@@ -45,8 +45,14 @@ def _post_chat(
     payload: Dict[str, Any],
     headers: Dict[str, str],
     timeout: int,
-) -> requests.Response:
-    return requests.post(api_url, json=payload, headers=headers, timeout=timeout)
+):
+    """帧分析 / 视频摘要：先 Clash 代理，连接失败再直连。"""
+    return requests_post_proxy_fallback(
+        api_url,
+        json=payload,
+        headers=headers,
+        timeout=timeout,
+    )
 
 
 def analyze_single_frame(

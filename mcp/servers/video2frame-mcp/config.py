@@ -88,15 +88,29 @@ def vlm_config() -> Dict[str, Any]:
         ),
         "model": os.environ.get("HERMES_VIDEO_VLM_MODEL", "sonar"),
         "api_key": api_key,
-        "prompt": os.environ.get("HERMES_VIDEO_VLM_PROMPT", "请详细说明图片内容"),
+        "prompt": os.environ.get(
+            "HERMES_VIDEO_VLM_PROMPT",
+            (
+                "请用中文分析本帧画面。先完整描述正常可见内容（人物、动作、物体、文字、氛围），不要省略。"
+                "再在末尾固定补充两行："
+                "【地点】能识别则写具体场景/场所线索（如室内狭小房间、街景、店铺等），无法判断写「无法识别」；"
+                "【涉华】有则说明依据（华人面孔/汉字标语/国旗国徽/中国场景或隐喻讽刺等），无则写「未见明显涉华因素」。"
+            ),
+        ),
         "summary_prompt": os.environ.get(
             "HERMES_VIDEO_VLM_SUMMARY_PROMPT",
-            "下面是同一视频按时间顺序的抽帧描述，请用中文总结整段视频内容、人物、场景与主题：",
+            (
+                "下面是同一视频按时间顺序的抽帧描述。请用中文做整段摘要："
+                "1）保留正常内容概括（人物、情节、主题、关键画面），不要丢掉非涉华信息；"
+                "2）单独归纳【地点】：能否识别主要拍摄/场景地点，依据是什么，无法识别请明确写；"
+                "3）单独归纳【涉华】：是否存在涉华因素或涉华内涵（含讽刺、隐喻），有则说明，无则写「未见明显涉华因素」。"
+                "输出顺序：内容概要 → 【地点】→【涉华】。"
+            ),
         ),
         "max_tokens": int(os.environ.get("HERMES_VIDEO_VLM_MAX_TOKENS", "800")),
         # pplx 有速率限制，默认略保守
         "concurrency": int(os.environ.get("HERMES_VIDEO_VLM_CONCURRENCY", "3")),
-        "timeout": int(os.environ.get("HERMES_VIDEO_VLM_TIMEOUT", "120")),
+        "timeout": int(os.environ.get("HERMES_VIDEO_VLM_TIMEOUT", "60")),
     }
 
 

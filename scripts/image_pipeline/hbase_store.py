@@ -2,7 +2,7 @@
 HBase 原图写入 / 本地回退。
 
 写入对齐现成 HTTP 接口（见「图片hbase入库.py」）：
-  POST http://192.168.3.171:6666/insertHbaseData
+  POST http://47.110.83.229:6666/insertHbaseData
   body = {tableName, rowKey, data}
   data = JSON字符串 {"image_url": "...", "base64_data": "data:image/xxx;base64,..."}
 
@@ -17,6 +17,8 @@ from __future__ import annotations
 import base64
 import json
 import logging
+import os
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
@@ -26,9 +28,27 @@ from image_pipeline.config import hbase_config
 
 logger = logging.getLogger(__name__)
 
+# 首次 HTTP 失败后短时跳过远端写入，避免视频每帧卡 30s（仅本进程）
+_HTTP_FAIL_UNTIL = 0.0
+_HTTP_FAIL_COOLDOWN_SEC = float(os.environ.get("HERMES_HBASE_FAIL_COOLDOWN_SEC", "300") or "300")
+
 
 class HBaseStoreError(RuntimeError):
     pass
+
+
+def _http_in_fail_cooldown() -> bool:
+    return time.time() < float(_HTTP_FAIL_UNTIL)
+
+
+def _trip_http_fail_cooldown(exc: Exception) -> None:
+    global _HTTP_FAIL_UNTIL
+    _HTTP_FAIL_UNTIL = time.time() + max(30.0, float(_HTTP_FAIL_COOLDOWN_SEC))
+    logger.warning(
+        "HBase HTTP 进入失败冷却 %.0fs，后续帧直接本地回退 err=%s",
+        _HTTP_FAIL_COOLDOWN_SEC,
+        exc,
+    )
 
 
 def build_row_key(task_id: str, sha256: str) -> str:
@@ -115,14 +135,16 @@ def _write_http(row_key: str, payload: Dict[str, Any], cfg: Dict[str, Any]) -> N
             mime_type=str(payload.get("mime_type") or "image/jpeg"),
         ),
     }
-    timeout = max(5, int(cfg.get("timeout_ms") or 30000) / 1000.0)
+    timeout_ms = int(cfg.get("timeout_ms") or 8000)
+    connect_s = max(1.0, float(cfg.get("connect_timeout_sec") or 3.0))
+    read_s = max(connect_s, timeout_ms / 1000.0)
     try:
         # 内网入库接口禁止走系统 HTTP_PROXY，否则易被本地代理打成 502
         resp = requests.post(
             url,
             json=body,
             headers={"Content-Type": "application/json"},
-            timeout=timeout,
+            timeout=(connect_s, read_s),
             proxies={"http": None, "https": None},
         )
     except Exception as exc:
@@ -230,7 +252,7 @@ def _put_bytes(
         return row_key
 
     http_ok = False
-    if cfg["enabled"]:
+    if cfg["enabled"] and not _http_in_fail_cooldown():
         try:
             _write_http(row_key, payload, cfg)
             if _verify_http(row_key, cfg):
@@ -241,7 +263,10 @@ def _put_bytes(
                     row_key,
                 )
         except Exception as exc:
+            _trip_http_fail_cooldown(exc)
             logger.warning("HBase HTTP 写入失败，改用本地回退 row_key=%s err=%s", row_key, exc)
+    elif cfg["enabled"] and _http_in_fail_cooldown():
+        logger.info("HBase HTTP 冷却中，跳过远端写入 row_key=%s", row_key)
 
     # 始终落本地，保证 Java / 历史详情能读到
     try:
@@ -265,13 +290,15 @@ def _verify_http(row_key: str, cfg: Dict[str, Any]) -> bool:
     if not insert_url or "insertHbaseData" not in insert_url:
         return False
     get_url = insert_url.replace("insertHbaseData", "getHbaseData")
-    timeout = max(5, int(cfg.get("timeout_ms") or 30000) / 1000.0)
+    timeout_ms = int(cfg.get("timeout_ms") or 8000)
+    connect_s = max(1.0, float(cfg.get("connect_timeout_sec") or 3.0))
+    read_s = max(connect_s, timeout_ms / 1000.0)
     try:
         resp = requests.post(
             get_url,
             json={"tableName": cfg["table"], "rowKey": row_key},
             headers={"Content-Type": "application/json"},
-            timeout=timeout,
+            timeout=(connect_s, read_s),
             proxies={"http": None, "https": None},
         )
         if resp.status_code >= 400:

@@ -221,11 +221,10 @@ def _platform_post_count(task_id: str, platform: str) -> int:
 
 
 def posts_substantively_ready(task_id: str) -> bool:
-    """发文实质已齐：可进分析（不要求 step7_posts 父壳 UI 已 completed）。
+    """发文实质已齐（只看发文子步/入库，不看视频）。
 
-    条件：步骤7门禁可过、无未尝试发文平台、现有 step7_post_* 子步均为 completed/skipped
-    （视频分析走 step7_video_* 旁路，不挡此判定与进分析；
-    但 step7_posts / phase_content 壳收口另等视频终态）。
+    用于关父壳、续跑 posts 等；进深度研判请用 can_advance_to_analysis
+    （只认 step7_posts 父节点终态，父节点本身会等视频）。
     """
     if not can_advance_to_step7(task_id).get("ok"):
         return False
@@ -268,28 +267,21 @@ def posts_substantively_ready(task_id: str) -> bool:
 
 
 def can_advance_to_analysis(task_id: str) -> Dict[str, Any]:
+    """进深度研判（步骤8～10）：只认发文父节点 step7_posts 终态。
+
+    父节点收口本身已要求发文齐 + 已挂视频终态；研判不再单独判视频，
+    避免「视频节点晚建」导致父壳仍 running、研判却被点亮。
+    """
     gate = can_advance_to_step7(task_id)
     if not gate.get("ok"):
         return gate
-    # 仍有未尝试发文的 validated：禁止进分析（逼 Agent 先调工具）
-    try:
-        from report_04.step_reconcile import list_unattempted_post_platforms
-
-        leftover = list_unattempted_post_platforms(task_id)
-        if leftover:
-            plats = ",".join(str(x.get("platform") or "") for x in leftover[:8])
-            return {
-                "ok": False,
-                "message": f"仍有未尝试发文平台：{plats}",
-            }
-    except Exception:
-        pass
-    # 父壳 completed 或发文实质已齐均可进分析
-    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
-        return {"ok": True, "message": "满足步骤八～十推进条件"}
-    if posts_substantively_ready(task_id):
-        return {"ok": True, "message": "发文实质已齐，可进步骤八～十"}
-    return {"ok": False, "message": "step7_posts 未完成（发文未齐）"}
+    s7 = get_step_status(task_id, "step7_posts")
+    if s7 in {"completed", "skipped"}:
+        return {"ok": True, "message": "step7_posts 已终态，可进步骤八～十"}
+    return {
+        "ok": False,
+        "message": f"step7_posts={s7 or 'pending'}（须发文父壳终态后再进深度研判）",
+    }
 
 
 def analysis_steps_terminal(task_id: str) -> bool:
@@ -302,4 +294,15 @@ def analysis_steps_terminal(task_id: str) -> bool:
 def can_complete_step11(task_id: str) -> Dict[str, Any]:
     if not analysis_steps_terminal(task_id):
         return {"ok": False, "message": "步骤8～10 尚未全部完成或跳过"}
+    try:
+        from report_04.video_report import can_write_report_after_videos
+
+        wr = can_write_report_after_videos(task_id)
+        if not wr.get("ok"):
+            return {
+                "ok": False,
+                "message": wr.get("message") or "发文或视频未终态，不能写报",
+            }
+    except Exception as exc:
+        return {"ok": False, "message": f"写报门禁检查失败:{exc}"}
     return {"ok": True, "message": "可完成步骤十一"}

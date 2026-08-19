@@ -8,8 +8,6 @@ import time
 from pathlib import Path
 from typing import Any, Dict, Optional
 
-import requests
-
 logger = logging.getLogger(__name__)
 
 
@@ -85,14 +83,16 @@ def chat_text(prompt: str, *, max_tokens: Optional[int] = None) -> Dict[str, Any
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
 
+    # 与图片/视频 VLM 相同：先走 Clash，失败再直连
+    from image_pipeline.proxy_http import requests_post_proxy_fallback
+
     started = time.time()
     try:
-        resp = requests.post(
+        resp = requests_post_proxy_fallback(
             api_url,
             json=payload,
             headers=headers,
             timeout=timeout,
-            proxies={"http": None, "https": None},
         )
         elapsed = round(time.time() - started, 2)
         if resp.status_code != 200:

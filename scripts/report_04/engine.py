@@ -33,7 +33,7 @@ logger = logging.getLogger(__name__)
 ENGINE_VERSION = "v2"
 
 # 步骤四：距上次成功主页工具超过该秒数且无抢跑干扰时，fail-forward 跳过未尝试子节点
-STEP4_QUIET_SKIP_SECONDS = 180.0
+STEP4_QUIET_SKIP_SECONDS = 60.0
 
 
 def snapshot(task_id: str) -> Dict[str, Any]:
@@ -111,10 +111,29 @@ def format_system_progress_board(task_id: str) -> str:
         from report_04.step_reconcile import list_unattempted_post_platforms
 
         if posts_substantively_ready(task_id) or s7 in {"completed", "skipped"}:
-            lines.append(
-                "【下一步】发文已齐 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
-                "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
-            )
+            try:
+                from report_04.gates import can_advance_to_analysis
+                from report_04.video_report import format_report_wait_hint
+
+                if not can_advance_to_analysis(task_id).get("ok"):
+                    lines.append(
+                        "【下一步】发文已齐，内容采集父壳 step7_posts 未终态（常为等视频）→ 保持会话；"
+                        "禁止提前写步骤8/9/10与终稿；禁止同步 mcp_video2frame_*。"
+                    )
+                else:
+                    wait_hint = format_report_wait_hint(task_id)
+                    if wait_hint:
+                        lines.append(wait_hint)
+                    else:
+                        lines.append(
+                            "【下一步】内容采集父壳已终态 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
+                            "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
+                        )
+            except Exception:
+                lines.append(
+                    "【下一步】内容采集父壳已终态 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
+                    "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
+                )
         elif can_run_step7_collect(task_id):
             todo = list_unattempted_post_platforms(task_id) or []
             if todo:
@@ -318,11 +337,24 @@ def build_agent_context(task_id: str) -> Optional[str]:
                         f"- {item.get('platform')}: {item.get('tool_hint')}"
                     )
             else:
-                lines.append(
-                    "发文工具均已尝试；系统将关 step7 父壳。"
-                    "请立刻写步骤8/9/10 分析正文，再写以「一、账号基本信息」开头的终稿。"
-                    "禁止再调 vision；禁止回写步骤5/6/4.3。"
-                )
+                wait_hint = ""
+                try:
+                    from report_04.video_report import format_report_wait_hint
+
+                    wait_hint = format_report_wait_hint(task_id)
+                except Exception:
+                    wait_hint = ""
+                if wait_hint:
+                    lines.append(
+                        "发文工具均已尝试。" + wait_hint
+                        + "禁止再调 vision；禁止回写步骤5/6/4.3。"
+                    )
+                else:
+                    lines.append(
+                        "发文工具均已尝试；系统将关 step7 父壳。"
+                        "请立刻写步骤8/9/10 分析正文，再写以「一、账号基本信息」开头的终稿。"
+                        "禁止再调 vision；禁止回写步骤5/6/4.3。"
+                    )
         except Exception:
             pass
         if open_keys:
@@ -333,8 +365,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
             )
         lines.append(
             "发文入库后若有可下载视频，Hook 会挂 step7_video_* 后台分析："
-            "不挡发文子步完成与进深度研判，但 step7_posts / 内容采集壳会等视频终态；"
-            "禁止同步 mcp_video2frame_*。"
+            "不挡发文子步 completed，但挡住 step7_posts 父壳收口；"
+            "须等父壳终态后再写步骤8/9/10与终稿；禁止同步 mcp_video2frame_*。"
         )
 
     elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
@@ -376,7 +408,18 @@ def build_agent_context(task_id: str) -> Optional[str]:
                 "步骤8前可确认图片管线："
                 f"python -m image_pipeline.run --task-id {task_id} --force-analyze"
             )
-        if gate == "step11_report":
+        wait_hint = ""
+        try:
+            from report_04.video_report import format_report_wait_hint
+
+            wait_hint = format_report_wait_hint(task_id)
+        except Exception:
+            wait_hint = ""
+        if wait_hint:
+            lines.append(wait_hint)
+            if gate in ANALYSIS_STEP_KEYS:
+                lines.append("步骤8/9/10：同一次响应内并行输出三步分析正文，但禁止终稿。")
+        elif gate == "step11_report":
             lines.append(
                 "步骤11：终稿必须以「一、账号基本信息」开头，勿在第一节前写进度/管线句。"
             )
@@ -532,11 +575,11 @@ def run_session_finalize_light(
     close_open_steps_for_session_end(store, task_id, reason=reason)
     if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
         try:
-            from report_04.image_assets import run_image_pipeline_for_report
+            from report_04.image_assets import spawn_second_image_pipeline
 
-            run_image_pipeline_for_report(task_id, force_analyze=True, skip_if_stored=True)
+            spawn_second_image_pipeline(task_id)
         except Exception as exc:
-            logger.warning("session_finalize 图片管线兜底失败 task=%s: %s", task_id, exc)
+            logger.warning("session_finalize 后台第二次图片管线失败 task=%s: %s", task_id, exc)
 
 
 def _prepare_step7_after_osint(store: Any, task_id: str) -> None:
@@ -650,7 +693,7 @@ def pre_tool_allowed(task_id: str, tool_name: str, *, phase: Optional[str] = Non
         if gate == "step7_posts":
             tip = "当前为步骤7发文：禁止 vision；请调发文工具或写步骤8～11。"
         elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
-            tip = "当前为研判/写报阶段：禁止 vision；请直接写步骤8/9/10 与终稿。"
+            tip = "当前为研判/写报阶段：禁止 vision；请直接写步骤8/9/10；发文与视频齐后再写终稿。"
         elif gate in {"step6_validated", "step6_osint_es"}:
             tip = "当前为步骤6/4.3：禁止 vision；保持会话，门禁放行后立刻调发文工具。"
         else:

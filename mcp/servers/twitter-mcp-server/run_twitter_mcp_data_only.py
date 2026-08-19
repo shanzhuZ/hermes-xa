@@ -95,8 +95,36 @@ def _patch_get_client() -> None:
     srv._get_client = _get_client  # type: ignore[method-assign]
 
 
+async def _fetch_tweets_paginated(client: Client, user_id: str, target_count: int) -> list:
+    """翻页拉取用户时间线。X/twikit 单页常约 20 条，须 next() 才能凑满目标条数。"""
+    target_count = max(1, int(target_count))
+    # 单页请求量；过大也不会多返回，取 min(40, target) 与 twikit 默认接近
+    page_size = min(40, target_count)
+    page = await client.get_user_tweets(user_id, "Tweets", count=page_size)
+    collected: list = list(page)
+    current = page
+    # 最多翻页次数：100 条约 5～6 页，留余量防死循环
+    max_pages = max(8, (target_count + page_size - 1) // max(page_size, 1) + 2)
+    pages = 1
+    while len(collected) < target_count and pages < max_pages:
+        if not getattr(current, "next_cursor", None):
+            break
+        try:
+            nxt = await current.next()
+        except Exception:
+            break
+        if not nxt or len(nxt) == 0:
+            break
+        collected.extend(list(nxt))
+        current = nxt
+        pages += 1
+        # 轻微间隔，降低限流概率
+        await asyncio.sleep(0.4)
+    return collected[:target_count]
+
+
 def _patch_get_user_tweets_media() -> None:
-    """增强 get_user_tweets：附带 media_types / has_video，供 01 视频选片。"""
+    """增强 get_user_tweets：附带 media_types / has_video，并翻页凑满条数。"""
     import logging
 
     import twitter_mcp.server as srv
@@ -109,9 +137,9 @@ def _patch_get_user_tweets_media() -> None:
 
         Args:
             screen_name: Twitter username (without @).
-            count: Number of tweets to fetch（默认/下限 100）。
+            count: Number of tweets to fetch（默认/下限 100；内部翻页凑满）。
         """
-        # 业务下限 100；单次 twikit 约最多 100，更大值仍按传入尝试
+        # 业务下限 100；单页不够时自动翻页
         try:
             count = int(count or 100)
         except (TypeError, ValueError):
@@ -119,7 +147,7 @@ def _patch_get_user_tweets_media() -> None:
         count = max(100, count)
         client = await srv._get_client()
         user = await client.get_user_by_screen_name(screen_name)
-        tweets = await client.get_user_tweets(user.id, tweet_type="Tweets", count=count)
+        tweets = await _fetch_tweets_paginated(client, user.id, count)
         result = []
         for t in tweets:
             media_types: list[str] = []
@@ -148,6 +176,12 @@ def _patch_get_user_tweets_media() -> None:
                     "has_video": has_video,
                 }
             )
+        log.info(
+            "get_user_tweets @%s target=%s got=%s",
+            screen_name,
+            count,
+            len(result),
+        )
         return srv._dumps(result)
 
     try:

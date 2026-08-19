@@ -38,6 +38,8 @@ _CONTINUE_STALE_SEC = int(
 )
 _LOCK = threading.Lock()
 _INFLIGHT: Dict[str, bool] = {}
+# 被「在飞/忙」跳过的续跑可延期；清 inflight 或视频终态后再补催
+_DEFER_SKIP_REASONS = ("已有续跑在飞", "发文/研判仍 running", "osint_done 时续跑冷却中")
 
 # Windows 脱离 Hook 进程标志
 _DETACHED_PROCESS = 0x00000008
@@ -88,30 +90,13 @@ _RETRO_MARKERS = (
 
 
 def _posts_ready_for_analysis(task_id: str) -> bool:
-    """发文阶段实质已齐（可进研判），不要求父壳一定已 completed。"""
-    try:
-        from report_04.gates import posts_substantively_ready
-
-        return bool(posts_substantively_ready(task_id))
-    except Exception:
-        pass
+    """可进研判：只认 step7_posts 父壳终态。"""
     try:
         from report_04.gates import can_advance_to_analysis
 
-        if can_advance_to_analysis(task_id).get("ok"):
-            return True
+        return bool(can_advance_to_analysis(task_id).get("ok"))
     except Exception:
-        pass
-    if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
-        return True
-    if post_count(task_id) <= 0:
-        return False
-    try:
-        from report_04.step_reconcile import list_unattempted_post_platforms
-
-        return not (list_unattempted_post_platforms(task_id) or [])
-    except Exception:
-        return False
+        return get_step_status(task_id, "step7_posts") in {"completed", "skipped"}
 
 
 def looks_like_retrospective_without_analysis(task_id: str, text: str) -> bool:
@@ -288,6 +273,112 @@ def clear_continue_inflight(task_id: str, store: Any = None) -> None:
         logger.warning("clear_continue_inflight 失败 task=%s: %s", task_id, exc)
 
 
+def _mark_deferred_continue(
+    store: Any,
+    task_id: str,
+    *,
+    kind: str,
+    reason: str,
+    skip: str,
+) -> None:
+    """续跑被跳过时记下延期目标，避免门禁已开却永不再催。"""
+    try:
+        if store is None:
+            from report_04.task_store import TaskStore
+
+            store = TaskStore()
+        p = _payload(task_id)
+        p["flow_continue_deferred"] = 1
+        p["flow_continue_deferred_kind"] = str(kind or "")[:32]
+        p["flow_continue_deferred_reason"] = str(reason or "")[:120]
+        p["flow_continue_deferred_skip"] = str(skip or "")[:120]
+        p["flow_continue_deferred_at"] = time.time()
+        _write_payload(store, task_id, p)
+        logger.info(
+            "flow continue 已延期 task=%s kind=%s skip=%s reason=%s",
+            task_id,
+            kind,
+            skip,
+            str(reason or "")[:60],
+        )
+    except Exception as exc:
+        logger.warning("标记延期续跑失败 task=%s: %s", task_id, exc)
+
+
+def _clear_deferred_continue(store: Any, task_id: str) -> None:
+    try:
+        p = _payload(task_id)
+        if not int(p.get("flow_continue_deferred") or 0):
+            return
+        p["flow_continue_deferred"] = 0
+        p.pop("flow_continue_deferred_kind", None)
+        p.pop("flow_continue_deferred_reason", None)
+        p.pop("flow_continue_deferred_skip", None)
+        p.pop("flow_continue_deferred_at", None)
+        _write_payload(store, task_id, p)
+    except Exception as exc:
+        logger.warning("清除延期续跑失败 task=%s: %s", task_id, exc)
+
+
+def flush_deferred_continue(
+    store: Any,
+    task_id: str,
+    *,
+    trigger: str = "flush",
+) -> bool:
+    """若有延期续跑且门禁仍需催，则补发一次。"""
+    if has_final_report(task_id):
+        _clear_deferred_continue(store, task_id)
+        return False
+    p = _payload(task_id)
+    if not int(p.get("flow_continue_deferred") or 0):
+        return False
+    deferred_kind = str(p.get("flow_continue_deferred_kind") or "").strip()
+    use_kind = deferred_kind or infer_continue_kind(task_id)
+    if not use_kind:
+        _clear_deferred_continue(store, task_id)
+        return False
+    # 先清标记，避免 spawn 路径再次 skip 时重复堆叠；若仍 skip 会再 mark
+    _clear_deferred_continue(store, task_id)
+    return maybe_continue_agent_session(
+        store,
+        task_id,
+        reason=f"deferred:{trigger}",
+        kind=use_kind,
+        force=False,
+    )
+
+
+def chain_continue_after_worker(
+    store: Any,
+    task_id: str,
+    *,
+    prev_kind: str,
+    prev_reason: str = "",
+) -> bool:
+    """本轮续跑结束后按最新门禁链式催下一阶段（hold→posts/analysis）。"""
+    if has_final_report(task_id):
+        return False
+    next_kind = infer_continue_kind(task_id)
+    if not next_kind:
+        return False
+    prev = str(prev_kind or "").strip()
+    # hold 结束后必可接到 posts/analysis；同 kind 不重复链式（交给 retry/deferred）
+    # 例外：analysis 仍未写出（步骤8～10 未终态且无新对话）允许再催
+    if prev == next_kind and prev != "hold":
+        if not (prev == "analysis" and _analysis_still_open(task_id)):
+            return False
+    if next_kind not in {"posts", "analysis"}:
+        return False
+    return maybe_continue_agent_session(
+        store,
+        task_id,
+        reason=f"chain_after_{prev or 'continue'}:{prev_reason}"[:120],
+        kind=next_kind,
+        force=False,
+    )
+
+
 def heal_stale_continue_inflight(task_id: str, store: Any = None) -> bool:
     """若 inflight 过期则自清；返回 True 表示已自愈（现视为未在飞）。"""
     payload = _payload(task_id)
@@ -346,35 +437,14 @@ def _write_payload(store: Any, task_id: str, payload: Dict[str, Any]) -> None:
 
 
 def has_final_report(task_id: str) -> bool:
+    """仅认正式终稿：step11 completed 或 dialogues.summary。草稿 assistant_reply 不算。"""
     if get_step_status(task_id, "step11_report") == "completed":
         return True
-    try:
-        from report_04.report_parser import is_final_report
-
-        row = db.fetch_one(
-            """
-            SELECT content FROM hermes_user_dialogues
-            WHERE task_id=%s AND role='assistant'
-            ORDER BY id DESC LIMIT 3
-            """,
-            (task_id,),
-        )
-        # 多扫几条
-        rows = db.fetch_all(
-            """
-            SELECT content FROM hermes_user_dialogues
-            WHERE task_id=%s AND role='assistant'
-            ORDER BY id DESC LIMIT 5
-            """,
-            (task_id,),
-        )
-        for r in rows or []:
-            if is_final_report(str((r or {}).get("content") or "")):
-                return True
-        _ = row
-    except Exception:
-        pass
-    return False
+    row = db.fetch_one(
+        "SELECT id FROM hermes_user_dialogues WHERE task_id=%s AND msg_type='summary' LIMIT 1",
+        (task_id,),
+    )
+    return bool(row)
 
 
 def post_count(task_id: str) -> int:
@@ -398,7 +468,7 @@ def infer_continue_kind(task_id: str) -> Optional[str]:
 
     step7 = get_step_status(task_id, "step7_posts")
     if can_run_step7_collect(task_id):
-        if step7 not in {"completed", "skipped"} or post_count(task_id) <= 0:
+        if step7 not in {"completed", "skipped"}:
             try:
                 from report_04.step_reconcile import list_unattempted_post_platforms
 
@@ -406,7 +476,18 @@ def infer_continue_kind(task_id: str) -> Optional[str]:
                 if todo or post_count(task_id) <= 0:
                     return "posts"
             except Exception:
-                return "posts"
+                if post_count(task_id) <= 0:
+                    return "posts"
+            # 父壳仍 running（常见：等视频）→ hold，禁止催步骤8
+            return "hold"
+        try:
+            from report_04.gates import analysis_steps_terminal
+            from report_04.video_report import can_write_report_after_videos
+
+            if analysis_steps_terminal(task_id) and not can_write_report_after_videos(task_id).get("ok"):
+                return "hold"
+        except Exception:
+            pass
         return "analysis"
 
     s5 = get_step_status(task_id, "step5_streams")
@@ -427,7 +508,8 @@ def build_continue_message(kind: str, task_id: str) -> str:
             "调用对应发文工具（Twitter→mcp_twitter_get_user_tweets；"
             "YouTube→mcp_youtube_analyze_channel_videos；微博→mcp_weibo_get_feeds；"
             "其余 Apify Actor→run→dataset）。"
-            "禁止写「等待系统/会话保持」。发文调用后输出步骤8/9/10，再写以「一、账号基本信息」开头的终稿。"
+            "禁止写「等待系统/会话保持」。"
+            "须等 step7_posts 父壳终态（含视频）后才能写步骤8/9/10与「一、账号基本信息」终稿。"
         )
         try:
             from report_04.step_reconcile import list_unattempted_post_platforms
@@ -442,15 +524,39 @@ def build_continue_message(kind: str, task_id: str) -> str:
         except Exception:
             pass
         return msg
-    if kind == "analysis":
+    if kind == "hold":
+        if get_step_status(task_id, "step7_posts") in {"pending", "running"}:
+            return (
+                "【系统续跑·禁止结束会话】内容采集（step7_posts）尚未终态。"
+                "须等发文父壳 completed/skipped（含视频终态）后再写步骤8/9/10与终稿。"
+                "禁止提前输出研判正文；禁止结束会话；禁止同步 mcp_video2frame_*。"
+            )
         return (
-            "【系统续跑·禁止结束会话】发文已完成。请立即并行输出步骤8/9/10分析正文，"
+            "【系统续跑·禁止结束会话】系统正在推进 4.1.2/4.2/4.3 或内容采集收口。"
+            "禁止写「等待系统」并结束。无工具可调则保持会话；"
+            "门禁放行后再写研判与终稿。"
+        )
+    if kind == "analysis":
+        wait_hint = ""
+        try:
+            from report_04.video_report import format_report_wait_hint
+
+            wait_hint = format_report_wait_hint(task_id)
+        except Exception:
+            wait_hint = ""
+        if wait_hint:
+            return (
+                "【系统续跑·禁止结束会话】发文已齐。"
+                + wait_hint
+                + "禁止等待句、禁止 done。"
+            )
+        return (
+            "【系统续跑·禁止结束会话】发文与视频已完成。请立即并行输出步骤8/9/10分析正文，"
             "再输出以「一、账号基本信息」开头的步骤11终稿。禁止等待句、禁止 done。"
         )
     return (
-        "【系统续跑·禁止结束会话】系统正在推进 4.1.2/4.2/4.3。"
-        "禁止写「等待系统」并结束。无工具可调则保持会话；"
-        "门禁放行发文后本回合必须立刻调发文工具，再写研判与终稿。"
+        "【系统续跑·禁止结束会话】系统正在推进流程。"
+        "禁止写「等待系统」并结束。无工具可调则保持会话。"
     )
 
 
@@ -469,9 +575,22 @@ def continue_inflight(task_id: str) -> bool:
 
 
 def should_defer_finalize(task_id: str) -> bool:
-    """未出终稿且仍可续跑 / 正在续跑 → finalize 暂缓 failed。"""
+    """未出终稿且仍可续跑 / 正在续跑 / 内容采集父壳未终态 → finalize 暂缓 failed。
+
+    发文 MCP 卡住（父壳未齐且无视频可等）不得长期 defer：由 session_end skip 失败子步。
+    父壳 running 且发文实质已齐时多为等视频，应 defer。
+    """
     if has_final_report(task_id):
         return False
+    try:
+        from report_04.gates import posts_substantively_ready
+
+        s7 = get_step_status(task_id, "step7_posts")
+        # 父壳未终态但发文实质已齐：等视频关父壳，暂缓 finalize
+        if s7 in {"pending", "running"} and posts_substantively_ready(task_id):
+            return True
+    except Exception:
+        pass
     if continue_inflight(task_id):
         return True
     kind = infer_continue_kind(task_id)
@@ -740,9 +859,67 @@ def _fallback_collect_twitter_posts(store: Any, task_id: str) -> int:
         return 0
 
 
-def _posts_or_analysis_busy(task_id: str) -> bool:
-    """发文/视频/研判仍 running 时禁止叠开续跑。"""
-    if get_step_status(task_id, "step7_posts") == "running":
+def _max_assistant_id(task_id: str) -> int:
+    row = db.fetch_one(
+        """
+        SELECT MAX(id) AS i FROM hermes_user_dialogues
+        WHERE task_id=%s AND role='assistant'
+        """,
+        (task_id,),
+    )
+    return int((row or {}).get("i") or 0)
+
+
+def _seconds_since_last_agent_activity(task_id: str) -> Optional[float]:
+    """距最近助手对话或工具输出的秒数；无记录返回 None。"""
+    ages: List[float] = []
+    row = db.fetch_one(
+        """
+        SELECT TIMESTAMPDIFF(SECOND, MAX(created_at), NOW(3)) AS age
+        FROM hermes_user_dialogues
+        WHERE task_id=%s AND role='assistant'
+        """,
+        (task_id,),
+    )
+    if row and row.get("age") is not None:
+        ages.append(float(row["age"]))
+    row = db.fetch_one(
+        """
+        SELECT TIMESTAMPDIFF(SECOND, MAX(executed_at), NOW(3)) AS age
+        FROM hermes_tool_outputs
+        WHERE task_id=%s
+        """,
+        (task_id,),
+    )
+    if row and row.get("age") is not None:
+        ages.append(float(row["age"]))
+    if not ages:
+        return None
+    return min(ages)
+
+
+def _analysis_still_open(task_id: str) -> bool:
+    from report_04.gates import analysis_steps_terminal
+
+    return not analysis_steps_terminal(task_id)
+
+
+def _posts_or_analysis_busy(task_id: str, *, kind: str = "") -> bool:
+    """发文/视频/研判仍 running 时禁止叠开续跑。
+
+    仅研判 running、且 Agent 已静默：视为空挂，允许再催
+    （修「空 SSE 算成功 → 研判 pending/running 永不续跑」）。
+    kind=posts 且父壳仍 pending：等 Agent 首次调发文工具，不算忙（允许催采集）。
+    """
+    s7 = get_step_status(task_id, "step7_posts")
+    if kind == "posts":
+        # 尚未开工：必须允许续跑催发文；已 running 则勿叠催
+        if s7 in {"pending", "", None}:
+            return False
+        if s7 == "running":
+            return True
+    elif s7 in {"pending", "running"}:
+        # 催研判/写报：父壳未终态一律视为忙（等发文/视频）
         return True
     rows = db.fetch_all(
         """
@@ -757,11 +934,32 @@ def _posts_or_analysis_busy(task_id: str) -> bool:
               'step10_context_pii','step11_report'
             )
           )
-        LIMIT 1
         """,
         (task_id,),
     )
-    return bool(rows)
+    if not rows:
+        return False
+    keys = [str(r.get("step_key") or "") for r in rows]
+    # 父壳已终态：视频/发文子步不再挡催研判
+    keys = [
+        k
+        for k in keys
+        if not k.startswith("step7_video_") and not k.startswith("step7_post_")
+    ]
+    if not keys:
+        return False
+    analysis_keys = {
+        "step8_img_analysis",
+        "step9_context_views",
+        "step10_context_pii",
+        "step11_report",
+    }
+    only_analysis = bool(keys) and all(k in analysis_keys for k in keys)
+    if only_analysis:
+        age = _seconds_since_last_agent_activity(task_id)
+        if age is None or age >= 45.0:
+            return False
+    return True
 
 
 def _recent_tool_activity(task_id: str, *, within_sec: float = 45.0) -> bool:
@@ -809,7 +1007,7 @@ def _should_skip_continue(
         return None
     if continue_inflight(task_id):
         return "已有续跑在飞"
-    if _posts_or_analysis_busy(task_id):
+    if _posts_or_analysis_busy(task_id, kind=str(kind or "")):
         return "发文/研判仍 running"
     # session_end 是「上一轮 stream 关了」的回声，最容易叠催
     if str(reason or "").startswith("session_end"):
@@ -894,6 +1092,15 @@ def run_continue_worker_job(
             logger.info("continue_worker 已有终稿，补标 completed 后跳过 task=%s", task_id)
             _ensure_completed_if_final_report(store, task_id)
             return
+        if use_kind == "analysis":
+            try:
+                from report_04.orchestrator import advance_to_analysis_phase
+
+                advance_to_analysis_phase(
+                    store, task_id, f"续跑点亮研判:{reason}"[:80]
+                )
+            except Exception as exc:
+                logger.warning("continue 点亮研判失败 task=%s: %s", task_id, exc)
         message = build_continue_message(use_kind, task_id)
         time.sleep(1.5 if next_retry <= 1 else 0.8)
         logger.info(
@@ -904,30 +1111,92 @@ def run_continue_worker_job(
             _CONTINUE_MAX,
             str(reason or "")[:60],
         )
+        before_aid = _max_assistant_id(task_id)
         ok = gateway_chat_stream_once(session_id, task_id, message)
+        # 空 SSE / 会话已死：HTTP 200 但无新助手输出，不能当成功（否则同 kind 不再催）
+        if ok and use_kind in {"analysis", "posts"}:
+            if _max_assistant_id(task_id) <= before_aid:
+                logger.warning(
+                    "continue SSE 无新助手输出，视为失败 task=%s kind=%s",
+                    task_id,
+                    use_kind,
+                )
+                ok = False
     except Exception as exc:
         logger.warning("continue_worker 异常 task=%s: %s", task_id, exc)
         ok = False
     finally:
         clear_continue_inflight(task_id, store)
+        # 提前 return（无 session / 已有终稿）时也要清延期，避免永久挂起
+        try:
+            if has_final_report(task_id) or not session_id:
+                _clear_deferred_continue(store, task_id)
+        except Exception:
+            pass
 
-    # inflight 已清后再决定重试 / 上限检查（避免假在飞挡重试）
+    # inflight 已清后再决定：失败重试 / 链式续跑 / 延期补催 / 达上限检查
     try:
         if has_final_report(task_id):
             # SSE 期间主会话可能已出终稿：必须补标，禁止只 return 留下 running
             _ensure_completed_if_final_report(store, task_id)
+            _clear_deferred_continue(store, task_id)
+            return
+        if not session_id:
             return
         if not ok and next_retry < _CONTINUE_MAX:
             time.sleep(6.0)
             maybe_continue_agent_session(
                 store, task_id, reason=f"retry_fail:{reason}"
             )
-        elif ok and next_retry >= _CONTINUE_MAX:
-            maybe_continue_agent_session(
-                store, task_id, reason="check_after_last", force=False
+        elif ok:
+            # 成功：按最新门禁链式催下一阶段（修 hold 结束后不再催 posts）
+            chained = chain_continue_after_worker(
+                store, task_id, prev_kind=use_kind, prev_reason=str(reason or "")
             )
+            if not chained and next_retry >= _CONTINUE_MAX:
+                maybe_continue_agent_session(
+                    store, task_id, reason="check_after_last", force=False
+                )
+        # 无论成败，消化「在飞/忙」期间积压的延期续跑
+        flush_deferred_continue(store, task_id, trigger=f"after_{use_kind}")
     except Exception as exc:
         logger.warning("continue_worker 收尾异常 task=%s: %s", task_id, exc)
+
+
+def maybe_nudge_stalled_analysis(
+    store: Any,
+    task_id: str,
+    *,
+    min_quiet_seconds: float = 90.0,
+) -> bool:
+    """发文已齐、研判未终态、Agent 静默过久 → 点亮步骤8～10 并再催续跑。"""
+    if has_final_report(task_id):
+        return False
+    try:
+        from report_04.gates import can_advance_to_analysis
+
+        if not can_advance_to_analysis(task_id).get("ok"):
+            return False
+    except Exception:
+        return False
+    if not _analysis_still_open(task_id):
+        return False
+    age = _seconds_since_last_agent_activity(task_id)
+    if min_quiet_seconds > 0 and (age is None or age < float(min_quiet_seconds)):
+        return False
+    try:
+        from report_04.orchestrator import advance_to_analysis_phase
+
+        advance_to_analysis_phase(store, task_id, "研判静默过久，系统点亮")
+    except Exception as exc:
+        logger.warning("nudge 点亮研判失败 task=%s: %s", task_id, exc)
+    return maybe_continue_agent_session(
+        store,
+        task_id,
+        reason="analysis_stalled_quiet",
+        kind="analysis",
+        force=False,
+    )
 
 
 def maybe_continue_agent_session(
@@ -944,6 +1213,20 @@ def maybe_continue_agent_session(
     use_kind = kind or infer_continue_kind(task_id)
     if not use_kind:
         return False
+    # 8～10 已齐但发文/视频未终态：不催写报，等 video_runner 终态后再续
+    try:
+        from report_04.gates import analysis_steps_terminal
+        from report_04.video_report import can_write_report_after_videos
+
+        if analysis_steps_terminal(task_id) and not can_write_report_after_videos(task_id).get("ok"):
+            logger.info(
+                "flow continue 等待视频/发文终态 task=%s reason=%s",
+                task_id,
+                reason,
+            )
+            return False
+    except Exception:
+        pass
 
     skip = _should_skip_continue(
         task_id, reason=str(reason or ""), kind=use_kind, force=force
@@ -956,6 +1239,11 @@ def maybe_continue_agent_session(
             use_kind,
             skip,
         )
+        # 在飞/忙导致跳过：记下延期，避免门禁已开却永不再催
+        if any(str(skip).startswith(x) or str(skip) == x for x in _DEFER_SKIP_REASONS):
+            _mark_deferred_continue(
+                store, task_id, kind=use_kind, reason=str(reason or ""), skip=str(skip)
+            )
         return False
 
     task = db.fetch_one(
@@ -970,10 +1258,19 @@ def maybe_continue_agent_session(
 
     with _LOCK:
         if _INFLIGHT.get(task_id):
+            _mark_deferred_continue(
+                store,
+                task_id,
+                kind=use_kind,
+                reason=str(reason or ""),
+                skip="已有续跑在飞",
+            )
             return False
         payload = _payload(task_id)
         retries = int(payload.get("flow_continue_retries") or 0)
-        if not force and retries >= _CONTINUE_MAX:
+        # hold 不占用 posts/analysis 配额，避免 hold 占满后无法催发文
+        count_toward_max = use_kind != "hold"
+        if not force and count_toward_max and retries >= _CONTINUE_MAX:
             logger.info(
                 "flow continue 达上限 task=%s retries=%s → spawn 系统发文兜底",
                 task_id,
@@ -985,7 +1282,7 @@ def maybe_continue_agent_session(
             )
             return bool(spawned)
         _INFLIGHT[task_id] = True
-        next_retry = retries + 1
+        next_retry = (retries + 1) if count_toward_max else retries
 
     try:
         payload = _payload(task_id)
@@ -994,6 +1291,12 @@ def maybe_continue_agent_session(
         payload["flow_continue_kind"] = use_kind
         payload["flow_continue_reason"] = str(reason or "")[:120]
         payload["flow_continue_started_at"] = time.time()
+        # 发起成功则清延期标记（本轮会实际催）
+        payload["flow_continue_deferred"] = 0
+        payload.pop("flow_continue_deferred_kind", None)
+        payload.pop("flow_continue_deferred_reason", None)
+        payload.pop("flow_continue_deferred_skip", None)
+        payload.pop("flow_continue_deferred_at", None)
         _write_payload(store, task_id, payload)
     except Exception:
         pass

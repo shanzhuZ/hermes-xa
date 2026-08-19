@@ -6,6 +6,7 @@ import com.example.aw.collect.mapper.CollectTaskMapper;
 import com.example.aw.collect.mapper.CollectVideoMapper;
 import com.example.aw.collect.mapper.ThoughtEventMapper;
 import com.example.aw.collect.registry.TaskTypeRegistry;
+import com.example.aw.util.EscapedTextDecoder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 import org.springframework.beans.factory.annotation.Autowired;
@@ -461,7 +462,7 @@ public class HistoryQaQueryService {
             return new ArrayList<Object>();
         }
         if (raw instanceof List) {
-            return raw;
+            return EscapedTextDecoder.decodeDisplayFields(raw);
         }
         String text = String.valueOf(raw).trim();
         if (text.isEmpty()) {
@@ -469,7 +470,10 @@ public class HistoryQaQueryService {
         }
         try {
             Object parsed = JSON.parse(text);
-            return parsed == null ? new ArrayList<Object>() : parsed;
+            if (parsed == null) {
+                return new ArrayList<Object>();
+            }
+            return EscapedTextDecoder.decodeDisplayFields(parsed);
         } catch (Exception e) {
             return new ArrayList<Object>();
         }
@@ -485,8 +489,11 @@ public class HistoryQaQueryService {
         item.put("platform", row.get("platform"));
         item.put("accountId", row.get("account_id"));
         item.put("accountHandle", row.get("account_handle"));
-        item.put("displayName", row.get("display_name"));
-        item.put("bio", row.get("bio"));
+        Object displayName = row.get("display_name");
+        item.put("displayName", displayName instanceof String
+                ? EscapedTextDecoder.decode((String) displayName) : displayName);
+        Object bio = row.get("bio");
+        item.put("bio", bio instanceof String ? EscapedTextDecoder.decode((String) bio) : bio);
         // CDN 头像地址，可能过期；稳定查看请走图片资产入库后的 bytes 接口
         item.put("avatarUrl", row.get("avatar_url"));
         item.put("profileUrl", row.get("profile_url"));

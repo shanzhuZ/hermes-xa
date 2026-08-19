@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import logging
 import os
+import threading
 from typing import Any, Dict, FrozenSet, Optional
 
 from collect_01 import db
@@ -27,6 +28,10 @@ from report_04.phases import (
 )
 
 logger = logging.getLogger(__name__)
+
+# 防止 close_collect_parent_if_ready 回调用本函数形成递归
+_ADVANCE_GUARD = set()
+_ADVANCE_LOCK = threading.Lock()
 
 # 各根步骤允许的工具（不含全局跳过的 clarify 等）
 _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
@@ -100,19 +105,31 @@ def infer_gate_step(task_id: str) -> str:
     except Exception:
         pass
 
-    # 发文实质已齐（父壳可能仍 running）→ 分析或报告
+    # 仅 step7_posts 父壳终态才进研判（父壳收口已含发文+视频）
     try:
-        from report_04.gates import posts_substantively_ready
+        from report_04.gates import can_advance_to_analysis
 
-        posts_ready = posts_substantively_ready(task_id)
+        analysis_ok = bool(can_advance_to_analysis(task_id).get("ok"))
     except Exception:
-        posts_ready = False
+        analysis_ok = False
     s7 = get_step_status(task_id, "step7_posts")
-    if posts_ready or s7 in {"completed", "skipped"}:
+    if s7 in {"completed", "skipped"} or analysis_ok:
+        if not analysis_ok:
+            return "step7_posts"
         for key in ANALYSIS_STEP_KEYS:
             st = get_step_status(task_id, key)
             if st in {"pending", "running"}:
                 return key
+        report_ok = False
+        try:
+            from report_04.video_report import can_write_report_after_videos
+
+            report_ok = bool(can_write_report_after_videos(task_id).get("ok"))
+        except Exception:
+            report_ok = False
+        if not report_ok:
+            # 8～10 已齐但写报门禁未过：停在研判，禁止进步骤11
+            return ANALYSIS_STEP_KEYS[-1]
         s11 = get_step_status(task_id, "step11_report")
         if s11 not in {"completed", "skipped"}:
             return "step11_report"
@@ -252,6 +269,26 @@ def advance_to_analysis_phase(
     默认禁止空 skip 未尝试发文的平台（逼 Agent 先调工具）；
     仅终稿/会话结束等路径可 force_skip_unattempted=True。
     """
+    with _ADVANCE_LOCK:
+        if task_id in _ADVANCE_GUARD:
+            return False
+        _ADVANCE_GUARD.add(task_id)
+    try:
+        return _advance_to_analysis_phase_body(
+            store, task_id, reason, force_skip_unattempted=force_skip_unattempted
+        )
+    finally:
+        with _ADVANCE_LOCK:
+            _ADVANCE_GUARD.discard(task_id)
+
+
+def _advance_to_analysis_phase_body(
+    store: Any,
+    task_id: str,
+    reason: str,
+    *,
+    force_skip_unattempted: bool = False,
+) -> bool:
     from report_04.step_reconcile import (
         _post_actor_without_dataset,
         _post_collect_attempted,
@@ -309,17 +346,16 @@ def advance_to_analysis_phase(
     if close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕"):
         changed = True
 
+    # 只认父壳终态再点亮研判（父壳收口已等发文+视频）
     if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
+        logger.info(
+            "暂缓点亮研判：step7_posts 未终态 task=%s reason=%s",
+            task_id,
+            reason[:80],
+        )
         return changed
 
-    # 步骤7→8：图片资产兜底（Agent 主路径已跑则 skip_if_stored 秒回；禁止拖垮 Hook）
-    try:
-        from report_04.image_assets import run_image_pipeline_for_report
-
-        run_image_pipeline_for_report(task_id, force_analyze=True, skip_if_stored=True)
-    except Exception as exc:
-        logger.warning("advance_to_analysis 图片管线兜底失败 task=%s: %s", task_id, exc)
-
+    # 先点亮 8/9/10（6 的壳随之 running），第二次图片管线不得阻塞
     for step_key in ANALYSIS_STEP_KEYS:
         if get_step_status(task_id, step_key) == "pending":
             store.set_step_status(task_id, step_key, "running", message="分析进行中…")
@@ -328,6 +364,12 @@ def advance_to_analysis_phase(
         store.set_task_phase(task_id, PHASE_ANALYSIS)
     except Exception as exc:
         logger.warning("set_task_phase analysis 失败 task=%s: %s", task_id, exc)
+    try:
+        from report_04.image_assets import spawn_second_image_pipeline
+
+        spawn_second_image_pipeline(task_id)
+    except Exception as exc:
+        logger.warning("advance_to_analysis 后台第二次图片管线失败 task=%s: %s", task_id, exc)
     if changed:
         logger.info("advance_to_analysis_phase task=%s reason=%s", task_id, reason[:80])
     return changed
@@ -361,15 +403,21 @@ def close_open_steps_for_session_end(
     *,
     reason: str = "会话结束：Agent stream 已结束",
 ) -> int:
-    """stream/session 结束时：所有仍 pending/running 的步骤一律终态，禁止流程空转。
+    """stream/session 结束时：未终态步骤尽量收口，禁止流程空转。
 
-    - 发文子步 / 分析步 / 报告步 / 各阶段壳：skipped（或已有完成保持）
-    - 不点亮新的分析 running（没有 Agent 再跑）
+    仅视频未终态时：不 skip 视频孙节点 / step11 / 发文父壳。发文 MCP 失败子步仍可 skip。
     """
-    from report_04.step_reconcile import close_collect_parent_if_ready
+    from report_04.step_reconcile import (
+        close_collect_parent_if_ready,
+        skip_exhausted_step7_post_mcp,
+    )
     from report_04.task_store import _reconcile_report_post_child_steps
 
     updated = 0
+    try:
+        skip_exhausted_step7_post_mcp(store, task_id, session_end=True)
+    except Exception as exc:
+        logger.warning("session_end skip MCP 发文失败 task=%s: %s", task_id, exc)
     _reconcile_report_post_child_steps(store, task_id)
     store.reconcile_collect_child_steps(task_id)
     close_collect_parent_if_ready(store, task_id, POST_PARENT_STEP_KEY, "发文采集已尝试完毕")
@@ -383,11 +431,23 @@ def close_open_steps_for_session_end(
         (task_id,),
     )
     msg = reason[:200]
+    wait_videos = False
+    try:
+        from report_04.video_report import video_steps_terminal
+
+        wait_videos = not bool(video_steps_terminal(task_id).get("ok"))
+    except Exception:
+        wait_videos = False
     for row in rows:
         step_key = str(row.get("step_key") or "")
         if not step_key:
             continue
-        # 父壳稍后统一收口；业务子步先 skip
+        # 只等视频时：禁止把视频孙节点和写报步 skip 掉
+        if wait_videos and (
+            step_key.startswith("step7_video_")
+            or step_key in {"step11_report", PHASE_REPORT_SHELL, POST_PARENT_STEP_KEY, PHASE_CONTENT}
+        ):
+            continue
         store.set_step_status(task_id, step_key, "skipped", message=msg)
         updated += 1
 
@@ -401,6 +461,8 @@ def close_open_steps_for_session_end(
         PHASE_REPORT_SHELL,
     ):
         try:
+            if wait_videos and parent in {POST_PARENT_STEP_KEY, PHASE_CONTENT, PHASE_REPORT_SHELL}:
+                continue
             if get_step_status(task_id, parent) in {"pending", "running"}:
                 store.set_step_status(task_id, parent, "skipped", message=msg)
                 updated += 1

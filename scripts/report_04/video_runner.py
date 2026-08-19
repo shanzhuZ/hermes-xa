@@ -57,11 +57,21 @@ def _mark_step(
     from report_04.task_store import TaskStore
 
     store = TaskStore()
+    msg = (message or "").strip()
+    if status == "failed":
+        try:
+            from mysql_store import public_video_error
+
+            msg = public_video_error(msg)
+        except Exception:
+            msg = msg[:200]
+    else:
+        msg = msg[:2000]
     store.set_step_status(
         task_id,
         video_step_key(platform),
         status,
-        message=message[:2000],
+        message=msg,
         payload=payload,
     )
     if status in {"completed", "failed", "skipped"}:
@@ -81,7 +91,7 @@ def run_one(
     account_id: str = "",
     post_id: str = "",
     timeout_sec: int = 600,
-    max_duration_sec: float = 180.0,
+    max_duration_sec: float = 120.0,
     frame_interval_sec: float = 3.0,
 ) -> Dict[str, Any]:
     result_holder: Dict[str, Any] = {}
@@ -161,7 +171,7 @@ def main(argv: Optional[list] = None) -> int:
     parser.add_argument("--account-id", default="")
     parser.add_argument("--post-id", default="")
     parser.add_argument("--timeout-sec", type=int, default=600)
-    parser.add_argument("--max-duration-sec", type=float, default=180.0)
+    parser.add_argument("--max-duration-sec", type=float, default=120.0)
     parser.add_argument("--frame-interval-sec", type=float, default=3.0)
     args = parser.parse_args(argv)
 

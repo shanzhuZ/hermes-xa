@@ -37,8 +37,8 @@ from report_04.phases import (
 
 logger = logging.getLogger(__name__)
 
-# 分析参数：只取前 180 秒（3 分钟）、3 秒一帧（runner 内再传）
-VIDEO_MAX_DURATION_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_MAX_DURATION_SEC", "180"))
+# 分析参数：只取前 120 秒（2 分钟）、3 秒一帧（runner 内再传）
+VIDEO_MAX_DURATION_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_MAX_DURATION_SEC", "120"))
 VIDEO_FRAME_INTERVAL_SEC = float(os.environ.get("HERMES_REPORT_VIDEO_FRAME_INTERVAL_SEC", "3"))
 # 墙钟默认 10 分钟
 VIDEO_WALL_TIMEOUT_SEC = int(os.environ.get("HERMES_REPORT_VIDEO_TIMEOUT_SEC", "600"))
@@ -254,6 +254,22 @@ def complete_post_after_video(store: Any, task_id: str, platform: str) -> None:
             store._maybe_complete_phase_shell(task_id, POST_PARENT_STEP_KEY)
     except Exception as exc:
         logger.warning("04 视频后关 step7 父节点失败 task=%s: %s", task_id, exc)
+
+    # 视频终态后催续跑：门禁未齐（其它视频仍跑）时会走 hold，全部齐后才 analysis
+    try:
+        from report_04.session_continue import (
+            flush_deferred_continue,
+            maybe_continue_agent_session,
+        )
+
+        maybe_continue_agent_session(
+            store,
+            task_id,
+            reason=f"video_terminal:{platform}:{v_st}",
+        )
+        flush_deferred_continue(store, task_id, trigger=f"video_{platform}")
+    except Exception as exc:
+        logger.warning("04 视频终态催分析续跑失败 task=%s: %s", task_id, exc)
 
 
 def _spawn_video_runner(

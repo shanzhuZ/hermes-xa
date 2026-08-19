@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import hashlib
+import json
 import re
 from typing import Any, Dict, List, Optional
 
@@ -115,14 +116,47 @@ def _apify_collect_outcome(items: List[Any], profiles: List[Any], posts: List[An
 
 
 def apify_fail_message(platform: str, collect_outcome: str) -> str:
-    """dataset 成功但无主页时的步骤文案（避免「未入库」误导）。"""
+    """dataset 成功但无主页时的步骤文案（空壳=账号无数据，避免「未入库」误导）。"""
     plat = platform or "apify"
     outcome = (collect_outcome or "empty").strip().lower()
     if outcome == "not_found":
         return f"{plat} 账号不存在或不可用"
     if outcome == "empty":
-        return f"{plat} dataset 无可解析主页"
-    return f"{plat} Apify 已拉取 dataset 但未得到主页"
+        return f"{plat} 账号无数据"
+    return f"{plat} 账号无数据"
+
+
+_ACTOR_EMPTY_DATASET_MARKERS = (
+    "No dataset items",
+    "metadata reports 0 items",
+)
+
+
+def actor_reported_empty_dataset(tool_output: Any) -> bool:
+    """Actor 已声明 dataset 为空（itemCount=0），无需再空等 get_dataset_items。"""
+    if tool_output is None:
+        return False
+    if isinstance(tool_output, dict):
+        # structuredContent / 已解析对象
+        sc = tool_output.get("structuredContent") if isinstance(
+            tool_output.get("structuredContent"), dict
+        ) else tool_output
+        try:
+            storages = sc.get("storages") if isinstance(sc, dict) else None
+            datasets = (storages or {}).get("datasets") if isinstance(storages, dict) else None
+            default = (datasets or {}).get("default") if isinstance(datasets, dict) else None
+            if isinstance(default, dict) and default.get("itemCount") == 0:
+                return True
+        except Exception:
+            pass
+        text = json.dumps(tool_output, ensure_ascii=False, default=str)
+    else:
+        text = str(tool_output)
+    if any(m in text for m in _ACTOR_EMPTY_DATASET_MARKERS):
+        return True
+    # 兼容二次转义：\"itemCount\":0 → "itemCount":0
+    norm = text.replace('\\"', '"')
+    return '"itemCount":0' in norm
 
 
 def normalize_dataset_items(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:

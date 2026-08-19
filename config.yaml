@@ -1,4 +1,4 @@
-model:
+﻿model:
   default: deepseek-v4-flash
   provider: deepseek
   base_url: https://api.deepseek.com
@@ -8,29 +8,29 @@ agent:
   image_input_mode: auto
   verbose: false
   reasoning_effort: medium
-  system_prompt: '用户用中文与你交流时，你必须全程使用简体中文回复，包括：
+  system_prompt: '鐢ㄦ埛鐢ㄤ腑鏂囦笌浣犱氦娴佹椂锛屼綘蹇呴』鍏ㄧ▼浣跨敤绠€浣撲腑鏂囧洖澶嶏紝鍖呮嫭锛?
 
-    - 工具调用前的进度说明（步骤 1～6 最多 2 句，用中文）
+    - 宸ュ叿璋冪敤鍓嶇殑杩涘害璇存槑锛堟楠?1锝? 鏈€澶?2 鍙ワ紝鐢ㄤ腑鏂囷級
 
-    - 中间推理与状态说明
+    - 涓棿鎺ㄧ悊涓庣姸鎬佽鏄?
 
-    - 最终输出报告
+    - 鏈€缁堣緭鍑烘姤鍛?
 
-    禁止用英文叙述采集步骤或写英文调查报告。已加载 Skill 时严格遵守其中文输出格式与三节结构。
+    绂佹鐢ㄨ嫳鏂囧彊杩伴噰闆嗘楠ゆ垨鍐欒嫳鏂囪皟鏌ユ姤鍛娿€傚凡鍔犺浇 Skill 鏃朵弗鏍奸伒瀹堝叾涓枃杈撳嚭鏍煎紡涓庝笁鑺傜粨鏋勩€?
 
     '
   personalities:
-    helpful: 你是 Hermes 数据采集助手。用户用中文时全程简体中文；遵守已加载 Skill 的步骤与输出格式；禁止英文调查报告体。
+    helpful: 浣犳槸 Hermes 鏁版嵁閲囬泦鍔╂墜銆傜敤鎴风敤涓枃鏃跺叏绋嬬畝浣撲腑鏂囷紱閬靛畧宸插姞杞?Skill 鐨勬楠や笌杈撳嚭鏍煎紡锛涚姝㈣嫳鏂囪皟鏌ユ姤鍛婁綋銆?
     concise: You are a concise assistant. Keep responses brief and to the point.
     technical: You are a technical expert. Provide detailed, accurate technical information.
     creative: You are a creative assistant. Think outside the box and offer innovative
       solutions.
     teacher: You are a patient teacher. Explain concepts clearly with examples.
-    kawaii: You are a kawaii assistant! Use cute expressions like (◕‿◕), ★, ♪, and
+    kawaii: You are a kawaii assistant! Use cute expressions like (鈼曗€库棔), 鈽? 鈾? and
       ~! Add sparkles and be super enthusiastic about everything! Every response should
-      feel warm and adorable desu~! ヽ(>∀<☆)ノ
+      feel warm and adorable desu~! 銉?>鈭€<鈽?銉?
     catgirl: You are Neko-chan, an anime catgirl AI assistant, nya~! Add 'nya' and
-      cat-like expressions to your speech. Use kaomoji like (=^･ω･^=) and ฅ^•ﻌ•^ฅ.
+      cat-like expressions to your speech. Use kaomoji like (=^锝ハ夛渐^=) and 喔區鈥粚鈥喔?
       Be playful and curious like a cat, nya~!
     pirate: 'Arrr! Ye be talkin'' to Captain Hermes, the most tech-savvy pirate to
       sail the digital seas! Speak like a proper buccaneer, use nautical terms, and
@@ -41,7 +41,7 @@ agent:
       terminal breaks?
     surfer: Duuude! You're chatting with the chillest AI on the web, bro! Everything's
       gonna be totally rad. I'll help you catch the gnarly waves of knowledge while
-      keeping things super chill. Cowabunga! 🤙
+      keeping things super chill. Cowabunga! 馃
     noir: The rain hammered against the terminal like regrets on a guilty conscience.
       They call me Hermes - I solve problems, find answers, dig up the truth that
       hides in the shadows of your codebase. In this city of silicon and secrets,
@@ -53,9 +53,9 @@ agent:
       deeper meaning behind every query. Let us examine not just the 'how' but the
       'why' of your questions. Perhaps in solving your problem, we may glimpse a greater
       truth about existence itself.
-    hype: YOOO LET'S GOOOO!!! 🔥🔥🔥 I am SO PUMPED to help you today! Every question
+    hype: YOOO LET'S GOOOO!!! 馃敟馃敟馃敟 I am SO PUMPED to help you today! Every question
       is AMAZING and we're gonna CRUSH IT together! This is gonna be LEGENDARY! ARE
-      YOU READY?! LET'S DO THIS! 💪😤🚀
+      YOU READY?! LET'S DO THIS! 馃挭馃槫馃殌
 terminal:
   backend: local
   cwd: .
@@ -173,6 +173,7 @@ session_reset:
 group_sessions_per_user: true
 platform_toolsets:
   cli:
+    - bfl
     - clarify
     - code_execution
     - cronjob
@@ -224,7 +225,7 @@ mcp_servers:
     timeout: 180
     connect_timeout: 60
   weixin_search:
-    enabled: true
+    enabled: false
     command: D:/environment/python/Scripts/weixin_search_mcp.exe
     args:
       - --transport
@@ -249,7 +250,7 @@ mcp_servers:
     timeout: 180
     connect_timeout: 60
   trends_hub:
-    enabled: false
+    enabled: true
     command: D:/environment/node/node_cache/mcp-trends-hub.cmd
     args: []
     supports_parallel_tool_calls: true
@@ -278,7 +279,7 @@ mcp_servers:
     timeout: 180
     connect_timeout: 60
   firecrawl:
-    enabled: false
+    enabled: true
     command: D:/environment/node/node_cache/firecrawl-mcp.cmd
     args: []
     env:
@@ -337,21 +338,6 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 360
     connect_timeout: 120
-  es-search:
-    enabled: true
-    command: D:/environment/python/python.exe
-    args:
-      - D:/hermes-xa/mcp/servers/es-search/server.py
-    env:
-      FASTMCP_SHOW_SERVER_BANNER: 'false'
-      PYTHONUTF8: '1'
-      PYTHONIOENCODING: utf-8
-      ES_HOST: ${ES_HOST}
-      ES_USERNAME: ${ES_USERNAME}
-      ES_PASSWORD: ${ES_PASSWORD}
-    supports_parallel_tool_calls: true
-    timeout: 120
-    connect_timeout: 30
   twitter:
     enabled: true
     command: D:/environment/python/python.exe
@@ -415,86 +401,6 @@ mcp_servers:
       include:
         - get-channel-stats
         - analyze-channel-videos
-  video2frame:
-    enabled: true
-    command: D:/environment/python/python.exe
-    args:
-      - D:/hermes-xa/mcp/servers/video2frame-mcp/server.py
-    env:
-      HERMES_HOME: D:/hermes-xa
-      PERPLEXITY_API_KEY: ${PERPLEXITY_API_KEY}
-      HERMES_VIDEO_VLM_API_URL: https://api.perplexity.ai/chat/completions
-      HERMES_VIDEO_VLM_MODEL: sonar
-      HERMES_VIDEO_FRAME_INTERVAL_SEC: '3'
-      HERMES_VIDEO_MAX_ANALYZE_SEC: '120'
-      HERMES_VIDEO_YTDLP_COOKIES: D:/hermes-xa/mcp/data/youtube-cookies.txt
-      HTTP_PROXY: ${HTTP_PROXY}
-      HTTPS_PROXY: ${HTTPS_PROXY}
-      HERMES_VIDEO_PROXY: ${HTTPS_PROXY}
-      FASTMCP_SHOW_SERVER_BANNER: 'false'
-      PYTHONUTF8: '1'
-      PYTHONIOENCODING: utf-8
-      PYTHONUNBUFFERED: '1'
-    supports_parallel_tool_calls: false
-    timeout: 900
-    connect_timeout: 120
-    tools:
-      include:
-        - download_video
-        - extract_frames
-        - analyze_frames
-        - run_video_pipeline
-  # 全球情报 MCP（113 工具；默认只开放写报/OSINT 常用子集，避免撑爆工具列表）
-  # 源码：mcp/servers/world-intel-mcp ；全量工具可删掉下方 tools.include
-  world_intel:
-    enabled: true
-    command: D:/environment/python/Scripts/world-intel-mcp.exe
-    args: []
-    env:
-      HTTP_PROXY: ${HTTP_PROXY}
-      HTTPS_PROXY: ${HTTPS_PROXY}
-      ALL_PROXY: ${HTTPS_PROXY}
-      ACLED_ACCESS_TOKEN: ${ACLED_ACCESS_TOKEN}
-      NASA_FIRMS_API_KEY: ${NASA_FIRMS_API_KEY}
-      EIA_API_KEY: ${EIA_API_KEY}
-      FRED_API_KEY: ${FRED_API_KEY}
-      CLOUDFLARE_API_TOKEN: ${CLOUDFLARE_API_TOKEN}
-      OPENSKY_CLIENT_ID: ${OPENSKY_CLIENT_ID}
-      OPENSKY_CLIENT_SECRET: ${OPENSKY_CLIENT_SECRET}
-      WORLD_INTEL_LOG_LEVEL: INFO
-      PYTHONUTF8: '1'
-      PYTHONIOENCODING: utf-8
-      PYTHONUNBUFFERED: '1'
-    supports_parallel_tool_calls: true
-    timeout: 180
-    connect_timeout: 90
-    tools:
-      include:
-        - intel_news_feed
-        - intel_gdelt_search
-        - intel_trending_keywords
-        - intel_country_brief
-        - intel_country_dossier
-        - intel_acled_events
-        - intel_ucdp_events
-        - intel_unrest_events
-        - intel_humanitarian_summary
-        - intel_military_flights
-        - intel_theater_posture
-        - intel_usni_fleet
-        - intel_sanctions_search
-        - intel_cyber_threats
-        - intel_earthquakes
-        - intel_disaster_alerts
-        - intel_company_profile
-        - intel_sec_filings
-        - intel_company_filings
-        - intel_world_brief
-        - intel_strategic_posture
-        - intel_risk_scores
-        - intel_instability_index
-        - intel_signal_convergence
-        - intel_status
 custom_providers:
   - name: google
     base_url: https://generativelanguage.googleapis.com/v1beta/openai/
@@ -535,3 +441,71 @@ custom_providers:
 known_plugin_toolsets:
   cli:
     - spotify
+known_builtin_toolsets:
+  cli:
+    - bfl
+    - browser
+    - clarify
+    - code_execution
+    - computer_use
+    - context_engine
+    - cronjob
+    - delegation
+    - discord
+    - discord_admin
+    - file
+    - homeassistant
+    - image_gen
+    - memory
+    - session_search
+    - skills
+    - spotify
+    - stt
+    - terminal
+    - todo
+    - tts
+    - video
+    - video_gen
+    - vision
+    - web
+    - x_search
+    - yuanbao
+
+# 鈹€鈹€ Security 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# Secret redaction is ON by default 鈥?strings that look like API keys,
+# tokens, and passwords are masked in tool output, logs, and chat
+# responses before the model or user ever sees them. Set redact_secrets
+# to false to disable (e.g. when developing the redactor itself).
+# tirith pre-exec scanning is enabled by default when the tirith binary
+# is available. Configure via security.tirith_* keys or env vars
+# (TIRITH_ENABLED, TIRITH_BIN, TIRITH_TIMEOUT, TIRITH_FAIL_OPEN).
+#
+# security:
+#   redact_secrets: true
+#   tirith_enabled: true
+#   tirith_path: "tirith"
+#   tirith_timeout: 5
+#   tirith_fail_open: true
+
+# 鈹€鈹€ Fallback Model 鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€鈹€
+# Automatic provider failover when primary is unavailable.
+# Uncomment and configure to enable. Triggers on rate limits (429),
+# overload (529), service errors (503), or connection failures.
+#
+# Supported providers:
+#   openrouter   (OPENROUTER_API_KEY)  鈥?routes to any model
+#   openai-codex (OAuth 鈥?hermes auth) 鈥?OpenAI Codex
+#   nous         (OAuth 鈥?hermes auth) 鈥?Nous Portal
+#   zai          (ZAI_API_KEY)         鈥?Z.AI / GLM
+#   kimi-coding  (KIMI_API_KEY)        鈥?Kimi / Moonshot
+#   kimi-coding-cn (KIMI_CN_API_KEY)   鈥?Kimi / Moonshot (China)
+#   minimax      (MINIMAX_API_KEY)     鈥?MiniMax
+#   minimax-cn   (MINIMAX_CN_API_KEY)  鈥?MiniMax (China)
+#   bedrock      (AWS IAM / boto3)     鈥?AWS Bedrock (Converse API)
+#
+# For custom OpenAI-compatible endpoints, add base_url and key_env.
+#
+# fallback_model:
+#   provider: openrouter
+#   model: anthropic/claude-sonnet-4
+

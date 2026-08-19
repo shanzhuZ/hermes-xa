@@ -2,39 +2,75 @@
   "approvals": [
     {
       "event": "pre_llm_call",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "pre_tool_call",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "post_tool_call",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "post_llm_call",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "pre_verify",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "on_session_end",
+      "command": "C:/Users/Administrator/AppData/Local/Programs/Python/Python311/python.exe D:/hermes-xa/scripts/db_sink.py",
+      "approved_at": "2026-08-10T08:16:40.976321Z",
+      "script_mtime_at_approval": "2026-08-10T08:16:40.976321Z"
+    },
+    {
+      "event": "pre_llm_call",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     },
     {
       "event": "pre_tool_call",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     },
     {
       "event": "post_tool_call",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     },
     {
       "event": "post_llm_call",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     },
     {
       "event": "pre_verify",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     },
     {
       "event": "on_session_end",
       "command": "D:/environment/python/python.exe D:/hermes-xa/scripts/db_sink.py",
-      "approved_at": "2026-07-29T03:24:23.394508Z",
-      "script_mtime_at_approval": "2026-07-29T03:24:23.394508Z"
+      "approved_at": "2026-08-10T08:23:09.882282Z",
+      "script_mtime_at_approval": "2026-08-10T08:23:09.882282Z"
     }
   ]
 }

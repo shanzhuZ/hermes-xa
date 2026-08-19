@@ -85,11 +85,36 @@ def safe_bool(value: Any) -> Optional[int]:
     return None
 
 
+_UNICODE_ESC_RE = re.compile(r"\\u([0-9a-fA-F]{4})")
+
+
+def decode_escaped_text(value: Optional[str]) -> Optional[str]:
+    """解码字面量 \\uXXXX / \\n（Apify Facebook 等把 Unicode 当明文返回）。
+
+    仅当文本含 \\uXXXX 时处理，避免误伤普通反斜杠路径。
+    """
+    if value is None:
+        return None
+    s = str(value)
+    if not _UNICODE_ESC_RE.search(s):
+        return s
+    out = _UNICODE_ESC_RE.sub(lambda m: chr(int(m.group(1), 16)), s)
+    # 常见转义一并还原（Facebook intro 常带 \\n）
+    out = (
+        out.replace("\\n", "\n")
+        .replace("\\r", "\r")
+        .replace("\\t", "\t")
+        .replace('\\"', '"')
+        .replace("\\\\", "\\")
+    )
+    return out
+
+
 def first_str(*values: Any) -> Optional[str]:
     for v in values:
         if v is None:
             continue
-        s = str(v).strip()
+        s = decode_escaped_text(str(v).strip())
         if s:
             return s
     return None

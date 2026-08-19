@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 import sys
 from typing import Any, Dict, List, Optional
 
@@ -16,7 +17,7 @@ from collect_01.config import hermes_home
 from collect_01.db import DbError
 from collect_01.normalizers.base import infer_mcp_server
 from collect_01.normalizers.registry import dispatch
-from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint
+from collect_01.normalizers.apify import apify_platform_from_actor_tool, resolve_apify_platform_hint, actor_reported_empty_dataset, apify_fail_message
 from collect_01.seed_platforms import (
     APIFY_SEED_PLATFORM_TOOLS,
     REPORT_SEED_PROFILE_TOOLS as SEED_PROFILE_TOOLS,
@@ -165,6 +166,54 @@ def _normalize_hook_tool_name(raw: Optional[str]) -> str:
     from collect_01.normalizers.base import normalize_mcp_tool_name
 
     return normalize_mcp_tool_name(str(raw or "").strip())
+
+
+def _is_skipped_step_tool(
+    tool_name: str,
+    task_id: str,
+    *,
+    tool_args: Optional[Dict[str, Any]] = None,
+    phase: Optional[str] = None,
+) -> Optional[str]:
+    """已 skipped 的节点禁止模型再调对应工具（不论当初为何 skip）。"""
+    keys: List[str] = []
+    if phase:
+        keys.append(str(phase).strip())
+    plat = TOOL_PLATFORM.get(tool_name) or APIFY_TOOL_PLATFORM.get(tool_name)
+    if not plat:
+        plat = _infer_platform(tool_name, tool_args or {}, [], "")
+    plat = str(plat or "").strip().lower()
+    if plat:
+        keys.append(profile_platform_step_key(plat))
+        keys.append(post_platform_step_key(plat))
+    primary = TOOL_PRIMARY_STEP.get(tool_name)
+    if primary:
+        keys.append(str(primary))
+
+    post_capable = (
+        tool_name in POST_TOOLS
+        or tool_name in APIFY_POST_TOOLS
+        or tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}
+    )
+    seen = set()
+    for sk in keys:
+        if not sk or sk in seen:
+            continue
+        seen.add(sk)
+        if get_step_status(task_id, sk) != "skipped":
+            continue
+        # 双用途 Apify：主页已 skip，但发文子步未 skip 且步骤7已开放 → 允许当发文工具
+        if sk.startswith("step4_profile_") and plat and post_capable:
+            post_st = get_step_status(task_id, post_platform_step_key(plat))
+            if can_run_step7_collect(task_id) and post_st not in {"skipped", "completed", "failed"}:
+                continue
+        if sk == "step4_profiles" and post_capable and can_run_step7_collect(task_id):
+            continue
+        return (
+            f"{sk} 已 skipped，禁止再次调用 {tool_name}。"
+            "已跳过的节点不可补采；请继续其它未终态步骤。"
+        )
+    return None
 
 
 def _is_premature_osint_tool(tool_name: str, task_id: str) -> Optional[str]:
@@ -321,6 +370,18 @@ def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
             "step10_context_pii",
             "step11_report",
         }:
+            wait_hint = ""
+            try:
+                from report_04.video_report import format_report_wait_hint
+
+                wait_hint = format_report_wait_hint(task_id)
+            except Exception:
+                wait_hint = ""
+            if wait_hint:
+                return (
+                    "步骤5图片流已收口，禁止再调用 vision/OCR。"
+                    + wait_hint
+                )
             return (
                 "步骤5图片流已收口，禁止再调用 vision/OCR。"
                 "当前为研判/写报：请直接输出步骤8/9/10分析正文与「一、账号基本信息」终稿。"
@@ -345,6 +406,20 @@ def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
 
     if step4_profiles_terminal(task_id):
         return None
+    # Agent 已抢跑步骤5：对其它主页已推进仍从未尝试的子步 fail-forward，
+    # 避免「口头 skip / 无候选」只写在对话里导致永久卡死；已尝试平台不误杀。
+    try:
+        from report_04.step_reconcile import fail_forward_step4_unattempted_when_siblings_done
+
+        n = fail_forward_step4_unattempted_when_siblings_done(
+            _store(),
+            task_id,
+            reason="抢跑步骤5时未尝试主页采集，已跳过",
+        )
+        if n and step4_profiles_terminal(task_id):
+            return None
+    except Exception as exc:
+        logger.warning("step4 fail-forward(抢跑vision) 失败 task=%s: %s", task_id, exc)
     pending = None
     try:
         from report_04.gates import _step4_profile_children_pending
@@ -379,6 +454,34 @@ def _is_invalid_youtube_channel_id(tool_name: str, tool_args: Dict[str, Any]) ->
             f"YouTube 伪 channelId={cid!r}（UC 过短）。"
             "请传正式 UC… 或账号名/@handle，禁止编造伪 UC。"
         )
+    return None
+
+
+def _terminal_profile_failure_reason(
+    tool_name: str,
+    tool_output: str = "",
+    tool_args: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    """主页工具不可恢复失败 → 应 skipped，禁止长期停在 running。
+
+    典型：YouTube Channel not found（正式 UC 已查过仍不存在）。
+    """
+    text = str(tool_output or "")
+    low = text.lower()
+    args = tool_args if isinstance(tool_args, dict) else {}
+    if tool_name == "mcp_youtube_get_channel_stats":
+        cid = str(args.get("channelId") or args.get("channel_id") or "").strip()
+        # 已是正式 UC 且明确 not found：再等重试无意义
+        if cid.upper().startswith("UC") and len(cid) >= 22:
+            if "not found" in low or "channel with id" in low:
+                return f"YouTube 频道不存在（{cid}），已跳过"
+        if "not found" in low and ("channel" in low or "频道" in text):
+            return "YouTube 频道不存在，已跳过"
+    if tool_name in PROFILE_TOOLS:
+        # 其它主页 MCP 的明确 not found / 404
+        if "not found" in low or "404" in low or "does not exist" in low:
+            if "channel" in low or "user" in low or "profile" in low or "账号" in text:
+                return "主页不存在或已删除，已跳过"
     return None
 
 
@@ -620,6 +723,8 @@ def _resolve_collect_phase(
             cs = post_platform_step_key(platform)
         return cs, cs
     if tool_name in STEP4_COLLECT_TOOLS or (tool_name == "mcp_apify_get_dataset_items" and platform):
+        if platform and get_step_status(task_id, profile_platform_step_key(platform)) == "skipped":
+            return None, "step4_profiles"
         _prepare_step4_collect(store, task_id)
         if platform and can_update_step4_children(task_id):
             if tool_name == "mcp_apify_get_dataset_items":
@@ -705,6 +810,118 @@ def _seed_fail_message(tool_name: str, tool_output: str, *, empty: bool = False)
     return f"种子主页采集失败（{tool_name}），请检查账号名后重试"
 
 
+# 种子失败重试：计数写在 step1 payload（db_sink 每次新进程，不能用内存计数）
+_SEED_RETRY_MAX = 3
+_SEED_FAIL_COUNT_KEY = "seed_fail_count"
+_HARD_SEED_MARKERS = (
+    "does not exist",
+    "user not found",
+    "account not found",
+    "no such user",
+    "could not find user",
+    "账号不存在",
+    "validation error",
+    "requires either",
+)
+
+
+def _is_hard_seed_error(text: str) -> bool:
+    """账号不存在等硬错误：不占重试，立刻 abort。"""
+    low = (text or "").lower()
+    if any(m in low for m in _HARD_SEED_MARKERS):
+        return True
+    # 泛 not found 视为硬错误，但排除 twikit ClientTransaction
+    if "clienttransaction" in low:
+        return False
+    if re.search(r"\bnot found\b", low):
+        return True
+    return False
+
+
+def _seed_fail_count(task_id: str) -> int:
+    from collect_01 import db as _db
+
+    row = _db.fetch_one(
+        "SELECT payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+        (task_id, "step1_seed"),
+    ) or {}
+    raw = row.get("payload_json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        return 0
+    try:
+        return int(raw.get(_SEED_FAIL_COUNT_KEY) or 0)
+    except Exception:
+        return 0
+
+
+def _clear_seed_fail_count(store: TaskStore, task_id: str) -> None:
+    if _seed_fail_count(task_id) <= 0:
+        return
+    cur = get_step_status(task_id, "step1_seed") or "running"
+    if cur in {"failed", "skipped"}:
+        return
+    store.set_step_status(
+        task_id,
+        "step1_seed",
+        cur if cur in {"pending", "running", "completed"} else "running",
+        payload={_SEED_FAIL_COUNT_KEY: 0},
+    )
+
+
+def _abort_or_retry_seed(
+    store: TaskStore,
+    task_id: str,
+    tool_name: str,
+    fail_msg: str,
+    raw_output: str,
+) -> None:
+    """种子失败：硬错误或满 3 次 → fail_seed_and_abort；否则 step1 保持 running。"""
+    combined = f"{raw_output or ''}\n{fail_msg or ''}"
+    if _is_hard_seed_error(combined):
+        store.fail_seed_and_abort(task_id, fail_msg)
+        logger.warning(
+            "种子采集硬失败，立即中止 task=%s tool=%s: %s",
+            task_id,
+            tool_name,
+            fail_msg[:180],
+        )
+        return
+    n = _seed_fail_count(task_id) + 1
+    if n >= _SEED_RETRY_MAX:
+        store.fail_seed_and_abort(task_id, fail_msg)
+        logger.warning(
+            "种子采集失败已满 %s 次，中止 task=%s tool=%s: %s",
+            _SEED_RETRY_MAX,
+            task_id,
+            tool_name,
+            fail_msg[:180],
+        )
+        return
+    store.set_step_status(
+        task_id,
+        "step1_seed",
+        "running",
+        message=f"种子采集失败（第{n}/{_SEED_RETRY_MAX}次），等待重试…",
+        payload={
+            _SEED_FAIL_COUNT_KEY: n,
+            "seed_fail_last": (fail_msg or "")[:200],
+        },
+    )
+    logger.warning(
+        "种子采集瞬态失败，软重试 %s/%s task=%s tool=%s: %s",
+        n,
+        _SEED_RETRY_MAX,
+        task_id,
+        tool_name,
+        fail_msg[:180],
+    )
+
+
 def _task_is_terminal(store: TaskStore, task_id: str) -> bool:
     task = store.get_task(task_id) or {}
     # cancelled：用户结束，禁止 Hook 继续推进写报（勿覆盖为 completed/running）
@@ -759,7 +976,8 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             pass
         # [COLLISION_DEMO_FAKE] end
         reason = (
-            _is_invalid_youtube_channel_id(tool_name, tool_args)
+            _is_skipped_step_tool(tool_name, task_id, tool_args=tool_args, phase=phase)
+            or _is_invalid_youtube_channel_id(tool_name, tool_args)
             or _is_premature_step5_tool(tool_name, task_id)
             or _is_redundant_step5_vision(tool_name, tool_args, task_id)
             or _is_late_web_search_tool(tool_name, task_id)
@@ -1400,7 +1618,7 @@ def _complete_step11_from_report(
         except Exception as exc:
             logger.warning("step11 已完成时补标 completed 失败 task=%s: %s", task_id, exc)
         return
-    # 视频未终态：不落 step11/summary，避免抢跑（也不 fail-forward，等视频终态后再判）
+    # 发文或视频未终态：不落 step11/summary，避免抢跑（也不 fail-forward）
     inject_fn = None
     try:
         from report_04.video_report import can_write_report_after_videos, inject_video_into_report
@@ -1409,13 +1627,14 @@ def _complete_step11_from_report(
         gate = can_write_report_after_videos(task_id)
         if not gate.get("ok"):
             logger.info(
-                "终稿等待视频终态 task=%s open=%s",
+                "终稿等待发文/视频终态 task=%s open=%s",
                 task_id,
                 gate.get("open"),
             )
             return
     except Exception as exc:
-        logger.warning("视频门禁检查失败 task=%s: %s", task_id, exc)
+        logger.warning("写报门禁检查失败，暂不收口 step11 task=%s: %s", task_id, exc)
+        return
 
     if not is_final_report(assistant):
         if looks_like_report_attempt(assistant):
@@ -1543,6 +1762,8 @@ def _sync_platform_collect_steps(
     *,
     tool_name: str,
     tool_ok: bool,
+    tool_output: str = "",
+    tool_args: Optional[Dict[str, Any]] = None,
 ) -> None:
     if not platform:
         return
@@ -1591,9 +1812,15 @@ def _sync_platform_collect_steps(
         elif apify_actor and tool_ok:
             cur = get_step_status(task_id, post_key)
             if cur not in {"completed", "skipped"}:
-                store.set_step_status(
-                    task_id, post_key, "running", message=f"{platform} Actor 已完成，等待发文 dataset…"
-                )
+                # Actor 已报 itemCount=0：直接 skip，勿空等 get_dataset_items
+                if actor_reported_empty_dataset(tool_output):
+                    store.set_step_status(
+                        task_id, post_key, "skipped", message=f"{platform} 未采集到发文"
+                    )
+                else:
+                    store.set_step_status(
+                        task_id, post_key, "running", message=f"{platform} Actor 已完成，等待发文 dataset…"
+                    )
         elif tool_name == "mcp_apify_get_dataset_items" and tool_ok:
             cur = get_step_status(task_id, post_key)
             if n_post == 0 and cur not in {"completed", "skipped"}:
@@ -1619,16 +1846,23 @@ def _sync_platform_collect_steps(
                     )
                 else:
                     store.set_step_status(task_id, post_key, "skipped", message=f"{platform} 未采集到发文")
-        elif tool_name in POST_TOOLS and tool_ok:
-            cur = get_step_status(task_id, post_key)
-            if cur == "pending":
-                store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
-        elif tool_name in POST_TOOLS and not tool_ok:
-            cur = get_step_status(task_id, post_key)
-            if cur not in {"completed", "skipped"}:
-                store.set_step_status(
-                    task_id, post_key, "running", message=f"{platform} 发文采集中（等待重试）…"
-                )
+        elif tool_name in POST_TOOLS:
+            from report_04.step_reconcile import apply_step7_post_mcp_zero_outcome
+
+            skipped = apply_step7_post_mcp_zero_outcome(
+                store,
+                task_id,
+                platform,
+                tool_ok=tool_ok,
+                tool_output=tool_output,
+                tool_name=tool_name,
+            )
+            if not skipped:
+                cur = get_step_status(task_id, post_key)
+                if cur == "pending":
+                    store.set_step_status(
+                        task_id, post_key, "running", message=f"{platform} 发文采集中…"
+                    )
         store.reconcile_collect_child_steps(task_id)
         return
 
@@ -1645,18 +1879,37 @@ def _sync_platform_collect_steps(
         cur = get_step_status(task_id, prof_key)
         if has_prof:
             store.set_step_status(task_id, prof_key, "completed", message="已入库主页")
-        elif cur not in {"completed", "skipped"}:
-            # 首次失败（如 YouTube @handle）保持 running，等待 channelId 重试
-            store.set_step_status(task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…")
+        elif cur not in {"completed", "skipped", "failed"}:
+            terminal = _terminal_profile_failure_reason(
+                tool_name, tool_output=tool_output, tool_args=tool_args or {}
+            )
+            if terminal:
+                # 失败即跳过：正式 UC not found 等不可恢复错误，禁止长期 running 卡死步骤4
+                store.set_step_status(task_id, prof_key, "skipped", message=terminal[:200])
+            else:
+                # 首次失败（如 YouTube @handle 待解析）保持 running，等待 channelId 重试
+                store.set_step_status(
+                    task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…"
+                )
     elif tool_name in PROFILE_TOOLS:
         cur = get_step_status(task_id, prof_key)
         if apify_platform_from_actor_tool(tool_name) and tool_ok:
-            store.set_step_status(
-                task_id,
-                prof_key,
-                "running",
-                message=f"{platform} Actor 已完成，等待拉取 dataset…",
-            )
+            if cur not in {"completed", "skipped", "failed"}:
+                # Actor 已报 itemCount=0：直接 skip，勿空等 get_dataset_items 卡死步骤4
+                if actor_reported_empty_dataset(tool_output):
+                    store.set_step_status(
+                        task_id,
+                        prof_key,
+                        "skipped",
+                        message=apify_fail_message(platform, "empty"),
+                    )
+                else:
+                    store.set_step_status(
+                        task_id,
+                        prof_key,
+                        "running",
+                        message=f"{platform} Actor 已完成，等待拉取 dataset…",
+                    )
         elif cur == "pending":
             store.set_step_status(task_id, prof_key, "running", message=f"{platform} 主页采集中…")
     elif tool_name == "mcp_apify_get_dataset_items" and tool_ok and not can_run_step7_collect(task_id):
@@ -1665,13 +1918,15 @@ def _sync_platform_collect_steps(
             store.set_step_status(task_id, prof_key, "completed", message=f"已入库主页 {n_prof} 条")
         elif n_prof == 0 and cur == "running":
             from report_04.step_reconcile import _dataset_success_for_profile
+            from collect_01.normalizers.apify import apify_fail_message
 
             if _dataset_success_for_profile(task_id, platform):
+                outcome = str(result_data.get("collect_outcome") or "empty").strip().lower()
                 store.set_step_status(
                     task_id,
                     prof_key,
                     "skipped",
-                    message=f"{platform} Apify 已拉取 dataset 但未入库主页",
+                    message=apify_fail_message(platform, outcome),
                 )
 
     if can_run_step7_collect(task_id):
@@ -1687,8 +1942,21 @@ def _sync_platform_collect_steps(
             if n_post == 0 and tool_name == "mcp_apify_get_dataset_items":
                 if cur not in {"completed", "skipped"}:
                     store.set_step_status(task_id, post_key, "skipped", message=f"{platform} 未采集到发文")
-            elif cur == "pending":
-                store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
+            else:
+                from report_04.step_reconcile import apply_step7_post_mcp_zero_outcome
+
+                skipped = apply_step7_post_mcp_zero_outcome(
+                    store,
+                    task_id,
+                    platform,
+                    tool_ok=True,
+                    tool_output=tool_output,
+                    tool_name=tool_name,
+                )
+                if not skipped and cur == "pending":
+                    store.set_step_status(
+                        task_id, post_key, "running", message=f"{platform} 发文采集中…"
+                    )
         elif tool_name in POST_TOOLS and not tool_ok:
             from collect_01 import db as _db
 
@@ -1704,8 +1972,21 @@ def _sync_platform_collect_steps(
                 finalize_post_platform_after_posts(
                     store, task_id, platform, post_count=int(row["c"])
                 )
-            elif cur not in {"completed", "skipped"}:
-                store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中（等待重试）…")
+            else:
+                from report_04.step_reconcile import apply_step7_post_mcp_zero_outcome
+
+                skipped = apply_step7_post_mcp_zero_outcome(
+                    store,
+                    task_id,
+                    platform,
+                    tool_ok=False,
+                    tool_output=tool_output,
+                    tool_name=tool_name,
+                )
+                if not skipped and cur not in {"completed", "skipped"}:
+                    store.set_step_status(
+                        task_id, post_key, "running", message=f"{platform} 发文采集中（等待重试）…"
+                    )
         elif tool_name in POST_TOOLS:
             if get_step_status(task_id, post_key) == "pending":
                 store.set_step_status(task_id, post_key, "running", message=f"{platform} 发文采集中…")
@@ -1940,16 +2221,33 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     if seed_collect:
         if status != "success":
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=False)
-            store.fail_seed_and_abort(task_id, fail_msg)
-            logger.warning("种子采集失败(工具error) task=%s tool=%s: %s", task_id, tool_name, fail_msg)
+            _abort_or_retry_seed(store, task_id, tool_name, fail_msg, tool_output)
             return
 
     if status != "success":
-        if platform and can_update_step4_children(task_id):
+        if platform and (
+            can_update_step4_children(task_id) or can_update_step7_children(task_id)
+        ):
             _prepare_step4_collect(store, task_id)
             _sync_platform_collect_steps(
-                store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
+                store,
+                task_id,
+                platform,
+                {},
+                tool_name=tool_name,
+                tool_ok=False,
+                tool_output=tool_output,
+                tool_args=tool_args if isinstance(tool_args, dict) else {},
             )
+            try:
+                from report_04.step_reconcile import close_collect_parent_if_ready
+                from report_04.phases import PROFILE_PARENT_STEP_KEY
+
+                close_collect_parent_if_ready(
+                    store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"
+                )
+            except Exception:
+                pass
         return
 
     platform_hint = _LAST_APIFY_HINT.get(task_id, "")
@@ -1985,13 +2283,29 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         logger.exception("normalizer 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
         if seed_collect:
             fail_msg = _seed_fail_message(tool_name, str(exc), empty=True)
-            store.fail_seed_and_abort(task_id, fail_msg)
+            _abort_or_retry_seed(store, task_id, tool_name, fail_msg, str(exc))
             return
         if platform:
             _prepare_step4_collect(store, task_id)
             _sync_platform_collect_steps(
-                store, task_id, platform, {}, tool_name=tool_name, tool_ok=False
+                store,
+                task_id,
+                platform,
+                {},
+                tool_name=tool_name,
+                tool_ok=False,
+                tool_output=str(exc),
+                tool_args=tool_args if isinstance(tool_args, dict) else {},
             )
+            try:
+                from report_04.step_reconcile import close_collect_parent_if_ready
+                from report_04.phases import PROFILE_PARENT_STEP_KEY
+
+                close_collect_parent_if_ready(
+                    store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"
+                )
+            except Exception:
+                pass
         store.reconcile_collect_child_steps(task_id)
         return
 
@@ -2008,7 +2322,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 logger.info("种子 Apify 中间步 task=%s tool=%s（等待 dataset）", task_id, tool_name)
                 return
             fail_msg = _seed_fail_message(tool_name, tool_output, empty=True)
-            store.fail_seed_and_abort(task_id, fail_msg)
+            _abort_or_retry_seed(store, task_id, tool_name, fail_msg, tool_output)
             logger.warning("种子采集失败(空结果) task=%s tool=%s", task_id, tool_name)
             return
         if tool_name == "mcp_apify_get_dataset_items":
@@ -2049,6 +2363,7 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         and not apify_seed_empty_ok(tool_name)
     ):
         store.mark_seed_completed(task_id, result_data.get("profiles") or [], source="tool")
+        _clear_seed_fail_count(store, task_id)
 
     if tool_name == "mcp_maigret_collect_accounts":
         cands = result_data.get("candidates") or []
@@ -2095,7 +2410,14 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         can_update_step4_children(task_id) or can_update_step7_children(task_id)
     ):
         _sync_platform_collect_steps(
-            store, task_id, platform, result_data, tool_name=tool_name, tool_ok=True
+            store,
+            task_id,
+            platform,
+            result_data,
+            tool_name=tool_name,
+            tool_ok=True,
+            tool_output=tool_output,
+            tool_args=tool_args if isinstance(tool_args, dict) else {},
         )
     try:
         from report_04.engine import run_post_tool_light
@@ -2199,6 +2521,23 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             return None
         _try_parse_seed(store, task_id, assistant, user_message)
         _try_step3_web_candidates(store, task_id, assistant)
+        # 步骤4：口头 skip / 自称收口 → 落库，避免父步永远 running
+        try:
+            from report_04.step_reconcile import (
+                apply_explicit_step4_skips_from_text,
+                fail_forward_step4_unattempted_when_siblings_done,
+                looks_like_step4_closure_claim,
+            )
+
+            apply_explicit_step4_skips_from_text(store, task_id, assistant)
+            if looks_like_step4_closure_claim(assistant):
+                fail_forward_step4_unattempted_when_siblings_done(
+                    store,
+                    task_id,
+                    reason="Agent声明步骤4收口且未尝试，已跳过",
+                )
+        except Exception as exc:
+            logger.warning("步骤4口头skip落库失败 task=%s: %s", task_id, exc)
         collision_advanced = False
         try:
             from report_04.stream_steps import apply_text_conclusion_from_assistant
@@ -2287,11 +2626,26 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
 
                 if looks_like_retrospective_without_analysis(task_id, assistant):
                     force_close_step7_posts_if_ready(store, task_id)
-                    followup_ctx = build_post_llm_followup(task_id) + (
-                        "\n【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
-                        "请立即并行输出步骤8/9/10分析正文，再写以「一、账号基本信息」开头的终稿。"
-                        "禁止调用 vision；禁止 done。"
-                    )
+                    wait_hint = ""
+                    try:
+                        from report_04.video_report import format_report_wait_hint
+
+                        wait_hint = format_report_wait_hint(task_id)
+                    except Exception:
+                        wait_hint = ""
+                    if wait_hint:
+                        followup_ctx = (
+                            build_post_llm_followup(task_id)
+                            + "\n【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
+                            + wait_hint
+                            + "禁止调用 vision；禁止 done。"
+                        )
+                    else:
+                        followup_ctx = build_post_llm_followup(task_id) + (
+                            "\n【写报硬约束】发文已齐。禁止再复述步骤5/6/4.3/7。"
+                            "请立即并行输出步骤8/9/10分析正文，再写以「一、账号基本信息」开头的终稿。"
+                            "禁止调用 vision；禁止 done。"
+                        )
                     maybe_continue_agent_session(
                         store,
                         task_id,
@@ -2401,6 +2755,12 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             if osint_pending:
                 deferred = True
             else:
+                try:
+                    from report_04.step_reconcile import skip_exhausted_step7_post_mcp
+
+                    skip_exhausted_step7_post_mcp(store, task_id, session_end=True)
+                except Exception as exc:
+                    logger.warning("session_end skip MCP 发文失败 task=%s: %s", task_id, exc)
                 maybe_continue_agent_session(store, task_id, reason="session_end")
                 deferred = should_defer_finalize(task_id)
     except Exception as exc:
