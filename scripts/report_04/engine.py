@@ -422,6 +422,8 @@ def build_agent_context(task_id: str) -> Optional[str]:
         elif gate == "step11_report":
             lines.append(
                 "步骤11：终稿必须以「一、账号基本信息」开头，勿在第一节前写进度/管线句。"
+                "第三章每条观点「发文作证」库内有帖则写 3～5 条（不够则写尽并注明仅见 N 条，禁止编造）。"
+                "第五章至少五「是」、每段约 80～120 字；第六章研判不少于约 400 字且后续核查不少于 4 步。"
             )
             try:
                 from report_04.osint_es import format_osint_hits_for_report
@@ -464,13 +466,18 @@ def advance_collision_phase(store: Any, task_id: str, *, max_rounds: int = 4) ->
 
 
 def build_post_llm_followup(task_id: str) -> str:
-    """post_llm 回注：进度看板 + 禁止 done。"""
+    """post_llm 回注：进度看板 + 下一步动作 + 禁止 done。"""
+    from report_04.session_continue import build_next_action_hint
+
     board = format_system_progress_board(task_id)
-    return (
-        board
-        + "\n【写报硬约束】禁止以「等待系统/会话保持/等步骤6/4.3」结束本轮。"
+    hint = build_next_action_hint(task_id)
+    tail = (
+        "\n【写报硬约束】禁止以「等待系统/会话保持/等步骤6/4.3」结束本轮。"
         "无工具可调时保持会话；门禁放行后立刻调发文或写分析/终稿。"
     )
+    if hint:
+        return board + "\n" + hint + tail
+    return board + tail
 
 
 def enrich_block_reason(task_id: str, reason: str) -> str:

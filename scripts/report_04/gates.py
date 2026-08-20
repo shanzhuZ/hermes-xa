@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import json
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional  # Any：store 标记在飞时使用
 
 from collect_01 import db
 from report_04.phases import ANALYSIS_STEP_KEYS, PROFILE_PARENT_STEP_KEY, TASK_TYPE
@@ -15,6 +15,184 @@ def get_step_status(task_id: str, step_key: str) -> Optional[str]:
         (task_id, step_key),
     )
     return str((row or {}).get("status") or "").strip() or None
+
+
+def get_step_payload(task_id: str, step_key: str) -> Dict[str, Any]:
+    row = db.fetch_one(
+        "SELECT payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+        (task_id, step_key),
+    )
+    try:
+        payload = json.loads((row or {}).get("payload_json") or "{}")
+    except Exception:
+        payload = {}
+    return payload if isinstance(payload, dict) else {}
+
+
+def is_post_tool_inflight(task_id: str, platform: str) -> bool:
+    """该平台发文 MCP 是否仍在飞（pre_tool 已记、post_tool 未清）。"""
+    from report_04.phases import post_platform_step_key
+
+    plat = str(platform or "").strip().lower()
+    if not plat:
+        return False
+    payload = get_step_payload(task_id, post_platform_step_key(plat))
+    return bool(payload.get("post_tool_inflight"))
+
+
+def list_inflight_post_platforms(task_id: str) -> List[str]:
+    """返回仍标记 post_tool_inflight 的发文平台。"""
+    from report_04.phases import POST_PARENT_STEP_KEY
+
+    rows = db.fetch_all(
+        """
+        SELECT step_key, payload_json FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s AND step_key LIKE 'step7_post_%%'
+        """,
+        (task_id, POST_PARENT_STEP_KEY),
+    )
+    out: List[str] = []
+    for r in rows or []:
+        sk = str(r.get("step_key") or "")
+        try:
+            payload = json.loads(r.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+        if isinstance(payload, dict) and payload.get("post_tool_inflight"):
+            plat = sk.replace("step7_post_", "", 1) if sk.startswith("step7_post_") else ""
+            if plat:
+                out.append(plat)
+    return out
+
+
+def has_inflight_post_tools(task_id: str) -> bool:
+    return bool(list_inflight_post_platforms(task_id))
+
+
+def heal_stale_post_tool_inflight(
+    store: Any,
+    task_id: str,
+    *,
+    max_age_sec: float = 600.0,
+) -> int:
+    """超过墙钟仍标在飞：自清，避免永久挡关父壳（Twitter 工具超时约 420s）。"""
+    import time
+    from report_04.phases import POST_PARENT_STEP_KEY
+
+    rows = db.fetch_all(
+        """
+        SELECT step_key, payload_json, updated_at FROM collect_phase_steps
+        WHERE task_id=%s AND parent_step_key=%s AND step_key LIKE 'step7_post_%%'
+        """,
+        (task_id, POST_PARENT_STEP_KEY),
+    )
+    n = 0
+    now = time.time()
+    for r in rows or []:
+        sk = str(r.get("step_key") or "")
+        try:
+            payload = json.loads(r.get("payload_json") or "{}")
+        except Exception:
+            payload = {}
+        if not isinstance(payload, dict) or not payload.get("post_tool_inflight"):
+            continue
+        since = payload.get("inflight_since")
+        age = None
+        try:
+            if since is not None:
+                age = now - float(since)
+        except Exception:
+            age = None
+        if age is None:
+            # 无 since 时用 updated_at 兜底
+            try:
+                ua = r.get("updated_at")
+                if ua is not None and hasattr(ua, "timestamp"):
+                    age = now - float(ua.timestamp())
+            except Exception:
+                age = None
+        if age is not None and age < float(max_age_sec):
+            continue
+        plat = sk.replace("step7_post_", "", 1) if sk.startswith("step7_post_") else ""
+        if store is not None and plat:
+            clear_post_tool_inflight(store, task_id, plat)
+        else:
+            payload["post_tool_inflight"] = False
+            payload["inflight_tool"] = None
+            payload["inflight_since"] = None
+            db.execute(
+                "UPDATE collect_phase_steps SET payload_json=%s WHERE task_id=%s AND step_key=%s",
+                (db.json_dumps(payload), task_id, sk),
+            )
+        n += 1
+    return n
+
+
+def mark_post_tool_inflight(
+    store: Any,
+    task_id: str,
+    platform: str,
+    *,
+    tool_name: str = "",
+) -> None:
+    """pre_tool：标记平台发文工具在飞，禁止 reconcile 提前 completed。"""
+    import time
+    from report_04.phases import post_platform_step_key
+
+    plat = str(platform or "").strip().lower()
+    if not plat:
+        return
+    sk = post_platform_step_key(plat)
+    store.ensure_step_row(task_id, sk)
+    cur = get_step_status(task_id, sk) or "pending"
+    # skipped 终态禁止回开；其余一律钉 running 直到 post_tool
+    if cur == "skipped":
+        store.set_step_status(
+            task_id,
+            sk,
+            "skipped",
+            payload={
+                "post_tool_inflight": True,
+                "inflight_tool": str(tool_name or "")[:120],
+                "inflight_since": time.time(),
+            },
+        )
+        return
+    store.set_step_status(
+        task_id,
+        sk,
+        "running",
+        message=f"{plat} 发文工具执行中…",
+        payload={
+            "post_tool_inflight": True,
+            "inflight_tool": str(tool_name or "")[:120],
+            "inflight_since": time.time(),
+        },
+        force_reopen=(cur in {"completed", "failed"}),
+    )
+
+
+def clear_post_tool_inflight(store: Any, task_id: str, platform: str) -> None:
+    """post_tool：清除在飞标记。"""
+    from report_04.phases import post_platform_step_key
+
+    plat = str(platform or "").strip().lower()
+    if not plat:
+        return
+    sk = post_platform_step_key(plat)
+    if not get_step_payload(task_id, sk).get("post_tool_inflight"):
+        return
+    cur = get_step_status(task_id, sk) or "pending"
+    store.set_step_status(
+        task_id,
+        sk,
+        cur,
+        payload={
+            "post_tool_inflight": False,
+            "inflight_tool": None,
+            "inflight_since": None,
+        },
+    )
 
 
 def _seed_platform(task_id: str) -> str:
@@ -267,17 +445,29 @@ def posts_substantively_ready(task_id: str) -> bool:
 
 
 def can_advance_to_analysis(task_id: str) -> Dict[str, Any]:
-    """进深度研判（步骤8～10）：只认发文父节点 step7_posts 终态。
+    """进深度研判（步骤8～10）：父壳终态 + 无发文工具在飞。
 
-    父节点收口本身已要求发文齐 + 已挂视频终态；研判不再单独判视频，
-    避免「视频节点晚建」导致父壳仍 running、研判却被点亮。
+    父壳收口须等发文齐、视频终态、工具调用结束；禁止「帖已入库但 MCP 仍在飞」时进研判。
     """
     gate = can_advance_to_step7(task_id)
     if not gate.get("ok"):
         return gate
+    try:
+        heal_stale_post_tool_inflight(None, task_id)
+    except Exception:
+        pass
+    inflight = list_inflight_post_platforms(task_id)
+    if inflight:
+        return {
+            "ok": False,
+            "message": (
+                f"发文工具仍在飞 platforms={','.join(inflight[:8])}，"
+                "须等工具返回后再进深度研判"
+            ),
+        }
     s7 = get_step_status(task_id, "step7_posts")
     if s7 in {"completed", "skipped"}:
-        return {"ok": True, "message": "step7_posts 已终态，可进步骤八～十"}
+        return {"ok": True, "message": "step7_posts 已终态且无在飞发文工具，可进步骤八～十"}
     return {
         "ok": False,
         "message": f"step7_posts={s7 or 'pending'}（须发文父壳终态后再进深度研判）",

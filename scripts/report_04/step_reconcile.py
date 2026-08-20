@@ -1450,15 +1450,15 @@ def ensure_step7_parent_active(store: Any, task_id: str) -> int:
     if cur == "skipped" and (has_running or has_done):
         if has_running or has_open_pending:
             store.set_step_status(task_id, "step7_posts", "running" if has_running else "pending", message="发文采集中" if has_running else "等待发文采集")
-        else:
-            store.set_step_status(task_id, "step7_posts", "completed", message="发文采集已尝试完毕")
-        return 1
+            return 1
+        # 子步已终态：走 force_close（含视频/在飞检查），禁止直接 completed
+        return force_close_step7_posts_if_ready(store, task_id) or 1
     if cur == "pending" and has_running:
         store.set_step_status(task_id, "step7_posts", "running", message="发文采集中")
         return 1
+    # 子步齐 ≠ 关父壳：须走 force_close（视频终态 + 无在飞发文工具）
     if cur in {"pending", "running"} and has_done and not has_open_pending and not has_running:
-        store.set_step_status(task_id, "step7_posts", "completed", message="发文采集已尝试完毕")
-        return 1
+        return force_close_step7_posts_if_ready(store, task_id)
     return 0
 
 
@@ -1556,7 +1556,20 @@ def reconcile_step4_and_step7_children(store: Any, task_id: str) -> int:
             continue
         plat = step_key.replace("step7_post_", "", 1)
         cnt = post_counts.get(plat, 0)
+        # 发文工具在飞：禁止边入边完
         if cnt > 0 and cur != "completed":
+            from report_04.gates import is_post_tool_inflight
+
+            if is_post_tool_inflight(task_id, plat):
+                if cur != "running":
+                    store.set_step_status(
+                        task_id,
+                        step_key,
+                        "running",
+                        message=f"{plat} 发文工具执行中（已入库 {cnt} 条，待工具返回）",
+                    )
+                    updated += 1
+                continue
             from report_04.video_job import finalize_post_platform_after_posts
 
             finalize_post_platform_after_posts(
@@ -1570,8 +1583,11 @@ def reconcile_step4_and_step7_children(store: Any, task_id: str) -> int:
             continue
         # 发文子步仍 running（等视频）：视频已终态则补收口
         if cnt > 0 and cur == "running":
+            from report_04.gates import is_post_tool_inflight
             from report_04.video_job import complete_post_after_video
 
+            if is_post_tool_inflight(task_id, plat):
+                continue
             before = get_step_status(task_id, step_key)
             complete_post_after_video(store, task_id, plat)
             if get_step_status(task_id, step_key) != before:
@@ -1990,7 +2006,12 @@ def ensure_step7_parent_not_premature(store: Any, task_id: str) -> int:
 
 
 def _flush_running_post_children_with_posts(store: Any, task_id: str) -> int:
-    """把已入库但仍 running 的 step7_post_* 收成 completed（不关父壳）。"""
+    """把已入库但仍 running 的 step7_post_* 收成 completed（不关父壳）。
+
+    发文工具仍在飞的平台跳过：禁止边入边完。
+    """
+    from report_04.gates import is_post_tool_inflight
+
     parent = POST_PARENT_STEP_KEY
     n = 0
     rows = db.fetch_all(
@@ -2003,6 +2024,8 @@ def _flush_running_post_children_with_posts(store: Any, task_id: str) -> int:
         if st != "running" or not sk.startswith("step7_post_"):
             continue
         plat = sk.replace("step7_post_", "", 1)
+        if is_post_tool_inflight(task_id, plat):
+            continue
         cnt_row = db.fetch_one(
             "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
             (task_id, plat),
@@ -2022,13 +2045,30 @@ def _flush_running_post_children_with_posts(store: Any, task_id: str) -> int:
 
 
 def force_close_step7_posts_if_ready(store: Any, task_id: str) -> int:
-    """发文实质已齐时：先收口卡住的发文子步；视频孙节点均终态后才关 step7 父壳。"""
+    """发文实质已齐时：先收口卡住的发文子步；视频孙节点均终态且无在飞工具后才关 step7 父壳。"""
     parent = POST_PARENT_STEP_KEY
     cur = get_step_status(task_id, parent)
     if cur in {"completed", "skipped"}:
         return 0
-    from report_04.gates import posts_substantively_ready
+    from report_04.gates import (
+        heal_stale_post_tool_inflight,
+        list_inflight_post_platforms,
+        posts_substantively_ready,
+    )
     from report_04.video_report import video_steps_terminal
+
+    try:
+        heal_stale_post_tool_inflight(store, task_id)
+    except Exception:
+        pass
+    inflight = list_inflight_post_platforms(task_id)
+    if inflight:
+        logger.info(
+            "force_close 暂不关 step7_posts：发文工具在飞 task=%s platforms=%s",
+            task_id,
+            ",".join(inflight[:8]),
+        )
+        return 0
 
     if not posts_substantively_ready(task_id):
         return 0
@@ -2076,6 +2116,20 @@ def close_collect_parent_if_ready(store: Any, task_id: str, parent: str, msg_don
                 "拒绝关闭 step7_posts：未尝试发文 task=%s platforms=%s",
                 task_id,
                 ",".join(str(x.get("platform") or "") for x in leftover[:8]),
+            )
+            return 0
+        from report_04.gates import heal_stale_post_tool_inflight, list_inflight_post_platforms
+
+        try:
+            heal_stale_post_tool_inflight(store, task_id)
+        except Exception:
+            pass
+        inflight = list_inflight_post_platforms(task_id)
+        if inflight:
+            logger.info(
+                "拒绝关闭 step7_posts：发文工具在飞 task=%s platforms=%s",
+                task_id,
+                ",".join(inflight[:8]),
             )
             return 0
         # 方案 A：视频孙节点未终态时，不关发文父壳（可先 flush 子步）

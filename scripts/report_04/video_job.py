@@ -144,18 +144,35 @@ def finalize_post_platform_after_posts(
     post_count: int,
     force_reopen: bool = False,
 ) -> str:
-    """发文已入库后的统一收口：尝试拉起视频；发文子步一律可 completed。
+    """发文已入库后的统一收口：尝试拉起视频；工具返回前不得 completed。
 
     有视频时：发文子步 completed（旁路，不挡进分析）；
     step7_posts / phase_content 由收口逻辑等视频孙节点终态。
 
-    返回最终发文子步状态：completed（无发文时可能仍为 pending）。
+    返回最终发文子步状态：completed / running（在飞时）/ pending。
     """
     platform = str(platform or "").strip().lower()
     if not platform or post_count <= 0:
         return get_step_status(task_id, post_platform_step_key(platform)) or "pending"
 
     post_key = post_platform_step_key(platform)
+
+    # 发文 MCP 仍在飞：保持 running，禁止 reconcile 边入边完
+    from report_04.gates import is_post_tool_inflight
+
+    if is_post_tool_inflight(task_id, platform):
+        cur = get_step_status(task_id, post_key) or "pending"
+        if cur != "running":
+            store.set_step_status(
+                task_id,
+                post_key,
+                "running",
+                message=f"{platform} 发文工具执行中（已入库 {post_count} 条，待工具返回）",
+                payload={"post_count": post_count, "await_post_tool": True},
+                force_reopen=(cur in {"completed", "failed", "skipped"}),
+            )
+        return "running"
+
     video_key = video_step_key(platform)
     v_st = get_step_status(task_id, video_key)
 

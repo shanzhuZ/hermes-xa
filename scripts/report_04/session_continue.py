@@ -15,7 +15,7 @@ import sys
 import threading
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Literal, Optional
 from urllib import request as urlrequest
 
 from collect_01 import db
@@ -39,7 +39,14 @@ _CONTINUE_STALE_SEC = int(
 _LOCK = threading.Lock()
 _INFLIGHT: Dict[str, bool] = {}
 # 被「在飞/忙」跳过的续跑可延期；清 inflight 或视频终态后再补催
-_DEFER_SKIP_REASONS = ("已有续跑在飞", "发文/研判仍 running", "osint_done 时续跑冷却中")
+_DEFER_SKIP_REASONS = (
+    "已有续跑在飞",
+    "当前动作续跑在飞",
+    "发文/研判仍 running",
+    "osint_done 时续跑冷却中",
+)
+
+AgentAction = Literal["call", "hold", "write", "done"]
 
 # Windows 脱离 Hook 进程标志
 _DETACHED_PROCESS = 0x00000008
@@ -334,7 +341,11 @@ def flush_deferred_continue(
     if not int(p.get("flow_continue_deferred") or 0):
         return False
     deferred_kind = str(p.get("flow_continue_deferred_kind") or "").strip()
-    use_kind = deferred_kind or infer_continue_kind(task_id)
+    next_action = next_agent_action(task_id)
+    if next_action == "done":
+        _clear_deferred_continue(store, task_id)
+        return False
+    use_kind = deferred_kind or _action_to_continue_kind(next_action, task_id)
     if not use_kind:
         _clear_deferred_continue(store, task_id)
         return False
@@ -356,19 +367,31 @@ def chain_continue_after_worker(
     prev_kind: str,
     prev_reason: str = "",
 ) -> bool:
-    """本轮续跑结束后按最新门禁链式催下一阶段（hold→posts/analysis）。"""
+    """本轮续跑结束后按 next_agent_action 链式催下一阶段。"""
     if has_final_report(task_id):
         return False
-    next_kind = infer_continue_kind(task_id)
+    next_action = next_agent_action(task_id)
+    if next_action == "done":
+        return False
+    next_kind = _action_to_continue_kind(next_action, task_id)
     if not next_kind:
         return False
     prev = str(prev_kind or "").strip()
-    # hold 结束后必可接到 posts/analysis；同 kind 不重复链式（交给 retry/deferred）
-    # 例外：analysis 仍未写出（步骤8～10 未终态且无新对话）允许再催
+    prev_action = _action_for_continue_kind(prev)
+    # call→write：posts SSE 结束后必须能接到研判续跑
+    if prev_action == "call" and next_action == "write":
+        return maybe_continue_agent_session(
+            store,
+            task_id,
+            reason=f"chain_call_to_write:{prev_reason}"[:120],
+            kind=next_kind,
+            force=False,
+        )
+    # hold 结束后必可接到 posts/write；同 kind 不重复链式（交给 retry/deferred）
     if prev == next_kind and prev != "hold":
         if not (prev == "analysis" and _analysis_still_open(task_id)):
             return False
-    if next_kind not in {"posts", "analysis"}:
+    if next_kind not in {"posts", "analysis", "hold"}:
         return False
     return maybe_continue_agent_session(
         store,
@@ -454,55 +477,177 @@ def post_count(task_id: str) -> int:
     return int((row or {}).get("c") or 0)
 
 
-def infer_continue_kind(task_id: str) -> Optional[str]:
-    """hold | posts | analysis | report；已完成则 None。"""
+def next_agent_action(task_id: str) -> AgentAction:
+    """下一步 Agent 该做什么：call 调工具 / hold 等系统管线 / write 研判终稿 / done。
+
+    续跑 busy、链式 handoff、post_llm 提示均以此为准；不看「未来父壳 running」。
+    """
+    if has_final_report(task_id):
+        return "done"
     task = db.fetch_one(
         "SELECT status FROM hermes_tasks WHERE task_id=%s", (task_id,)
     ) or {}
     if str(task.get("status") or "") not in {"running", "pending"}:
-        return None
-    if has_final_report(task_id):
-        return None
+        return "done"
 
-    from report_04.gates import can_run_step7_collect
+    # 研判 / 终稿
+    try:
+        from report_04.gates import can_advance_to_analysis
 
-    step7 = get_step_status(task_id, "step7_posts")
+        if can_advance_to_analysis(task_id).get("ok"):
+            return "write"
+    except Exception:
+        if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
+            return "write"
+
+    from report_04.gates import can_run_step7_collect, discovery_steps_terminal
+
+    # 步骤七：发文工具 vs 等视频/收口
     if can_run_step7_collect(task_id):
-        if step7 not in {"completed", "skipped"}:
+        s7 = get_step_status(task_id, "step7_posts")
+        if s7 not in {"completed", "skipped"}:
             try:
                 from report_04.step_reconcile import list_unattempted_post_platforms
 
                 todo = list_unattempted_post_platforms(task_id) or []
                 if todo or post_count(task_id) <= 0:
-                    return "posts"
+                    return "call"
             except Exception:
                 if post_count(task_id) <= 0:
-                    return "posts"
-            # 父壳仍 running（常见：等视频）→ hold，禁止催步骤8
+                    return "call"
+            # 帖已采齐、父壳未终态：常见为等视频后台
             return "hold"
-        try:
-            from report_04.gates import analysis_steps_terminal
-            from report_04.video_report import can_write_report_after_videos
+        return "write"
 
-            if analysis_steps_terminal(task_id) and not can_write_report_after_videos(task_id).get("ok"):
-                return "hold"
-        except Exception:
-            pass
-        return "analysis"
-
-    s5 = get_step_status(task_id, "step5_streams")
-    s4 = get_step_status(task_id, "step4_profiles")
-    s6 = get_step_status(task_id, "step6_validated")
+    # 4.1 / 4.2 / 4.3 系统管线
     s43 = get_step_status(task_id, "step6_osint_es")
+    s6 = get_step_status(task_id, "step6_validated")
     if s43 in {"pending", "running"} or s6 in {"pending", "running"}:
         return "hold"
-    if s5 in {"completed", "skipped", "running"} or s4 in {"completed", "skipped"}:
+
+    s5 = get_step_status(task_id, "step5_streams")
+    if s5 in {"pending", "running"}:
         return "hold"
-    return None
+
+    # 发现 / 主页：须 Agent 调工具（Maigret / 网页 / Apify 主页）
+    if not discovery_steps_terminal(task_id):
+        return "call"
+    s4 = get_step_status(task_id, "step4_profiles")
+    if s4 in {"pending", "running"}:
+        return "call"
+
+    return "hold"
+
+
+def _action_for_continue_kind(kind: str) -> AgentAction:
+    k = str(kind or "").strip().lower()
+    if k == "analysis":
+        return "write"
+    if k == "posts":
+        return "call"
+    if k == "hold":
+        return "hold"
+    return "hold"
+
+
+def _action_to_continue_kind(action: AgentAction, task_id: str) -> Optional[str]:
+    """续跑 worker 仍用 hold/posts/analysis 三 kind；由 action 映射。"""
+    if action == "done":
+        return None
+    if action == "write":
+        return "analysis"
+    if action == "hold":
+        return "hold"
+    # call
+    if _can_run_step7(task_id):
+        return "posts"
+    return "hold"
+
+
+def _can_run_step7(task_id: str) -> bool:
+    try:
+        from report_04.gates import can_run_step7_collect
+
+        return bool(can_run_step7_collect(task_id))
+    except Exception:
+        return False
+
+
+def _inflight_continue_action(task_id: str) -> Optional[AgentAction]:
+    """当前续跑 SSE 对应的动作；无在飞返回 None。"""
+    if not continue_inflight(task_id):
+        return None
+    kind = str(_payload(task_id).get("flow_continue_kind") or "hold")
+    return _action_for_continue_kind(kind)
+
+
+def _continue_action_busy(task_id: str, *, target_kind: str) -> bool:
+    """仅当「同动作」续跑仍在飞时视为 busy。
+
+    例：posts(call) 在飞不挡 write；系统点亮的 step8 running 不挡 write。
+    """
+    inflight = _inflight_continue_action(task_id)
+    if inflight is None:
+        return False
+    target = _action_for_continue_kind(str(target_kind or ""))
+    return inflight == target
+
+
+def build_next_action_hint(task_id: str) -> str:
+    """post_llm / 工具后回注：一句话说明下一步动作。"""
+    action = next_agent_action(task_id)
+    if action == "done":
+        return ""
+    if action == "write":
+        return (
+            "【下一步·write】发文与视频已齐。请立即并行输出步骤8/9/10分析正文，"
+            "再写以「一、账号基本信息」开头的步骤11终稿。禁止结束会话、禁止 done。"
+        )
+    if action == "call":
+        if _can_run_step7(task_id):
+            try:
+                from report_04.step_reconcile import list_unattempted_post_platforms
+
+                todo = list_unattempted_post_platforms(task_id) or []
+                if todo:
+                    hints = "; ".join(
+                        f"{x.get('platform')}→{x.get('tool_hint')}" for x in todo[:6]
+                    )
+                    return (
+                        "【下一步·call】立刻调用发文工具，禁止结束会话。"
+                        f" 尚未尝试：{hints}"
+                    )
+            except Exception:
+                pass
+            return "【下一步·call】立刻调用各平台发文工具，禁止结束会话。"
+        return (
+            "【下一步·call】立刻继续采集（Maigret / 网页检索 / 主页 Apify 等），"
+            "禁止写「等待系统」并结束会话。"
+        )
+    return (
+        "【下一步·hold】系统管线进行中（图片核验 / 认定 / 社工库 / 视频）。"
+        "保持会话，禁止 done；管线收口后系统将催下一步。"
+    )
+
+
+def infer_continue_kind(task_id: str) -> Optional[str]:
+    """hold | posts | analysis；已完成则 None。内部转调 next_agent_action。"""
+    return _action_to_continue_kind(next_agent_action(task_id), task_id)
 
 
 def build_continue_message(kind: str, task_id: str) -> str:
-    if kind == "posts":
+    action = _action_for_continue_kind(kind)
+    if action == "call" and kind == "hold":
+        # 步骤七未开放时的 call（发现/主页）
+        hint = build_next_action_hint(task_id)
+        msg = (
+            "【系统续跑·禁止结束会话】下一步须调采集工具（Maigret / 网页检索 / 主页 Apify 等）。"
+            "禁止写「等待系统/会话保持」并结束。"
+        )
+        if hint:
+            msg += "\n" + hint
+        return msg
+    if kind == "posts" or (action == "call" and kind == "posts"):
         msg = (
             "【系统续跑·禁止结束会话】发文已开放。请立即对每个尚未尝试的 validated 平台"
             "调用对应发文工具（Twitter→mcp_twitter_get_user_tweets；"
@@ -904,64 +1049,6 @@ def _analysis_still_open(task_id: str) -> bool:
     return not analysis_steps_terminal(task_id)
 
 
-def _posts_or_analysis_busy(task_id: str, *, kind: str = "") -> bool:
-    """发文/视频/研判仍 running 时禁止叠开续跑。
-
-    仅研判 running、且 Agent 已静默：视为空挂，允许再催
-    （修「空 SSE 算成功 → 研判 pending/running 永不续跑」）。
-    kind=posts 且父壳仍 pending：等 Agent 首次调发文工具，不算忙（允许催采集）。
-    """
-    s7 = get_step_status(task_id, "step7_posts")
-    if kind == "posts":
-        # 尚未开工：必须允许续跑催发文；已 running 则勿叠催
-        if s7 in {"pending", "", None}:
-            return False
-        if s7 == "running":
-            return True
-    elif s7 in {"pending", "running"}:
-        # 催研判/写报：父壳未终态一律视为忙（等发文/视频）
-        return True
-    rows = db.fetch_all(
-        """
-        SELECT step_key FROM collect_phase_steps
-        WHERE task_id=%s
-          AND status='running'
-          AND (
-            step_key LIKE 'step7_post_%%'
-            OR step_key LIKE 'step7_video_%%'
-            OR step_key IN (
-              'step8_img_analysis','step9_context_views',
-              'step10_context_pii','step11_report'
-            )
-          )
-        """,
-        (task_id,),
-    )
-    if not rows:
-        return False
-    keys = [str(r.get("step_key") or "") for r in rows]
-    # 父壳已终态：视频/发文子步不再挡催研判
-    keys = [
-        k
-        for k in keys
-        if not k.startswith("step7_video_") and not k.startswith("step7_post_")
-    ]
-    if not keys:
-        return False
-    analysis_keys = {
-        "step8_img_analysis",
-        "step9_context_views",
-        "step10_context_pii",
-        "step11_report",
-    }
-    only_analysis = bool(keys) and all(k in analysis_keys for k in keys)
-    if only_analysis:
-        age = _seconds_since_last_agent_activity(task_id)
-        if age is None or age >= 45.0:
-            return False
-    return True
-
-
 def _recent_tool_activity(task_id: str, *, within_sec: float = 45.0) -> bool:
     """近期有工具成功/失败输出 → Agent 仍在干活，勿因 session_end 叠催。"""
     try:
@@ -1005,10 +1092,8 @@ def _should_skip_continue(
     """返回跳过原因；None 表示可以续跑。"""
     if force:
         return None
-    if continue_inflight(task_id):
-        return "已有续跑在飞"
-    if _posts_or_analysis_busy(task_id, kind=str(kind or "")):
-        return "发文/研判仍 running"
+    if _continue_action_busy(task_id, target_kind=str(kind or "")):
+        return "当前动作续跑在飞"
     # session_end 是「上一轮 stream 关了」的回声，最容易叠催
     if str(reason or "").startswith("session_end"):
         if _continue_cooldown_active(task_id, within_sec=25.0):
@@ -1149,11 +1234,20 @@ def run_continue_worker_job(
                 store, task_id, reason=f"retry_fail:{reason}"
             )
         elif ok:
-            # 成功：按最新门禁链式催下一阶段（修 hold 结束后不再催 posts）
             chained = chain_continue_after_worker(
                 store, task_id, prev_kind=use_kind, prev_reason=str(reason or "")
             )
-            if not chained and next_retry >= _CONTINUE_MAX:
+            # posts(call) 结束且 next=write：链式未发起时再 handoff 一次
+            if not chained and use_kind == "posts":
+                if next_agent_action(task_id) == "write":
+                    maybe_continue_agent_session(
+                        store,
+                        task_id,
+                        reason="after_posts_handoff",
+                        kind="analysis",
+                        force=False,
+                    )
+            elif not chained and next_retry >= _CONTINUE_MAX:
                 maybe_continue_agent_session(
                     store, task_id, reason="check_after_last", force=False
                 )
@@ -1180,6 +1274,8 @@ def maybe_nudge_stalled_analysis(
     except Exception:
         return False
     if not _analysis_still_open(task_id):
+        return False
+    if next_agent_action(task_id) != "write":
         return False
     age = _seconds_since_last_agent_activity(task_id)
     if min_quiet_seconds > 0 and (age is None or age < float(min_quiet_seconds)):
@@ -1213,6 +1309,15 @@ def maybe_continue_agent_session(
     use_kind = kind or infer_continue_kind(task_id)
     if not use_kind:
         return False
+    target_action = next_agent_action(task_id)
+    if target_action == "done":
+        return False
+    # 请求的 kind 与当前 next 不一致时，以 next 为准（避免 deferred 旧 kind 误催）
+    expected_kind = _action_to_continue_kind(target_action, task_id)
+    if expected_kind and not kind:
+        use_kind = expected_kind
+    elif kind and expected_kind and _action_for_continue_kind(kind) != target_action:
+        use_kind = expected_kind
     # 8～10 已齐但发文/视频未终态：不催写报，等 video_runner 终态后再续
     try:
         from report_04.gates import analysis_steps_terminal
@@ -1257,13 +1362,13 @@ def maybe_continue_agent_session(
         return False
 
     with _LOCK:
-        if _INFLIGHT.get(task_id):
+        if _INFLIGHT.get(task_id) and _continue_action_busy(task_id, target_kind=use_kind):
             _mark_deferred_continue(
                 store,
                 task_id,
                 kind=use_kind,
                 reason=str(reason or ""),
-                skip="已有续跑在飞",
+                skip="当前动作续跑在飞",
             )
             return False
         payload = _payload(task_id)
@@ -1289,6 +1394,7 @@ def maybe_continue_agent_session(
         payload["flow_continue_retries"] = next_retry
         payload["flow_continue_inflight"] = 1
         payload["flow_continue_kind"] = use_kind
+        payload["flow_continue_action"] = _action_for_continue_kind(use_kind)
         payload["flow_continue_reason"] = str(reason or "")[:120]
         payload["flow_continue_started_at"] = time.time()
         # 发起成功则清延期标记（本轮会实际催）
@@ -1336,8 +1442,11 @@ def maybe_continue_agent_session(
 
 def anti_wait_followup_context(task_id: str) -> str:
     """post_llm 检测到「等系统」时注入的硬约束。"""
+    hint = build_next_action_hint(task_id)
     kind = infer_continue_kind(task_id) or "hold"
     base = build_continue_message(kind, task_id)
+    if hint and hint not in base:
+        base = base + "\n" + hint
     try:
         from report_04.engine import build_agent_context
 

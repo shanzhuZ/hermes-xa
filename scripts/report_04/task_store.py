@@ -166,8 +166,20 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
             continue
         cnt = post_counts.get(platform, 0)
         if cnt > 0:
+            from report_04.gates import is_post_tool_inflight
             from report_04.video_job import finalize_post_platform_after_posts
 
+            # 工具在飞：禁止边入边完
+            if is_post_tool_inflight(task_id, platform):
+                if cur != "running":
+                    store.set_step_status(
+                        task_id,
+                        step_key,
+                        "running",
+                        message=f"{platform} 发文工具执行中（已入库 {cnt} 条，待工具返回）",
+                    )
+                    updated += 1
+                continue
             finalize_post_platform_after_posts(
                 store, task_id, platform, post_count=cnt
             )
@@ -175,8 +187,11 @@ def _reconcile_report_post_child_steps(store: "TaskStore", task_id: str) -> int:
             continue
         # 旧版「等视频」钉 running：视频终态后补 completed，并尝试关父壳
         if cur == "running":
+            from report_04.gates import is_post_tool_inflight
             from report_04.video_job import complete_post_after_video
 
+            if is_post_tool_inflight(task_id, platform):
+                continue
             before = cur
             complete_post_after_video(store, task_id, platform)
             if str(get_step_status(task_id, step_key) or "") != before:
@@ -1879,8 +1894,18 @@ class TaskStore:
                 force_reopen=True,
             )
             return True
-        # 父已收口后仍有晚到发文工具：回开
+        # 父已收口后：仅当仍有未尝试平台才回开（已齐平台重复催调不回开）
         if cur == "completed":
+            try:
+                from report_04.gates import list_inflight_post_platforms
+                from report_04.step_reconcile import list_unattempted_post_platforms
+
+                leftover = list_unattempted_post_platforms(task_id)
+                inflight = list_inflight_post_platforms(task_id)
+            except Exception:
+                leftover, inflight = [], []
+            if not leftover and not inflight:
+                return False
             self.set_step_status(
                 task_id,
                 "step7_posts",

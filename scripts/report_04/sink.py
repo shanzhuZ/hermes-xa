@@ -1024,6 +1024,64 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 already_enriched = bool(reason)
             except Exception as exc:
                 logger.warning("pre_tool_allowed 失败 task=%s: %s", task_id, exc)
+        # 发文工具：允许前拦截「已齐平台重复催调」，并通过则标记在飞
+        if not reason:
+            try:
+                from report_04.gates import (
+                    can_run_step7_collect,
+                    is_post_tool_inflight,
+                    mark_post_tool_inflight,
+                )
+                from report_04.phases import APIFY_POST_TOOLS, POST_TOOLS, TOOL_PLATFORM
+                from collect_01 import db as _db
+
+                post_like = (
+                    tool_name in POST_TOOLS
+                    or tool_name in APIFY_POST_TOOLS
+                    or tool_name
+                    in {
+                        "mcp_apify_get_actor_run",
+                        "mcp_apify_get_dataset_items",
+                    }
+                )
+                if post_like and can_run_step7_collect(task_id):
+                    plat = TOOL_PLATFORM.get(tool_name) or _infer_platform(
+                        tool_name,
+                        tool_args if isinstance(tool_args, dict) else {},
+                        _store().get_seed_accounts(task_id),
+                        _LAST_APIFY_HINT.get(task_id, ""),
+                    )
+                    plat = str(plat or "").strip().lower()
+                    if plat:
+                        post_key = post_platform_step_key(plat)
+                        pst = get_step_status(task_id, post_key)
+                        row = _db.fetch_one(
+                            "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
+                            (task_id, plat),
+                        )
+                        n_post = int((row or {}).get("c") or 0)
+                        # 已 completed 且有帖、且当前不在飞：禁止同平台重复催调（避免晚到补采回开父壳）
+                        if (
+                            pst == "completed"
+                            and n_post > 0
+                            and not is_post_tool_inflight(task_id, plat)
+                            and tool_name in POST_TOOLS
+                            and tool_name != "mcp_apify_get_dataset_items"
+                        ):
+                            reason = (
+                                f"{plat} 发文已入库 {n_post} 条（{post_key}=completed），"
+                                f"禁止重复调用 {tool_name}。请继续其它未终态平台或等待视频/研判。"
+                            )
+                        else:
+                            mark_post_tool_inflight(
+                                _store(), task_id, plat, tool_name=tool_name
+                            )
+                            try:
+                                _store().start_step7_if_ready(task_id)
+                            except Exception:
+                                pass
+            except Exception as exc:
+                logger.warning("发文在飞标记失败 task=%s tool=%s: %s", task_id, tool_name, exc)
         if not reason:
             return None
         if not already_enriched:
@@ -1778,7 +1836,8 @@ def _sync_platform_collect_steps(
 
     n_prof = len(result_data.get("profiles") or [])
     n_post = len(result_data.get("posts") or [])
-    if n_post == 0 and tool_name in POST_TOOLS and tool_ok and can_run_step7_collect(task_id):
+    # 工具失败/超时也可能边入边落库：只要是发文类工具就读库补齐帖数
+    if n_post == 0 and tool_name in POST_TOOLS and can_run_step7_collect(task_id):
         from collect_01 import db as _db
 
         row = _db.fetch_one(
@@ -1791,6 +1850,22 @@ def _sync_platform_collect_steps(
 
     if in_step7:
         store.ensure_step_row(task_id, post_key)
+        # post_tool：先清除在飞标记，再收口（超时有帖也按成功 finalize）
+        try:
+            from report_04.gates import clear_post_tool_inflight
+
+            if (
+                tool_name in POST_TOOLS
+                or tool_name in APIFY_POST_TOOLS
+                or tool_name
+                in {
+                    "mcp_apify_get_actor_run",
+                    "mcp_apify_get_dataset_items",
+                }
+            ):
+                clear_post_tool_inflight(store, task_id, platform)
+        except Exception as exc:
+            logger.warning("清除发文在飞标记失败 task=%s plat=%s: %s", task_id, platform, exc)
         if n_post > 0:
             from report_04.video_job import finalize_post_platform_after_posts
 
@@ -2059,6 +2134,22 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     input_accounts = store.get_seed_accounts(task_id)
     platform_hint_early = _LAST_APIFY_HINT.get(task_id, "")
     platform = _infer_platform(tool_name, tool_args, input_accounts, platform_hint_early)
+    # 发文工具一旦返回（成功/失败/超时）：先清在飞标记，避免卡死门禁
+    if platform and (
+        tool_name in POST_TOOLS
+        or tool_name in APIFY_POST_TOOLS
+        or tool_name
+        in {
+            "mcp_apify_get_actor_run",
+            "mcp_apify_get_dataset_items",
+        }
+    ):
+        try:
+            from report_04.gates import clear_post_tool_inflight
+
+            clear_post_tool_inflight(store, task_id, platform)
+        except Exception as exc:
+            logger.warning("post_tool 清在飞失败 task=%s plat=%s: %s", task_id, platform, exc)
     seed_collect = _is_seed_profile_tool(tool_name, task_id)
     collect_step, output_step_key = _resolve_collect_phase(
         store, task_id, tool_name, platform, seed_collect=seed_collect
