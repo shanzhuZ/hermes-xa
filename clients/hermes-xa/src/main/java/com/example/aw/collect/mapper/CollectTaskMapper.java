@@ -210,6 +210,9 @@ public interface CollectTaskMapper {
     List<Map<String, Object>> selectDisplayRecordsByStepKeyPrefix(
             @Param("taskId") String taskId, @Param("stepKeyPrefix") String stepKeyPrefix);
 
+    /** 写报演示假数据：按 step_key 全局查询（与 task_id 无关） */
+    List<Map<String, Object>> selectDemoRecordsByStepKey(@Param("stepKey") String stepKey);
+
     Map<String, Object> selectLatestAssistantReply(@Param("taskId") String taskId);
 
     // ---------- 按 taskId 级联删除（须先删子表，最后删 hermes_tasks） ----------

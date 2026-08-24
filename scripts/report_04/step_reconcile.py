@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from collect_01 import db
 from collect_01.normalizers.apify import APIFY_TOOL_PLATFORM
@@ -886,8 +886,179 @@ def fail_forward_step4_unattempted_when_siblings_done(
     return updated
 
 
-def _skip_failed_only_step4_children(store: Any, task_id: str) -> int:
-    """主页工具仅 error、无入库 → 立刻 skipped（不等超时）。"""
+# 步骤4 主页失败：与步骤7发文同口径，瞬态最多 3 次再 skip（计数写 payload）
+_PROFILE_RETRY_MAX = 3
+_PROFILE_FAIL_COUNT_KEY = "profile_fail_count"
+
+
+def _step4_profile_fail_count_payload(task_id: str, platform: str) -> int:
+    row = db.fetch_one(
+        "SELECT payload_json FROM collect_phase_steps WHERE task_id=%s AND step_key=%s",
+        (task_id, profile_platform_step_key(platform)),
+    ) or {}
+    raw = row.get("payload_json")
+    if isinstance(raw, str):
+        try:
+            raw = json.loads(raw)
+        except Exception:
+            raw = {}
+    if not isinstance(raw, dict):
+        return 0
+    try:
+        return int(raw.get(_PROFILE_FAIL_COUNT_KEY) or 0)
+    except Exception:
+        return 0
+
+
+def count_step4_profile_fail_attempts(task_id: str, platform: str) -> int:
+    """该平台主页工具失败次数：tool_outputs error 与子步 payload 取较大值。"""
+    from report_04.phases import PROFILE_TOOLS, TOOL_PLATFORM
+
+    tools = [t for t, p in TOOL_PLATFORM.items() if p == platform and t in PROFILE_TOOLS]
+    n_out = 0
+    if tools:
+        ph = ",".join(["%s"] * len(tools))
+        row = db.fetch_one(
+            f"""
+            SELECT COUNT(*) AS c FROM hermes_tool_outputs
+            WHERE task_id=%s AND tool_name IN ({ph}) AND status='error'
+            """,
+            (task_id, *tools),
+        )
+        n_out = int((row or {}).get("c") or 0)
+    n_pay = _step4_profile_fail_count_payload(task_id, platform)
+    return max(n_out, n_pay)
+
+
+def _profile_last_error_looks_hard(task_id: str, platform: str) -> bool:
+    """最近一次主页 error 是否像不可恢复（not found 等），用于 reconcile 立刻 skip。"""
+    from report_04.phases import PROFILE_TOOLS, TOOL_PLATFORM
+
+    tools = [t for t, p in TOOL_PLATFORM.items() if p == platform and t in PROFILE_TOOLS]
+    if not tools:
+        return False
+    ph = ",".join(["%s"] * len(tools))
+    row = db.fetch_one(
+        f"""
+        SELECT tool_name, tool_output FROM hermes_tool_outputs
+        WHERE task_id=%s AND tool_name IN ({ph}) AND status='error'
+        ORDER BY id DESC LIMIT 1
+        """,
+        (task_id, *tools),
+    )
+    if not row:
+        return False
+    text = str(row.get("tool_output") or "")
+    low = text.lower()
+    # TLS/网络瞬态：不算硬错误
+    if any(
+        m in low
+        for m in (
+            "secure tls connection",
+            "socket disconnected",
+            "econnreset",
+            "etimedout",
+            "econnrefused",
+            "client network socket disconnected",
+            "network socket disconnected",
+            "unable to verify the first certificate",
+        )
+    ):
+        return False
+    if "not found" in low or "404" in low or "does not exist" in low:
+        return True
+    if "频道不存在" in text or "账号不存在" in text:
+        return True
+    return False
+
+
+def apply_step4_profile_mcp_failure(
+    store: Any,
+    task_id: str,
+    platform: str,
+    *,
+    tool_name: str,
+    tool_output: Any = "",
+    terminal_reason: Optional[str] = None,
+) -> bool:
+    """步骤4主页 MCP 失败：硬错误或满重试 → skipped；否则 running 等待重试。
+
+    返回是否已写成 skipped。
+    """
+    prof_key = profile_platform_step_key(platform)
+    cur = get_step_status(task_id, prof_key)
+    if cur in {"completed", "skipped", "failed"}:
+        return cur == "skipped"
+
+    if terminal_reason:
+        store.set_step_status(
+            task_id,
+            prof_key,
+            "skipped",
+            message=str(terminal_reason)[:200],
+            payload={_PROFILE_FAIL_COUNT_KEY: max(1, count_step4_profile_fail_attempts(task_id, platform))},
+        )
+        logger.warning(
+            "步骤4主页硬失败已 skip task=%s platform=%s tool=%s: %s",
+            task_id,
+            platform,
+            tool_name,
+            str(terminal_reason)[:180],
+        )
+        return True
+
+    n = count_step4_profile_fail_attempts(task_id, platform)
+    if n <= 0:
+        n = 1
+    if n >= _PROFILE_RETRY_MAX:
+        store.set_step_status(
+            task_id,
+            prof_key,
+            "skipped",
+            message=f"{platform} 主页工具已失败{n}次，已跳过",
+            payload={_PROFILE_FAIL_COUNT_KEY: n},
+        )
+        logger.warning(
+            "步骤4主页失败已满 %s 次 skip task=%s platform=%s tool=%s",
+            _PROFILE_RETRY_MAX,
+            task_id,
+            platform,
+            tool_name,
+        )
+        return True
+
+    snippet = str(tool_output or "").replace("\n", " ")[:120]
+    store.set_step_status(
+        task_id,
+        prof_key,
+        "running",
+        message=f"{platform} 主页采集失败（第{n}/{_PROFILE_RETRY_MAX}次），等待重试…",
+        payload={
+            _PROFILE_FAIL_COUNT_KEY: n,
+            "profile_fail_last": snippet,
+        },
+    )
+    logger.warning(
+        "步骤4主页瞬态失败，软重试 %s/%s task=%s platform=%s tool=%s",
+        n,
+        _PROFILE_RETRY_MAX,
+        task_id,
+        platform,
+        tool_name,
+    )
+    return False
+
+
+def _skip_failed_only_step4_children(
+    store: Any,
+    task_id: str,
+    *,
+    force: bool = False,
+) -> int:
+    """主页工具仅 error、无入库：硬错误或满重试才 skipped（未满次保留 running 重试）。
+
+    force=True（会话结束）：有失败即 skip，避免永久卡 running。
+    """
     updated = 0
     rows = db.fetch_all(
         "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
@@ -907,11 +1078,29 @@ def _skip_failed_only_step4_children(store: Any, task_id: str) -> int:
             continue
         if not _profile_collect_failed_only(task_id, plat):
             continue
+        n = count_step4_profile_fail_attempts(task_id, plat)
+        hard = _profile_last_error_looks_hard(task_id, plat)
+        if not hard and n < _PROFILE_RETRY_MAX and not force:
+            # 未满重试：保持 running，并写明次数，催 Agent 再调
+            store.set_step_status(
+                task_id,
+                step_key,
+                "running",
+                message=f"{plat} 主页采集失败（第{n}/{_PROFILE_RETRY_MAX}次），等待重试…",
+                payload={_PROFILE_FAIL_COUNT_KEY: n},
+            )
+            continue
+        msg = (
+            f"{plat} 主页工具已失败，已跳过"
+            if hard
+            else f"{plat} 主页工具已失败{max(n, 1)}次，已跳过"
+        )
         store.set_step_status(
             task_id,
             step_key,
             "skipped",
-            message=f"{plat} 主页工具已失败，已跳过",
+            message=msg,
+            payload={_PROFILE_FAIL_COUNT_KEY: max(n, 1)},
         )
         updated += 1
     return updated
@@ -922,15 +1111,19 @@ def force_skip_unattempted_step4_children(
     task_id: str,
     *,
     reason: str = "未执行主页采集，已跳过",
+    exhaust_soft_retries: bool = False,
 ) -> int:
     """跳过仍未尝试主页采集的步骤四子节点。
 
     中途仅由 maybe_close_abandoned_step4 在「主页进展超时」时调用；
     会话结束可 force 调用。禁止因抢跑 4.3 而立刻 peer-skip。
+    exhaust_soft_retries=True：连未满 3 次的瞬态失败一并 skip（会话结束用）。
     """
     if not discovery_steps_terminal(task_id):
         return 0
-    updated = _skip_failed_only_step4_children(store, task_id)
+    updated = _skip_failed_only_step4_children(
+        store, task_id, force=exhaust_soft_retries
+    )
     rows = db.fetch_all(
         "SELECT step_key, status FROM collect_phase_steps WHERE task_id=%s AND parent_step_key=%s",
         (task_id, PROFILE_PARENT_STEP_KEY),
@@ -1062,7 +1255,7 @@ def maybe_close_abandoned_step4(
         return close_collect_parent_if_ready(
             store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"
         )
-    # 主页工具已失败仍 running：立刻 skip，不等 quiet（修 YouTube not found 卡死）
+    # 主页工具已失败仍 running：硬错误或满重试才 skip；瞬态未满次保留重试窗口
     updated_fail = _skip_failed_only_step4_children(store, task_id)
     if updated_fail:
         updated_fail += close_collect_parent_if_ready(
@@ -1082,7 +1275,10 @@ def maybe_close_abandoned_step4(
 
     if force:
         updated = force_skip_unattempted_step4_children(
-            store, task_id, reason="会话结束未采集，已跳过"
+            store,
+            task_id,
+            reason="会话结束未采集，已跳过",
+            exhaust_soft_retries=True,
         )
         updated += close_collect_parent_if_ready(
             store, task_id, PROFILE_PARENT_STEP_KEY, "候选主页采集已尝试完毕"

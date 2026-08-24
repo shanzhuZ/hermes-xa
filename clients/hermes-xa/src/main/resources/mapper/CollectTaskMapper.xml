@@ -488,6 +488,14 @@
         ORDER BY id ASC
     </select>
 
+    <!-- 演示假数据：全局按 step_key，不依赖 task_id -->
+    <select id="selectDemoRecordsByStepKey" resultType="java.util.HashMap">
+        SELECT id, step_key, record_title, account_id, display_fields, sort_order
+        FROM collect_step_demo_records
+        WHERE step_key = #{stepKey} AND enabled = 1
+        ORDER BY sort_order ASC, id ASC
+    </select>
+
     <!-- 历史详情/终稿：cancelled > summary > user_input（对齐 /api/dialogues） -->
     <select id="selectLatestAssistantReply" resultType="java.util.HashMap">
         SELECT content, created_at, msg_type

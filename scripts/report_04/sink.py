@@ -1955,17 +1955,19 @@ def _sync_platform_collect_steps(
         if has_prof:
             store.set_step_status(task_id, prof_key, "completed", message="已入库主页")
         elif cur not in {"completed", "skipped", "failed"}:
+            from report_04.step_reconcile import apply_step4_profile_mcp_failure
+
             terminal = _terminal_profile_failure_reason(
                 tool_name, tool_output=tool_output, tool_args=tool_args or {}
             )
-            if terminal:
-                # 失败即跳过：正式 UC not found 等不可恢复错误，禁止长期 running 卡死步骤4
-                store.set_step_status(task_id, prof_key, "skipped", message=terminal[:200])
-            else:
-                # 首次失败（如 YouTube @handle 待解析）保持 running，等待 channelId 重试
-                store.set_step_status(
-                    task_id, prof_key, "running", message=f"{platform} 主页采集中（等待重试）…"
-                )
+            apply_step4_profile_mcp_failure(
+                store,
+                task_id,
+                platform,
+                tool_name=tool_name,
+                tool_output=tool_output,
+                terminal_reason=terminal,
+            )
     elif tool_name in PROFILE_TOOLS:
         cur = get_step_status(task_id, prof_key)
         if apify_platform_from_actor_tool(tool_name) and tool_ok:

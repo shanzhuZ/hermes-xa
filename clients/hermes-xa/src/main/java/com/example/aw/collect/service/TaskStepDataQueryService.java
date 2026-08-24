@@ -7,9 +7,12 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.HashSet;
 import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 按采集步骤查询 MySQL 业务表明细，供前端点击步骤后展示库中内容。
@@ -19,6 +22,14 @@ public class TaskStepDataQueryService {
 
     /** 步骤详情里单帧嵌入 dataUrl 上限（约 1.5MB） */
     private static final int STEP_FRAME_MAX_BYTES = 1536 * 1024;
+
+    /** 这 4 个节点详情只查 collect_step_demo_records，不查业务表 */
+    private static final Set<String> DEMO_STEP_KEYS = new HashSet<String>(Arrays.asList(
+            "step6_osint_es",
+            "step6_geo_verify",
+            "step6_rumor_sx",
+            "step6_relation_graph"
+    ));
 
     @Autowired
     private CollectTaskMapper collectTaskMapper;
@@ -50,7 +61,10 @@ public class TaskStepDataQueryService {
         String dataType = resolveDataType(stepKey);
 
         List<Map<String, Object>> records;
-        if ("collect_videos".equals(dataType)) {
+        if (DEMO_STEP_KEYS.contains(stepKey)) {
+            // 演示节点：只查 collect_step_demo_records
+            records = loadDemoRecords(stepKey);
+        } else if ("collect_videos".equals(dataType)) {
             String platform = resolveVideoPlatform(stepKey);
             records = videoAssetQueryService.listTaskVideosWithFrames(taskId, platform, STEP_FRAME_MAX_BYTES);
         } else if ("step5_stream_text".equals(stepKey) || "step5_streams".equals(stepKey)) {
@@ -60,7 +74,7 @@ public class TaskStepDataQueryService {
             if (records.isEmpty()) {
                 records = loadDisplayRecords(taskId, stepKey);
             }
-        } else if ("step6_osint_es".equals(stepKey) || "collect_osint_hits".equals(dataType)) {
+        } else if ("collect_osint_hits".equals(dataType)) {
             records = loadOsintHitRecords(taskId);
             if (records.isEmpty()) {
                 records = loadDisplayRecords(taskId, stepKey);
@@ -229,6 +243,26 @@ public class TaskStepDataQueryService {
     }
 
     /**
+     * 演示假数据：按 step_key 查 collect_step_demo_records（全局，与 task 无关）。
+     */
+    private List<Map<String, Object>> loadDemoRecords(String stepKey) {
+        List<Map<String, Object>> rows = collectTaskMapper.selectDemoRecordsByStepKey(stepKey);
+        if (rows == null || rows.isEmpty()) {
+            return new ArrayList<Map<String, Object>>();
+        }
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        for (Map<String, Object> row : rows) {
+            Map<String, Object> item = new LinkedHashMap<String, Object>();
+            item.put("id", row.get("id"));
+            item.put("recordTitle", row.get("record_title"));
+            item.put("accountId", row.get("account_id"));
+            item.put("fields", parseDisplayFields(row.get("display_fields")));
+            out.add(item);
+        }
+        return out;
+    }
+
+    /**
      * 按 step_key 查询展示层 records（统一 [{label,value}] 结构）。
      * 04 发文步骤是 step7_post_*，但展示层沿用 01 的 step6_post_* 写入，查不到时回退。
      */
@@ -314,8 +348,8 @@ public class TaskStepDataQueryService {
         if ("step5_validated".equals(stepKey) || "step6_validated".equals(stepKey)) {
             return "collect_validated_accounts";
         }
-        if ("step6_osint_es".equals(stepKey)) {
-            return "collect_osint_hits";
+        if (DEMO_STEP_KEYS.contains(stepKey)) {
+            return "collect_step_demo_records";
         }
         if (stepKey.startsWith("step3_post_") || "step6_posts".equals(stepKey) || stepKey.startsWith("step6_post_")
                 || "step7_posts".equals(stepKey) || stepKey.startsWith("step7_post_")) {
