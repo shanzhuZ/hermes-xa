@@ -5,6 +5,7 @@ import org.springframework.beans.factory.annotation.Autowired;
 import org.springframework.stereotype.Service;
 
 import java.util.LinkedHashMap;
+import java.util.Collections;
 import java.util.Map;
 
 /**
@@ -41,6 +42,7 @@ public class TaskFinalAnswerQueryService {
             out.put("msgType", msgType.isEmpty() ? null : msgType);
             out.put("content", preferred.get("content"));
             out.put("createdAt", preferred.get("created_at"));
+            out.put("reportTags", ReportTagsParser.parse(preferred.get("report_tags")));
             out.put("ready", Boolean.TRUE);
             if ("cancelled".equals(msgType)) {
                 out.put("message", "用户已结束任务");
@@ -57,6 +59,7 @@ public class TaskFinalAnswerQueryService {
         pending.put("msgType", null);
         pending.put("content", null);
         pending.put("createdAt", null);
+        pending.put("reportTags", Collections.emptyList());
         pending.put("ready", Boolean.FALSE);
         pending.put("message", "模型终稿尚未入库，请继续轮询 tree 或稍后再试");
         return pending;

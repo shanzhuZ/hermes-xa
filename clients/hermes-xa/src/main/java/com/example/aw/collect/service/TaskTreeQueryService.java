@@ -172,6 +172,7 @@ public class TaskTreeQueryService {
             out.put("type", "summary");
             out.put("content", row != null ? row.get("content") : null);
             out.put("createdAt", row != null ? stringVal(row.get("created_at")) : "");
+            out.put("reportTags", ReportTagsParser.parse(row != null ? row.get("report_tags") : null));
             return out;
         }
         if (nodeId.startsWith("tool_")) {

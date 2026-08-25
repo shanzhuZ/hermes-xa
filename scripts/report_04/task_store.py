@@ -511,6 +511,55 @@ class TaskStore:
             (task_id, session_id, role, content[:65535], msg_type),
         )
 
+    def _upsert_summary_dialogue(
+        self,
+        task_id: str,
+        session_id: Optional[str],
+        content: str,
+        tags_json: Optional[str],
+        *,
+        existing_id: Optional[int] = None,
+    ) -> None:
+        """写入/更新 summary 行；report_tags 列不存在时降级为仅写 content。"""
+        if existing_id is not None:
+            sql_with_tags = """
+                UPDATE hermes_user_dialogues
+                SET session_id=%s, role='assistant', content=%s, report_tags=%s, created_at=NOW(3)
+                WHERE id=%s
+            """
+            sql_no_tags = """
+                UPDATE hermes_user_dialogues
+                SET session_id=%s, role='assistant', content=%s, created_at=NOW(3)
+                WHERE id=%s
+            """
+            args_with = (session_id, content, tags_json, existing_id)
+            args_no = (session_id, content, existing_id)
+        else:
+            sql_with_tags = """
+                INSERT INTO hermes_user_dialogues
+                    (task_id, session_id, role, content, msg_type, report_tags)
+                VALUES (%s, %s, 'assistant', %s, 'summary', %s)
+            """
+            sql_no_tags = """
+                INSERT INTO hermes_user_dialogues
+                    (task_id, session_id, role, content, msg_type)
+                VALUES (%s, %s, 'assistant', %s, 'summary')
+            """
+            args_with = (task_id, session_id, content, tags_json)
+            args_no = (task_id, session_id, content)
+        try:
+            db.execute(sql_with_tags, args_with)
+        except Exception as exc:
+            if tags_json and "report_tags" in str(exc).lower():
+                logger.warning(
+                    "report_tags 列不可用，降级仅写 summary 正文 task=%s: %s",
+                    task_id,
+                    exc,
+                )
+                db.execute(sql_no_tags, args_no)
+            else:
+                raise
+
     def save_assistant_output(
         self,
         task_id: str,
@@ -522,8 +571,13 @@ class TaskStore:
         if not text or not task_id or text == "(empty)":
             return False
         is_report = is_final_report(text)
+        report_tags: List[str] = []
         if is_report:
-            from report_04.report_parser import prepare_final_report_body
+            from report_04.report_parser import (
+                extract_report_body,
+                extract_report_tags,
+                sanitize_report_dirty_meta,
+            )
             from report_04.video_report import (
                 can_write_report_after_videos,
                 inject_video_into_report,
@@ -544,8 +598,13 @@ class TaskStore:
                     msg_type="assistant_reply",
                 )
                 return False
-            text = inject_video_into_report(prepare_final_report_body(text), task_id)
+            raw_body = sanitize_report_dirty_meta(extract_report_body(text))
+            final_body, report_tags = extract_report_tags(raw_body)
+            text = inject_video_into_report(final_body, task_id)
         clipped = text[:65535]
+        tags_json = (
+            json.dumps(report_tags, ensure_ascii=False) if is_report and report_tags else None
+        )
         msg_type = "summary" if is_report else "assistant_reply"
         if is_report:
             existing = db.fetch_one(
@@ -557,15 +616,19 @@ class TaskStore:
                 (task_id,),
             )
             if existing:
-                db.execute(
-                    """
-                    UPDATE hermes_user_dialogues
-                    SET session_id=%s, role='assistant', content=%s, created_at=NOW(3)
-                    WHERE id=%s
-                    """,
-                    (session_id, clipped, existing["id"]),
+                self._upsert_summary_dialogue(
+                    task_id,
+                    session_id,
+                    clipped,
+                    tags_json,
+                    existing_id=int(existing["id"]),
                 )
-                logger.info("已更新写报终稿 task=%s len=%d", task_id, len(text))
+                logger.info(
+                    "已更新写报终稿 task=%s len=%d tags=%s",
+                    task_id,
+                    len(text),
+                    report_tags or [],
+                )
                 return True
         dup = db.fetch_one(
             """
@@ -577,8 +640,19 @@ class TaskStore:
         )
         if dup:
             return False
-        self.save_dialogue(task_id, session_id, "assistant", text, msg_type)
-        logger.info("已保存助手输出 task=%s type=%s len=%d", task_id, msg_type, len(text))
+        if is_report:
+            self._upsert_summary_dialogue(
+                task_id, session_id, clipped, tags_json, existing_id=None
+            )
+        else:
+            self.save_dialogue(task_id, session_id, "assistant", text, msg_type)
+        logger.info(
+            "已保存助手输出 task=%s type=%s len=%d tags=%s",
+            task_id,
+            msg_type,
+            len(text),
+            report_tags if is_report else [],
+        )
         return True
 
     def load_user_input_message(self, task_id: str) -> str:

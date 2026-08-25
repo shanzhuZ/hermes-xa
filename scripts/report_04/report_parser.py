@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 import re
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Set, Tuple
 
 from report_04.phases import ANALYSIS_STEP_KEYS
 
@@ -34,6 +34,17 @@ _SECTION5_HEAD = "五、个人画像情况"
 _SECTION6_HEAD = "六、综合研判与核查情况"
 
 _SECTION1_HEAD = "一、账号基本信息"
+
+# 终稿末尾主题标签块（落库时剥掉，写入 hermes_user_dialogues.report_tags）
+_REPORT_TAGS_BLOCK = re.compile(
+    r"\[报告标签\]\s*([\s\S]*?)\s*\[/报告标签\]\s*",
+    re.I,
+)
+# 容错：模型常漏写闭标签，仅接受「开标签到文末」且中间不含其它 [
+_REPORT_TAGS_OPEN_ONLY = re.compile(
+    r"\[报告标签\]\s*([^\[\]]*?)\s*\Z",
+    re.I,
+)
 
 # 终稿正文禁止出现的管线/运维脏数据（命中则不算合法终稿，也不做 8～10 回填）
 _DIRTY_META_PATTERNS = (
@@ -115,8 +126,48 @@ def sanitize_report_dirty_meta(content: str) -> str:
 
 
 def prepare_final_report_body(content: str) -> str:
-    """剥前缀进度句 + 清洗管线脏行，得到可判定/可落库的终稿正文。"""
+    """剥前缀进度句 + 清洗管线脏行，得到可判定/回填用的终稿正文。
+
+    注意：不剥 [报告标签] 块。标签须保留到 save_assistant_output，由 extract_report_tags 落库；
+    若在此剥掉，调用方把返回值再当 assistant 传入时 tags 会永久丢失。
+    """
     return sanitize_report_dirty_meta(extract_report_body(content))
+
+
+def _parse_report_tag_chunk(chunk: str) -> List[str]:
+    """把标签块正文拆成去重列表（最多 12 项，单项 ≤32 字）。"""
+    tags: List[str] = []
+    seen: Set[str] = set()
+    for part in re.split(r"[,，、\n;；]+", (chunk or "").strip()):
+        t = part.strip()
+        if not t or len(t) > 32:
+            continue
+        if t in seen:
+            continue
+        seen.add(t)
+        tags.append(t)
+        if len(tags) >= 12:
+            break
+    return tags
+
+
+def extract_report_tags(content: str) -> Tuple[str, List[str]]:
+    """剥掉 [报告标签]...[/报告标签]，返回 (正文, 去重后的标签列表)。
+
+    标签按逗号/顿号/换行拆分。优先成对匹配；若漏写闭标签但开标签在文末，同样剥掉并解析。
+    """
+    raw = (content or "").strip()
+    if not raw:
+        return "", []
+    m = _REPORT_TAGS_BLOCK.search(raw)
+    if not m:
+        m = _REPORT_TAGS_OPEN_ONLY.search(raw)
+    if not m:
+        return raw, []
+    body = (raw[: m.start()] + raw[m.end() :]).strip()
+    body = re.sub(r"\n{3,}", "\n\n", body).strip()
+    tags = _parse_report_tag_chunk(m.group(1) or "")
+    return body, tags
 
 
 def starts_with_report_section1(content: str) -> bool:

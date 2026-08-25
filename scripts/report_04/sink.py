@@ -1605,7 +1605,7 @@ def _looks_like_report_meta_closing(text: str) -> bool:
 def _resolve_final_report_text(assistant: str, session_id: Optional[str]) -> Optional[str]:
     """当前轮是终稿则用当前轮；否则从 state.db 回扫真终稿（避免短收尾覆盖）。
 
-    返回已剥前缀并清洗脏行的正文，便于落 summary / 回填。
+    返回已剥前缀并清洗脏行的正文（仍保留文末 [报告标签] 块，供落库解析）。
     """
     from report_04.report_parser import prepare_final_report_body
 
@@ -1728,7 +1728,7 @@ def _complete_step11_from_report(
         store._maybe_complete_phase_shell(task_id, "step10_context_pii")
     except Exception as exc:
         logger.warning("终稿后 phase_analysis 收口失败 task=%s: %s", task_id, exc)
-    store.save_assistant_output(task_id, session_id, report_body)
+    store.save_assistant_output(task_id, session_id, assistant)
     store.set_step_status(task_id, "step11_report", "completed", message="画像报告已生成")
     from report_04.phases import PHASE_DONE
 
@@ -2599,8 +2599,10 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         if report and is_final_report(report):
             if get_step_status(task_id, "step6_validated") != "completed":
                 _maybe_advance_step67(store, task_id)
+            # 优先传原始 assistant（含标签块）；resolve 结果仅作门禁判定
+            raw_for_save = assistant if is_final_report(assistant) else report
             _complete_step11_from_report(
-                store, task_id, report, session_id or payload.get("session_id")
+                store, task_id, raw_for_save, session_id or payload.get("session_id")
             )
             return None
         from report_04.report_parser import looks_like_report_attempt
@@ -2895,6 +2897,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
     try:
         user_message = str(_extra(payload).get("user_message") or "")
         _ensure_seed_from_dialogue(store, task_id, user_message=user_message, session_id=session_id or "")
+        # 从 state 回扫时 resolve 已保留标签块；禁止再剥掉后落库
         assistant = _resolve_final_report_text("", session_id or "")
         if not assistant:
             assistant = _load_assistant_output_from_state(session_id or "")

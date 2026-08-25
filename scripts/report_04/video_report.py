@@ -8,7 +8,7 @@ import time
 from typing import Any, Dict, List
 
 from collect_01 import db
-from report_04.video_job import VIDEO_WALL_TIMEOUT_SEC
+from report_04.video_job import VIDEO_WALL_TIMEOUT_SEC, VIDEO_ZOMBIE_PENDING_GRACE_SEC
 from report_04.phases import PLATFORM_LABELS
 
 logger = logging.getLogger(__name__)
@@ -67,8 +67,83 @@ def fail_stale_video_steps(task_id: str, *, timeout_sec: int = VIDEO_WALL_TIMEOU
     return n
 
 
+def recover_zombie_pending_videos(
+    task_id: str,
+    *,
+    grace_sec: int = VIDEO_ZOMBIE_PENDING_GRACE_SEC,
+) -> int:
+    """空 pending 自愈：父壳未关则补启；已关/已进研判则 skip（不回开流程图）。
+
+    grace_sec：轮询侧宽限，避免与刚 INSERT 即将 set running 的竞态。
+    """
+    from report_04.task_store import TaskStore
+    from report_04.video_job import (
+        is_zombie_pending_video_row,
+        maybe_start_platform_video,
+        skip_zombie_pending_video,
+        video_respawn_allowed,
+    )
+
+    store = TaskStore()
+    n = 0
+    allow = video_respawn_allowed(task_id)
+    for row in list_video_steps(task_id):
+        if not is_zombie_pending_video_row(row):
+            continue
+        key = str(row.get("step_key") or "")
+        platform = key.replace("step7_video_", "", 1) if key.startswith("step7_video_") else ""
+        if not platform:
+            continue
+        created = row.get("created_at") or row.get("updated_at")
+        age = 0.0
+        if created is not None:
+            try:
+                age = time.time() - created.timestamp()
+            except Exception:
+                age = grace_sec
+        if allow:
+            if age < float(grace_sec):
+                logger.info(
+                    "04 空 pending 宽限内暂不补启 task=%s step=%s age=%.0fs",
+                    task_id,
+                    key,
+                    age,
+                )
+                continue
+            try:
+                result = maybe_start_platform_video(store, task_id, platform) or {}
+            except Exception as exc:
+                logger.warning(
+                    "04 空 pending 补启异常 task=%s step=%s: %s", task_id, key, exc
+                )
+                continue
+            if result.get("started") or result.get("reason") in {
+                "zombie_late_skip",
+                "no_video",
+            }:
+                n += 1
+                logger.info(
+                    "04 空 pending 自愈 task=%s step=%s result=%s",
+                    task_id,
+                    key,
+                    result.get("reason") or "started",
+                )
+            continue
+        # 父壳已关或已进研判：直接 skip，禁止补启回开流程图
+        skip_zombie_pending_video(
+            store,
+            task_id,
+            platform,
+            message="空 pending 未拉起且发文父壳已收口或已进研判，跳过以免回开流程图",
+        )
+        n += 1
+        logger.info("04 空 pending 晚到跳过 task=%s step=%s age=%.0fs", task_id, key, age)
+    return n
+
+
 def video_steps_terminal(task_id: str) -> Dict[str, Any]:
     """已创建的视频节点是否全部终态（无节点视为就绪）。"""
+    recover_zombie_pending_videos(task_id)
     fail_stale_video_steps(task_id)
     rows = list_video_steps(task_id)
     open_rows = [r for r in rows if str(r.get("status") or "") not in _TERMINAL]

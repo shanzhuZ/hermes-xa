@@ -339,7 +339,7 @@
     </select>
 
     <select id="selectSummary" resultType="java.util.HashMap">
-        SELECT content, created_at
+        SELECT content, created_at, report_tags
         FROM hermes_user_dialogues
         WHERE task_id = #{taskId} AND msg_type = 'summary'
         ORDER BY id DESC
@@ -498,7 +498,7 @@
 
     <!-- 历史详情/终稿：cancelled > summary > user_input（对齐 /api/dialogues） -->
     <select id="selectLatestAssistantReply" resultType="java.util.HashMap">
-        SELECT content, created_at, msg_type
+        SELECT content, created_at, msg_type, report_tags
         FROM hermes_user_dialogues
         WHERE task_id = #{taskId}
           AND msg_type IN ('cancelled', 'summary', 'user_input')

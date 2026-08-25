@@ -1,5 +1,5 @@
 # 04 账号画像写报 — 唯一参考（Skill 只加载本文件）
-version: "1.22.0"
+version: "1.23.1"
 
 identity: 用户指定的 @种子 为唯一目标；禁止把 Maigret/简介里其他 handle 当种子。
 
@@ -169,8 +169,13 @@ steps:
     must_start_with: "一、账号基本信息"
     section1: |
       一、账号基本信息 含两个子节：
-      - 1.1 主页信息：昵称、简介、粉丝数、认证状态、头衔、外链（账号层面信息；禁止写「profile信息」）
+      - 1.1 主页信息：昵称、简介、粉丝/关注/发文/媒体帖、认证状态、外链、头像横幅要点（账号层面；禁止写「profile信息」）
       - 1.2 发文特征：最早发帖时间、发帖频率、活跃时间段、发文语种
+      Twitter/X 中文写法（硬约束，正文只写中文，禁止出现任何英文字段名）：
+      - 「点赞他人推文 N 次」= 该号给别人点过的赞（禁止写「获赞」「收到赞」「帖子获赞」）
+      - 「被列入清单 N 次」= 被列入公开列表次数
+      - 无「帖子总获赞」账号级字段；要写帖子互动须用步骤7入库发文抽样汇总，并注明非全量
+      - 禁止在终稿出现 favourites_count / listed_count / like_count / followers_count 等英文参数名或括号标注
       若上下文有【社工库命中摘要】，揉进 1.1 或「四、核查思路」，勿单开「社工库」专节；无命中可不写或一句未命中
       终稿正文必须以「一、账号基本信息」或「## 一、账号基本信息」开头，禁止前置进度句/管线摘要
     section2: [1.1 账号信息, 1.2 账号发文情况,  2.1纳入采集的账号, 2.2文本流表, 2.3图片流表, ]
@@ -186,7 +191,10 @@ steps:
       五、个人画像情况：整段叙述年龄/体貌/婚恋/职业学历/籍贯活动地/网络习惯等；可与「四、核查思路」重叠；禁止空章
     section6: |
       六、综合研判与核查情况：初步研判结论 + 后续核查建议（第一步/第二步/第三步…）；可与前文重叠；禁止空章
-    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---, mcp_video2frame]
+      第六章写完后最末尾必须另起一行输出成对标签块（系统剥掉落库，禁止删块）：
+      [报告标签]标签1,标签2,标签3[/报告标签]
+      块内 1～8 个中文主题标签、逗号分隔；按全文归纳有则写、无则少写，禁止编造；禁止只写开标签不写闭标签
+    forbid_in_body: [步骤 7.5, 图片资产管线, 图片管线, 未部署, 未注册, 跳过步骤, image_pipeline, force-analyze, Hook, 命令行, ModuleNotFoundError, 任务 ID, task_id, collect_images, ---, mcp_video2frame, favourites_count, listed_count, followers_count, statuses_count]
 
 apify:
   contract: [mcp_apify_<actor>, mcp_apify_get_actor_run, mcp_apify_get_dataset_items]
