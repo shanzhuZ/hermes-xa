@@ -1716,6 +1716,7 @@ def _complete_step11_from_report(
                 store.save_analysis_display(
                     task_id, step_key, content, source="backfill_from_step11"
                 )
+        store.ensure_step8_image_analysis(task_id)
     except Exception as exc:
         logger.warning("终稿轻量 backfill 失败 task=%s: %s", task_id, exc)
     for step_key in ANALYSIS_STEP_KEYS:

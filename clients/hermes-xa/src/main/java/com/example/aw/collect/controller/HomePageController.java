@@ -74,11 +74,14 @@ public class HomePageController {
      * agentTotal                 Agent 总数（数字）
      * agentOnline                Agent 在线数量（数字）
      * agentOnlineRate            Agent 在线率（整数，97 → 展示 97%）
-     * charts.dates               近7天日期 X 轴，yyyy-MM-dd，升序
+     * charts.dates               近7天日期 X 轴，yyyy-MM-dd，升序（对齐「今天−6…今天」）
      * charts.verify              账号核查类柱状图；同时作调研趋势「核查类」曲线（同一数组）
      * charts.report              调研趋势「写报类」曲线
      * charts.social              社交类调用统计曲线
      * charts.business            业务专属类调用统计曲线
+     *
+     * 说明：若 ES 仍停在旧日期，首次查询会把最近 daily 原样搬到最新窗口并落库；
+     * 之后缺天按前一天随机增减补齐。
      * </pre>
      * charts 内各数量数组与 dates 下标一一对应。
      */

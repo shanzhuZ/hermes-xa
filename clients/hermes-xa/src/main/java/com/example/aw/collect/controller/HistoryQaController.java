@@ -73,7 +73,7 @@ public class HistoryQaController {
      * <p>
      * <b>成功响应要点（JSON）：</b>
      * page、pageSize、total、list；list 每项含 taskId、中文 taskType、statusLabel、
-     * question、payload、hasAnswer、answerPreview、detailUrl 等。
+     * question、payload、hasAnswer、answerPreview、reportTags、detailUrl 等。
      * <p>
      * <b>异常约定：</b>
      * <ul>

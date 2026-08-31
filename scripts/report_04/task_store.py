@@ -1142,11 +1142,11 @@ class TaskStore:
     def _kickoff_collision_demo_fake(self, task_id: str) -> None:
         """[COLLISION_DEMO_FAKE] 正式版删除本方法及所有调用点。"""
         try:
-            from report_04.collision_demo_steps import kickoff_collision_demo_steps
+            from report_04.collision_demo_steps import reconcile_collision_demo_steps
 
-            kickoff_collision_demo_steps(self, task_id)
+            reconcile_collision_demo_steps(self, task_id)
         except Exception as exc:
-            logger.warning("[COLLISION_DEMO_FAKE] kickoff 失败 task=%s: %s", task_id, exc)
+            logger.warning("[COLLISION_DEMO_FAKE] kickoff/heal 失败 task=%s: %s", task_id, exc)
 
     def _maybe_complete_phase_shell(self, task_id: str, execution_step_key: str) -> None:
         """业务步终态后收口父节点/七大壳。
@@ -2003,6 +2003,9 @@ class TaskStore:
             return
         # source 仅兼容调用方参数，展示与步骤 message 一律按 Agent 分析呈现
         _ = source
+        body = content
+        if step_key == "step9_context_views":
+            body = self._enrich_step9_post_evidence(task_id, body)
         try:
             from collect_01.display_store import upsert_display_record
 
@@ -2013,7 +2016,7 @@ class TaskStore:
                 data_type="report_analysis",
                 source_table="hermes_user_dialogues",
                 source_ref=f"{step_key}:analysis",
-                row={"content": content[:50000]},
+                row={"content": body[:50000]},
                 platform=None,
                 account_id=None,
             )
@@ -2024,8 +2027,132 @@ class TaskStore:
             step_key,
             "completed",
             message="分析完成",
-            payload={"length": len(content)},
+            payload={"length": len(body)},
         )
+
+    def ensure_step8_image_analysis(self, task_id: str) -> bool:
+        """步骤8详情读 collect_images；此处仅在有图时收口 completed（不写错章节的展示正文）。"""
+        if not task_id:
+            return False
+        try:
+            from collect_01 import db
+
+            row = db.fetch_one(
+                """
+                SELECT COUNT(1) AS n
+                FROM collect_images
+                WHERE task_id=%s AND analyze_status IN ('completed','running','pending')
+                """,
+                (task_id,),
+            )
+            n = int((row or {}).get("n") or 0)
+        except Exception as exc:
+            logger.warning("查询 collect_images 失败 task=%s: %s", task_id, exc)
+            return False
+        if n <= 0:
+            return False
+        try:
+            from collect_01 import db
+
+            # 清除误把「账号基本信息」回填进 step8 的旧展示记录
+            db.execute(
+                """
+                DELETE FROM collect_display_records
+                WHERE task_id=%s AND step_key='step8_img_analysis'
+                  AND data_type='report_analysis'
+                """,
+                (task_id,),
+            )
+        except Exception as exc:
+            logger.warning("清理 step8 误回填展示失败 task=%s: %s", task_id, exc)
+        st = get_step_status(task_id, "step8_img_analysis")
+        if st in {"completed", "skipped"}:
+            return True
+        self.set_step_status(
+            task_id,
+            "step8_img_analysis",
+            "completed",
+            message=f"图片流分析完成（已入库 {n} 张）",
+            payload={"image_count": n},
+        )
+        return True
+
+    def _enrich_step9_post_evidence(self, task_id: str, content: str) -> str:
+        """观点块缺作证时，从 collect_posts 补若干条原文摘录（供详情展示）。"""
+        from report_04.report_parser import _has_post_evidence
+
+        text = (content or "").strip()
+        if _has_post_evidence(text):
+            return text
+        try:
+            from collect_01 import db
+
+            rows = db.fetch_all(
+                """
+                SELECT platform, account_id, content_text, title, published_at
+                FROM collect_posts
+                WHERE task_id=%s
+                ORDER BY published_at DESC, id DESC
+                LIMIT 15
+                """,
+                (task_id,),
+            )
+        except Exception as exc:
+            logger.warning("补 step9 作证查发文失败 task=%s: %s", task_id, exc)
+            return text
+        if not rows:
+            return text
+        citations = []
+        for i, row in enumerate(rows, 1):
+            line = self._format_post_citation_line(i, row)
+            if line:
+                citations.append(line)
+        if not citations:
+            return text
+
+        # 填补「发文作证：」后为空、直接接下一观点的槽位
+        slot_pat = re.compile(
+            r"(发文作证\s*[：:]\s*\n)(?=\s*(?:###|\Z))",
+            re.MULTILINE,
+        )
+        matches = list(slot_pat.finditer(text))
+        if matches:
+            post_idx = 0
+            parts: List[str] = []
+            last = 0
+            for m in matches:
+                parts.append(text[last : m.end()])
+                chunk = []
+                for seq in range(1, min(4, len(citations) + 1)):
+                    chunk.append(citations[post_idx % len(citations)])
+                    post_idx += 1
+                parts.append("\n".join(chunk) + "\n")
+                last = m.end()
+            parts.append(text[last:])
+            return "".join(parts)
+
+        lines = [text, "", "发文作证（库内入库原文摘录）："]
+        lines.extend(citations[:10])
+        return "\n".join(lines)
+
+    def _format_post_citation_line(self, seq: int, row: Dict[str, Any]) -> str:
+        plat = str(row.get("platform") or "").strip()
+        pub = row.get("published_at")
+        date_s = ""
+        if pub is not None:
+            try:
+                date_s = pub.strftime("%Y年%m月%d日")
+            except Exception:
+                date_s = str(pub)[:10]
+        excerpt = str(row.get("content_text") or row.get("title") or "").strip()
+        excerpt = excerpt.replace("\n", " ")
+        if len(excerpt) > 200:
+            excerpt = excerpt[:200] + "…"
+        if not excerpt:
+            return ""
+        if date_s:
+            return f"{seq}. {date_s}在{plat}平台发文称「{excerpt}」"
+        return f"{seq}. 在{plat}平台发文称「{excerpt}」"
 
     def finalize_task(
         self,

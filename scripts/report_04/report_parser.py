@@ -249,7 +249,7 @@ def _extract_section(text: str, start_marker: str, end_markers: Tuple[str, ...])
 
 
 def backfill_analysis_from_report(text: str) -> Dict[str, str]:
-    """从步骤十一终稿切片回填 8～10。
+    """从步骤十一终稿切片回填 9～10（步骤8 改由 collect_images 展示，不从终稿第一章回填）。
 
     仅对 is_final_report 通过的（已清洗）终稿切片；不合格不回填，避免污染 display。
     步骤8/9/10 若已由 standalone 块写入则不受影响。
@@ -257,26 +257,32 @@ def backfill_analysis_from_report(text: str) -> Dict[str, str]:
     if not is_final_report(text):
         return {}
     body = prepare_final_report_body(text)
-    s8_parts: List[str] = []
-    s1 = _extract_section(body, "一、账号基本信息", ("二、", "## 二"))
-    if s1:
-        s8_parts.append(s1)
-    s2 = _extract_section(body, "二、账号全网关联账号", ("三、", "## 三"))
-    if "2.3" in s2 or "图片流" in s2:
-        s8_parts.append(s2)
+    # 步骤8：图片流分析 → 详情接口读 collect_images，禁止把「一、账号基本信息」塞进 step8
     s9 = _extract_section(body, "三、账号网络活动情况", ("四、", "## 四"))
-    # 四章在五、处截断，避免五/六灌进 step10 回填
     s10 = _extract_section(body, "四、核查思路", ("五、", "## 五"))
     if not s10 and s9:
         s10 = s9
     out: Dict[str, str] = {}
-    if s8_parts:
-        out["step8_img_analysis"] = "\n\n".join(s8_parts).strip()
     if s9:
         out["step9_context_views"] = s9
     if s10:
         out["step10_context_pii"] = s10
     return out
+
+
+def _has_post_evidence(text: str) -> bool:
+    """章节/分析块是否含可展示的发文作证（避免只有观点标题、作证为空仍回填）。"""
+    t = (text or "").strip()
+    if len(t) < 80:
+        return False
+    # 典型作证句式
+    if re.search(r"发文称[「\"]", t):
+        return True
+    if re.search(r"\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日", t):
+        return True
+    if re.search(r"发文作证\s*[：:]\s*\n\s*\d+\.", t):
+        return True
+    return False
 
 
 def mentions_analysis_steps(text: str) -> bool:

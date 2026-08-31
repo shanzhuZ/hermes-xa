@@ -13,6 +13,11 @@ import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.Set;
+import java.util.regex.Matcher;
+import java.util.regex.Pattern;
+import java.sql.Timestamp;
+import java.text.SimpleDateFormat;
+import java.util.Date;
 
 /**
  * 按采集步骤查询 MySQL 业务表明细，供前端点击步骤后展示库中内容。
@@ -84,6 +89,9 @@ public class TaskStepDataQueryService {
                     taskId, 100, STEP_IMAGE_MAX_BYTES);
         } else {
             records = loadDisplayRecords(taskId, stepKey);
+            if ("step9_context_views".equals(stepKey)) {
+                records = enrichStep9PostEvidence(taskId, records);
+            }
         }
 
         Map<String, Object> out = new LinkedHashMap<String, Object>();
@@ -143,6 +151,17 @@ public class TaskStepDataQueryService {
             out.put("modelAnalysis", compareConclusion);
             if (!payload.isEmpty()) {
                 out.put("summary", payload);
+            }
+        }
+        // 6.1：图片流 Agent 分析（collect_images + 步骤 payload）
+        if ("step8_img_analysis".equals(stepKey) && "collect_images".equals(dataType)) {
+            Map<String, Object> payload = parsePayloadMap(step.get("payload_json"));
+            if (!payload.isEmpty()) {
+                out.put("summary", payload);
+            }
+            String msg = stringVal(step.get("message"));
+            if (!msg.isEmpty()) {
+                out.put("modelAnalysis", msg);
             }
         }
         return out;
@@ -328,6 +347,10 @@ public class TaskStepDataQueryService {
             // 图片资产（含 visionText）；streamRecords 另附身份流
             return "collect_images";
         }
+        if ("step8_img_analysis".equals(stepKey)) {
+            // 图片流 Agent 分析：展示头像/背景/配图及 vision/OCR，不再读误回填的 report_analysis
+            return "collect_images";
+        }
         if ("step5_streams".equals(stepKey)) {
             return "collect_identity_streams";
         }
@@ -355,8 +378,7 @@ public class TaskStepDataQueryService {
                 || "step7_posts".equals(stepKey) || stepKey.startsWith("step7_post_")) {
             return "collect_posts";
         }
-        if ("step8_img_analysis".equals(stepKey)
-                || "step9_context_views".equals(stepKey)
+        if ("step9_context_views".equals(stepKey)
                 || "step10_context_pii".equals(stepKey)
                 || "step11_report".equals(stepKey)) {
             return "report_analysis";
@@ -404,5 +426,199 @@ public class TaskStepDataQueryService {
 
     private String stringVal(Object o) {
         return o == null ? "" : String.valueOf(o);
+    }
+
+    /** 空的「发文作证：」槽位（后直接接下一观点或文末） */
+    private static final Pattern EMPTY_CITATION_SLOT = Pattern.compile(
+            "(发文作证\\s*[：:]\\s*\\n)(?=\\s*(?:###|\\Z))",
+            Pattern.MULTILINE);
+
+    /**
+     * 观点分析缺作证时，从 collect_posts 补原文摘录（读时补救，兼容历史任务）。
+     */
+    private List<Map<String, Object>> enrichStep9PostEvidence(String taskId,
+                                                             List<Map<String, Object>> records) {
+        if (records == null || records.isEmpty()) {
+            return records;
+        }
+        String content = extractReportAnalysisContent(records);
+        if (content.isEmpty() || hasPostEvidence(content)) {
+            return records;
+        }
+        List<Map<String, Object>> posts = collectTaskMapper.selectPostsByTaskId(taskId);
+        if (posts == null || posts.isEmpty()) {
+            return records;
+        }
+        String enriched = fillStep9PostEvidence(content, posts);
+        if (enriched.equals(content)) {
+            return records;
+        }
+        return replaceReportAnalysisContent(records, enriched);
+    }
+
+    private String extractReportAnalysisContent(List<Map<String, Object>> records) {
+        for (Map<String, Object> rec : records) {
+            Object fieldsObj = rec.get("fields");
+            if (!(fieldsObj instanceof List)) {
+                continue;
+            }
+            @SuppressWarnings("unchecked")
+            List<Object> fields = (List<Object>) fieldsObj;
+            for (Object fo : fields) {
+                if (!(fo instanceof Map)) {
+                    continue;
+                }
+                @SuppressWarnings("unchecked")
+                Map<String, Object> f = (Map<String, Object>) fo;
+                String label = stringVal(f.get("label"));
+                if ("分析正文".equals(label) || "content".equals(label)) {
+                    return stringVal(f.get("value"));
+                }
+            }
+        }
+        return "";
+    }
+
+    private List<Map<String, Object>> replaceReportAnalysisContent(List<Map<String, Object>> records,
+                                                                    String newContent) {
+        List<Map<String, Object>> out = new ArrayList<Map<String, Object>>();
+        boolean replaced = false;
+        for (Map<String, Object> rec : records) {
+            Map<String, Object> copy = new LinkedHashMap<String, Object>(rec);
+            if (!replaced) {
+                Object fieldsObj = copy.get("fields");
+                if (fieldsObj instanceof List) {
+                    @SuppressWarnings("unchecked")
+                    List<Object> fields = (List<Object>) fieldsObj;
+                    List<Map<String, Object>> newFields = new ArrayList<Map<String, Object>>();
+                    boolean fieldDone = false;
+                    for (Object fo : fields) {
+                        if (!(fo instanceof Map)) {
+                            continue;
+                        }
+                        @SuppressWarnings("unchecked")
+                        Map<String, Object> f = (Map<String, Object>) fo;
+                        Map<String, Object> nf = new LinkedHashMap<String, Object>(f);
+                        String label = stringVal(f.get("label"));
+                        if (!fieldDone && ("分析正文".equals(label) || "content".equals(label))) {
+                            nf.put("value", newContent);
+                            fieldDone = true;
+                        }
+                        newFields.add(nf);
+                    }
+                    if (!fieldDone) {
+                        Map<String, Object> nf = new LinkedHashMap<String, Object>();
+                        nf.put("label", "分析正文");
+                        nf.put("value", newContent);
+                        newFields.add(nf);
+                    }
+                    copy.put("fields", newFields);
+                    replaced = true;
+                }
+            }
+            out.add(copy);
+        }
+        return out;
+    }
+
+    private boolean hasPostEvidence(String text) {
+        String t = text == null ? "" : text.trim();
+        if (t.length() < 80) {
+            return false;
+        }
+        if (t.contains("发文称「") || t.contains("发文称\"")) {
+            return true;
+        }
+        if (Pattern.compile("\\d{4}\\s*年\\s*\\d{1,2}\\s*月\\s*\\d{1,2}\\s*日").matcher(t).find()) {
+            return true;
+        }
+        if (Pattern.compile("发文作证\\s*[：:]\\s*\\n\\s*\\d+\\.").matcher(t).find()) {
+            return true;
+        }
+        return false;
+    }
+
+    private String fillStep9PostEvidence(String content, List<Map<String, Object>> posts) {
+        List<String> citations = new ArrayList<String>();
+        int seq = 1;
+        for (Map<String, Object> row : posts) {
+            if (citations.size() >= 15) {
+                break;
+            }
+            String line = formatPostCitation(seq, row);
+            if (!line.isEmpty()) {
+                citations.add(line);
+                seq++;
+            }
+        }
+        if (citations.isEmpty()) {
+            return content;
+        }
+        Matcher m = EMPTY_CITATION_SLOT.matcher(content);
+        if (m.find()) {
+            StringBuffer sb = new StringBuffer();
+            int postIdx = 0;
+            m.reset();
+            while (m.find()) {
+                StringBuilder chunk = new StringBuilder();
+                for (int k = 0; k < Math.min(3, citations.size()); k++) {
+                    if (chunk.length() > 0) {
+                        chunk.append("\n");
+                    }
+                    chunk.append(citations.get(postIdx % citations.size()));
+                    postIdx++;
+                }
+                chunk.append("\n");
+                m.appendReplacement(sb, Matcher.quoteReplacement(m.group(1) + chunk));
+            }
+            m.appendTail(sb);
+            return sb.toString();
+        }
+        StringBuilder tail = new StringBuilder(content);
+        tail.append("\n\n发文作证（库内入库原文摘录）：\n");
+        for (int i = 0; i < Math.min(10, citations.size()); i++) {
+            tail.append(citations.get(i)).append("\n");
+        }
+        return tail.toString().trim();
+    }
+
+    private String formatPostCitation(int seq, Map<String, Object> row) {
+        String plat = stringVal(row.get("platform"));
+        String excerpt = firstNonEmpty(
+                stringVal(row.get("content_text")),
+                stringVal(row.get("title")));
+        excerpt = excerpt.replace("\n", " ").trim();
+        if (excerpt.length() > 200) {
+            excerpt = excerpt.substring(0, 200) + "…";
+        }
+        if (excerpt.isEmpty()) {
+            return "";
+        }
+        String dateS = formatPublishedAt(row.get("published_at"));
+        if (!dateS.isEmpty()) {
+            return seq + ". " + dateS + "在" + plat + "平台发文称「" + excerpt + "」";
+        }
+        return seq + ". 在" + plat + "平台发文称「" + excerpt + "」";
+    }
+
+    private String formatPublishedAt(Object pub) {
+        if (pub == null) {
+            return "";
+        }
+        try {
+            if (pub instanceof Timestamp) {
+                return new SimpleDateFormat("yyyy年MM月dd日").format((Timestamp) pub);
+            }
+            if (pub instanceof Date) {
+                return new SimpleDateFormat("yyyy年MM月dd日").format((Date) pub);
+            }
+            String s = String.valueOf(pub).trim();
+            if (s.length() >= 10 && s.charAt(4) == '-' && s.charAt(7) == '-') {
+                return s.substring(0, 4) + "年" + s.substring(5, 7) + "月" + s.substring(8, 10) + "日";
+            }
+        } catch (Exception ignored) {
+            // fall through
+        }
+        return "";
     }
 }

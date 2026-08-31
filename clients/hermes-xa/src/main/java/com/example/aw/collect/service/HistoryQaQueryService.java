@@ -322,6 +322,8 @@ public class HistoryQaQueryService {
         item.put("hasAnswer", Boolean.valueOf(hasAnswer));
         item.put("answerMsgType", answerMsgType.isEmpty() ? null : answerMsgType);
         item.put("answerPreview", hasAnswer ? clip(preview, PREVIEW_LEN) : null);
+        // 与终稿/步骤树一致：解析 dialogues.report_tags（无则空数组）
+        item.put("reportTags", ReportTagsParser.parse(row.get("report_tags")));
         item.put("createdAt", row.get("created_at"));
         item.put("startedAt", row.get("started_at"));
         item.put("finishedAt", row.get("finished_at"));

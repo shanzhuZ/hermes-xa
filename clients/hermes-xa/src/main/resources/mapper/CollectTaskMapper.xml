@@ -268,7 +268,7 @@
     <!--
       列表分页行：
       question / payload_json —— 该任务最早一条 user_input（提问展示）
-      answer_preview / answer_msg_type —— 与 /api/dialogues 折叠一致：
+      answer_preview / answer_msg_type / report_tags —— 与 /api/dialogues 折叠一致：
         cancelled > summary > user_input
     -->
     <select id="selectHistoryTasksPage" resultType="java.util.HashMap">
@@ -322,7 +322,22 @@
                        END,
                        s.id DESC
                    LIMIT 1
-               ) AS answer_msg_type
+               ) AS answer_msg_type,
+               (
+                   SELECT s.report_tags
+                   FROM hermes_user_dialogues s
+                   WHERE s.task_id = t.task_id
+                     AND s.msg_type IN ('cancelled', 'summary', 'user_input')
+                   ORDER BY
+                       CASE s.msg_type
+                           WHEN 'cancelled' THEN 0
+                           WHEN 'summary' THEN 1
+                           WHEN 'user_input' THEN 2
+                           ELSE 9
+                       END,
+                       s.id DESC
+                   LIMIT 1
+               ) AS report_tags
         <include refid="historyTaskWhere"/>
         ORDER BY t.created_at DESC, t.task_id DESC
         LIMIT #{limit} OFFSET #{offset}

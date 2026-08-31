@@ -422,7 +422,9 @@ def build_agent_context(task_id: str) -> Optional[str]:
         elif gate == "step11_report":
             lines.append(
                 "步骤11：终稿必须以「一、账号基本信息」开头，勿在第一节前写进度/管线句。"
-                "第三章每条观点「发文作证」库内有帖则写 3～5 条（不够则写尽并注明仅见 N 条，禁止编造）。"
+                "第三章「发文作证」：库内有帖则写 3～5 条（不够则写尽并注明仅见 N 条，禁止编造）；"
+                "禁止写链接/URL/「链接未获取」；摘录加长（短帖尽量全文，长帖约 40～80 字以上）；"
+                "涉陕须套 [重点地域:陕西]…[/重点地域]。"
                 "第五章至少五「是」、每段约 80～120 字；第六章研判不少于约 400 字且后续核查不少于 4 步。"
                 "终稿严格按 Skill/collect-rules 骨架输出，最末尾必须保留 [报告标签]标签1,标签2[/报告标签] 成对块（按全文归纳替换示例标签，禁止删块）。"
                 "Twitter/X：写「点赞他人推文 N 次」「被列入清单 N 次」，禁止写「获赞」，禁止在正文出现英文字段名。"
@@ -547,11 +549,26 @@ def run_post_tool_light(store: Any, task_id: str) -> None:
     except Exception as exc:
         logger.warning("engine step7 close 失败 task=%s: %s", task_id, exc)
 
+    # [COLLISION_DEMO_FAKE] 工具后也跑假节点补救（不依赖下一轮 LLM）— 正式版删除
+    try:
+        from report_04.collision_demo_steps import reconcile_collision_demo_steps
+
+        reconcile_collision_demo_steps(store, task_id)
+    except Exception as exc:
+        logger.warning("[COLLISION_DEMO_FAKE] post_tool heal 失败 task=%s: %s", task_id, exc)
+
 
 def run_pre_llm_auto(store: Any, task_id: str) -> None:
     """每轮 LLM 前：推进可自动完成的步骤（关联碰撞尽量连推）。"""
     run_post_tool_light(store, task_id)
     advance_collision_phase(store, task_id, max_rounds=3)
+    # [COLLISION_DEMO_FAKE] 假节点超时/丢线程补救 — 正式版删除
+    try:
+        from report_04.collision_demo_steps import reconcile_collision_demo_steps
+
+        reconcile_collision_demo_steps(store, task_id)
+    except Exception as exc:
+        logger.warning("[COLLISION_DEMO_FAKE] pre_llm heal 失败 task=%s: %s", task_id, exc)
     _try_finalize_report(store, task_id, light_only=True)
 
 
@@ -569,6 +586,14 @@ def run_session_finalize_light(
         reconcile_step7_from_post_tools,
     )
     from report_04.orchestrator import close_open_steps_for_session_end
+
+    # [COLLISION_DEMO_FAKE] 会话结束前强制收口超时假节点 — 正式版删除
+    try:
+        from report_04.collision_demo_steps import reconcile_collision_demo_steps
+
+        reconcile_collision_demo_steps(store, task_id)
+    except Exception as exc:
+        logger.warning("[COLLISION_DEMO_FAKE] session heal 失败 task=%s: %s", task_id, exc)
 
     _auto_step5_step6(store, task_id)
     _reconcile_report_post_child_steps(store, task_id)
