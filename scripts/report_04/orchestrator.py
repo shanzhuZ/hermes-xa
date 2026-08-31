@@ -367,7 +367,7 @@ def _advance_to_analysis_phase_body(
     try:
         from report_04.image_assets import spawn_second_image_pipeline
 
-        spawn_second_image_pipeline(task_id)
+        spawn_second_image_pipeline(task_id, store=store)
     except Exception as exc:
         logger.warning("advance_to_analysis 后台第二次图片管线失败 task=%s: %s", task_id, exc)
     if changed:

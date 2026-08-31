@@ -167,6 +167,19 @@ def _media_urls(media_json: Any, raw_json: Any) -> List[str]:
         )
 
     raw = _as_dict(raw_json)
+    # Twitter MCP：顶层 media_urls 字符串列表
+    for url in _as_list(raw.get("media_urls")):
+        if isinstance(url, str):
+            add(url)
+        elif isinstance(url, dict):
+            add(
+                _first_str(
+                    url.get("url"),
+                    url.get("media_url_https"),
+                    url.get("media_url"),
+                    url.get("thumb"),
+                )
+            )
     # 常见媒体数组字段
     for key in ("media", "images", "photos", "attachments", "entities"):
         val = raw.get(key)
@@ -181,6 +194,7 @@ def _media_urls(media_json: Any, raw_json: Any) -> List[str]:
                             item.get("media_url_https"),
                             item.get("media_url"),
                             item.get("display_url"),
+                            item.get("thumb"),
                         )
                     )
         elif isinstance(val, dict):

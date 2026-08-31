@@ -261,12 +261,19 @@ def post_row(
     like_count: Optional[int] = None,
     comment_count: Optional[int] = None,
     repost_count: Optional[int] = None,
+    media: Any = None,
     raw: Any = None,
 ) -> Dict[str, Any]:
     text = content_text or ""
     truncated = 1 if len(text) > 8000 else 0
     if truncated:
         text = text[:8000]
+    media_json = None
+    if media is not None:
+        if isinstance(media, str):
+            media_json = media
+        else:
+            media_json = json.dumps(media, ensure_ascii=False, default=str)
     return {
         "task_id": ctx["task_id"],
         "platform": platform,
@@ -282,7 +289,7 @@ def post_row(
         "like_count": like_count,
         "comment_count": comment_count,
         "repost_count": repost_count,
-        "media_json": None,
+        "media_json": media_json,
         "tool_output_id": ctx.get("tool_output_id"),
         "raw_json": json.dumps(raw, ensure_ascii=False, default=str) if raw is not None else None,
         "text_truncated": truncated,

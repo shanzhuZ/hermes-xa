@@ -611,7 +611,7 @@ def run_session_finalize_light(
         try:
             from report_04.image_assets import spawn_second_image_pipeline
 
-            spawn_second_image_pipeline(task_id)
+            spawn_second_image_pipeline(task_id, store=store)
         except Exception as exc:
             logger.warning("session_finalize 后台第二次图片管线失败 task=%s: %s", task_id, exc)
 

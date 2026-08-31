@@ -787,7 +787,8 @@ class TaskStore:
                 ON DUPLICATE KEY UPDATE
                   content_text=VALUES(content_text), view_count=VALUES(view_count),
                   like_count=VALUES(like_count), comment_count=VALUES(comment_count),
-                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json),
+                  repost_count=VALUES(repost_count), media_json=VALUES(media_json),
+                  raw_json=VALUES(raw_json),
                   published_at=COALESCE(VALUES(published_at), published_at)
                 """,
                 row,

@@ -2,9 +2,53 @@
 
 from __future__ import annotations
 
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional
 
 from collect_01.normalizers.base import first_str, post_row, profile_row, published_at_from_item, safe_int
+
+
+def _extract_post_media(item: Dict[str, Any]) -> Optional[List[Dict[str, str]]]:
+    """从 MCP 推文字段抽出发文配图，供 image_pipeline discover 使用。"""
+    out: List[Dict[str, str]] = []
+    seen: set[str] = set()
+
+    def add(typ: str, url: Optional[str], *, thumb: Optional[str] = None) -> None:
+        u = (url or thumb or "").strip()
+        if not u or not u.startswith("http") or u in seen:
+            return
+        seen.add(u)
+        row: Dict[str, str] = {"type": typ or "photo", "url": u}
+        if thumb and thumb.startswith("http"):
+            row["thumb"] = thumb
+        out.append(row)
+
+    media_list = item.get("media")
+    if isinstance(media_list, list):
+        for m in media_list:
+            if isinstance(m, str):
+                add("photo", m)
+                continue
+            if not isinstance(m, dict):
+                continue
+            typ = str(m.get("type") or m.get("media_type") or "photo")
+            url = first_str(m.get("url"), m.get("media_url_https"), m.get("media_url"))
+            thumb = first_str(m.get("thumb"), m.get("thumbnail"), m.get("preview"))
+            if typ.lower() in {"video", "animated_gif", "gif"}:
+                add(typ, url or thumb, thumb=thumb or url)
+            else:
+                add(typ, url, thumb=thumb)
+
+    for url in item.get("media_urls") or []:
+        if isinstance(url, str):
+            add("photo", url)
+        elif isinstance(url, dict):
+            add(
+                str(url.get("type") or "photo"),
+                first_str(url.get("url"), url.get("media_url_https")),
+                thumb=first_str(url.get("thumb")),
+            )
+
+    return out or None
 
 
 def normalize_profile(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
@@ -81,6 +125,7 @@ def normalize_posts(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 published_at=published_at_from_item(item, "created_at", "date"),
                 like_count=safe_int(item.get("favorite_count") if item.get("favorite_count") is not None else item.get("likes")),
                 repost_count=safe_int(item.get("retweet_count") if item.get("retweet_count") is not None else item.get("retweets")),
+                media=_extract_post_media(item),
                 raw=item,
             )
         )

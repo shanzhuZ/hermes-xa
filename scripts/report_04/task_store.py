@@ -1456,7 +1456,8 @@ class TaskStore:
                 ON DUPLICATE KEY UPDATE
                   content_text=VALUES(content_text), view_count=VALUES(view_count),
                   like_count=VALUES(like_count), comment_count=VALUES(comment_count),
-                  repost_count=VALUES(repost_count), raw_json=VALUES(raw_json),
+                  repost_count=VALUES(repost_count), media_json=VALUES(media_json),
+                  raw_json=VALUES(raw_json),
                   published_at=COALESCE(VALUES(published_at), published_at)
                 """,
                 row,
@@ -2031,25 +2032,53 @@ class TaskStore:
         )
 
     def ensure_step8_image_analysis(self, task_id: str) -> bool:
-        """步骤8详情读 collect_images；此处仅在有图时收口 completed（不写错章节的展示正文）。"""
+        """步骤8详情读 collect_images；有图且达分析上限/无待办时收口 completed。"""
         if not task_id:
             return False
         try:
             from collect_01 import db
-
-            row = db.fetch_one(
-                """
-                SELECT COUNT(1) AS n
-                FROM collect_images
-                WHERE task_id=%s AND analyze_status IN ('completed','running','pending')
-                """,
-                (task_id,),
+            from report_04.image_assets import (
+                _POST_MEDIA_MAX_IMAGES,
+                count_image_analysis_stats,
             )
-            n = int((row or {}).get("n") or 0)
+
+            stats = count_image_analysis_stats(task_id)
+            pm = count_image_analysis_stats(task_id, source_type="post_media")
+            n = stats["total"]
+            analyzed = stats["analyzed"]
+            cap = _POST_MEDIA_MAX_IMAGES
         except Exception as exc:
             logger.warning("查询 collect_images 失败 task=%s: %s", task_id, exc)
             return False
         if n <= 0:
+            return False
+
+        # 发文配图达上限，或限额内已无待办 → 可 completed（不要求扫完全部发现图）
+        quota_done = pm["analyzed"] >= cap
+        pm_idle = pm["total"] > 0 and pm["pending_store"] == 0 and pm["pending_analyze"] == 0
+        all_done = analyzed >= n
+        if not (quota_done or pm_idle or all_done):
+            pending = n - analyzed
+            target = min(cap, pm["total"]) if pm["total"] > 0 else n
+            msg = (
+                f"图片流分析中（发文配图已分析 {pm['analyzed']}/{target}"
+                f"{'，上限 ' + str(cap) if pm['total'] > cap else ''}）"
+            )
+            self.set_step_status(
+                task_id,
+                "step8_img_analysis",
+                "running",
+                message=msg,
+                payload={
+                    "image_count": n,
+                    "analyzed": analyzed,
+                    "pending": pending,
+                    "post_media_analyzed": pm["analyzed"],
+                    "post_media_total": pm["total"],
+                    "post_media_cap": cap,
+                },
+                touch_updated_at=False,
+            )
             return False
         try:
             from collect_01 import db
@@ -2068,12 +2097,22 @@ class TaskStore:
         st = get_step_status(task_id, "step8_img_analysis")
         if st in {"completed", "skipped"}:
             return True
+        if quota_done or (pm["total"] > cap):
+            msg = f"图片流分析完成（发文配图已分析 {pm['analyzed']} 张，上限 {cap}）"
+        else:
+            msg = f"图片流分析完成（已分析 {analyzed}/{n} 张）"
         self.set_step_status(
             task_id,
             "step8_img_analysis",
             "completed",
-            message=f"图片流分析完成（已入库 {n} 张）",
-            payload={"image_count": n},
+            message=msg,
+            payload={
+                "image_count": n,
+                "analyzed": analyzed,
+                "post_media_analyzed": pm["analyzed"],
+                "post_media_total": pm["total"],
+                "post_media_cap": cap,
+            },
         )
         return True
 
@@ -2385,12 +2424,12 @@ class TaskStore:
                 summary_ok if ready_done else summary_partial,
             ),
         )
-        # 发文后第二次图片管线：后台独立进程，超时自杀；不阻塞 finalize
+        # 发文后第二次图片管线：Hook 内后台线程，不阻塞 finalize
         if ready_done or step7_ok or session_ended:
             try:
                 from report_04.image_assets import spawn_second_image_pipeline
 
-                spawn_second_image_pipeline(task_id)
+                spawn_second_image_pipeline(task_id, store=self)
             except Exception as exc:
                 logger.warning("finalize 后台第二次图片管线异常 task=%s: %s", task_id, exc)
         if ready_done:

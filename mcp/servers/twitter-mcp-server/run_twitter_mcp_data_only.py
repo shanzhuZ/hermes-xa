@@ -15,6 +15,7 @@ import json
 import os
 import sys
 from pathlib import Path
+from typing import Any
 
 # 新版 twitter_mcp.server 在 import 时强制读 OAuth 四元组；
 # cookie/twikit 模式实际不使用它们，给占位即可。
@@ -123,8 +124,23 @@ async def _fetch_tweets_paginated(client: Client, user_id: str, target_count: in
     return collected[:target_count]
 
 
+def _media_url_from_item(m: Any) -> str | None:
+    """从 twikit media 对象提取可下载的图片/封面 URL。"""
+    if isinstance(m, dict):
+        for key in ("media_url_https", "media_url", "url"):
+            u = m.get(key)
+            if u and str(u).startswith("http"):
+                return str(u)
+        return None
+    for key in ("media_url_https", "media_url", "url"):
+        u = getattr(m, key, None)
+        if u and str(u).startswith("http"):
+            return str(u)
+    return None
+
+
 def _patch_get_user_tweets_media() -> None:
-    """增强 get_user_tweets：附带 media_types / has_video，并翻页凑满条数。"""
+    """增强 get_user_tweets：附带 media_types / media_urls / has_video，并翻页凑满条数。"""
     import logging
 
     import twitter_mcp.server as srv
@@ -133,7 +149,7 @@ def _patch_get_user_tweets_media() -> None:
     log = logging.getLogger("twitter-data-only")
 
     async def get_user_tweets(screen_name: str, count: int = 100) -> str:
-        """Get recent tweets from a specific user（含媒体类型，便于视频分析）。
+        """Get recent tweets from a specific user（含媒体 URL，便于发文配图入库）。
 
         Args:
             screen_name: Twitter username (without @).
@@ -151,6 +167,8 @@ def _patch_get_user_tweets_media() -> None:
         result = []
         for t in tweets:
             media_types: list[str] = []
+            media_urls: list[str] = []
+            media_items: list[dict[str, str]] = []
             has_video = False
             try:
                 media = getattr(t, "media", None) or []
@@ -158,10 +176,21 @@ def _patch_get_user_tweets_media() -> None:
                     mtype = getattr(m, "type", None) or (
                         m.get("type") if isinstance(m, dict) else None
                     )
-                    if mtype:
-                        media_types.append(str(mtype))
-                        if str(mtype).lower() in {"video", "animated_gif"}:
+                    mtype_s = str(mtype) if mtype else ""
+                    if mtype_s:
+                        media_types.append(mtype_s)
+                        if mtype_s.lower() in {"video", "animated_gif"}:
                             has_video = True
+                    url = _media_url_from_item(m)
+                    if not url:
+                        continue
+                    # photo → media_urls；video/gif 封面也写入 media 供 image_pipeline 取 thumb
+                    item: dict[str, str] = {"type": mtype_s or "photo", "url": url}
+                    if mtype_s.lower() in {"video", "animated_gif"}:
+                        item["thumb"] = url
+                    else:
+                        media_urls.append(url)
+                    media_items.append(item)
             except Exception:
                 pass
             result.append(
@@ -172,6 +201,8 @@ def _patch_get_user_tweets_media() -> None:
                     "likes": t.favorite_count,
                     "retweets": t.retweet_count,
                     "media_types": media_types,
+                    "media_urls": media_urls,
+                    "media": media_items,
                     "has_media": bool(media_types),
                     "has_video": has_video,
                 }
@@ -190,7 +221,7 @@ def _patch_get_user_tweets_media() -> None:
         log.warning("remove_tool get_user_tweets: %s", exc)
     try:
         srv.mcp.add_tool(get_user_tweets)
-        log.info("已注册增强版 get_user_tweets（含 has_video）")
+        log.info("已注册增强版 get_user_tweets（含 media_urls / has_video）")
     except Exception as exc:
         log.warning("add_tool get_user_tweets 失败: %s", exc)
         try:

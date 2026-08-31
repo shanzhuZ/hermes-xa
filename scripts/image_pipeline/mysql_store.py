@@ -251,6 +251,7 @@ def list_images_for_task(
     task_id: str,
     storage_status: Optional[str] = None,
     analyze_status: Optional[str] = None,
+    source_type: Optional[str] = None,
 ) -> List[Dict[str, Any]]:
     sql = "SELECT * FROM collect_images WHERE task_id=%s"
     params: List[Any] = [task_id]
@@ -260,6 +261,9 @@ def list_images_for_task(
     if analyze_status:
         sql += " AND analyze_status=%s"
         params.append(analyze_status)
+    if source_type:
+        sql += " AND source_type=%s"
+        params.append(source_type)
     sql += " ORDER BY created_at ASC"
     return fetch_all(sql, tuple(params))
 

@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from image_pipeline import hbase_store, mysql_store
 
@@ -291,14 +291,50 @@ def analyze_image_row(
         return "failed"
 
 
-def analyze_task(task_id: str, force: bool = False) -> Dict[str, int]:
+def analyze_task(
+    task_id: str,
+    force: bool = False,
+    *,
+    source_type: Optional[str] = None,
+    progress_callback: Optional[Callable[[], None]] = None,
+    progress_every: int = 5,
+    max_images: Optional[int] = None,
+) -> Dict[str, int]:
     rows = mysql_store.list_images_for_task(task_id, storage_status="stored")
+    if source_type:
+        rows = [r for r in rows if str(r.get("source_type") or "") == source_type]
+    # 与下载侧同一配额：已 completed 计入，剩余名额才真正分析
+    if max_images is not None and max_images > 0:
+        completed = [r for r in rows if r.get("analyze_status") == "completed"]
+        need = [r for r in rows if r.get("analyze_status") != "completed"]
+        if len(completed) >= max_images:
+            return {
+                "completed": 0,
+                "skipped": 0,
+                "failed": 0,
+                "unchanged": max_images,
+            }
+        rows = need[: max_images - len(completed)]
     indexed = _index_tool_outputs(task_id)
     stats = {"completed": 0, "skipped": 0, "failed": 0, "unchanged": 0}
+    every = max(1, int(progress_every or 5))
+    processed = 0
     for row in rows:
         if row.get("analyze_status") == "completed" and not force:
             stats["unchanged"] += 1
             continue
         result = analyze_image_row(row, indexed_outputs=indexed, force=force)
         stats[result] = stats.get(result, 0) + 1
+        if result in {"completed", "failed", "skipped"}:
+            processed += 1
+            if progress_callback and processed % every == 0:
+                try:
+                    progress_callback()
+                except Exception as exc:
+                    logger.warning("progress_callback 失败 task=%s: %s", task_id, exc)
+    if progress_callback and processed > 0 and processed % every != 0:
+        try:
+            progress_callback()
+        except Exception as exc:
+            logger.warning("progress_callback 失败 task=%s: %s", task_id, exc)
     return stats
