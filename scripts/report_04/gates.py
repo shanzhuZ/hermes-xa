@@ -135,7 +135,11 @@ def mark_post_tool_inflight(
     *,
     tool_name: str = "",
 ) -> None:
-    """pre_tool：标记平台发文工具在飞，禁止 reconcile 提前 completed。"""
+    """pre_tool：标记平台发文工具在飞，禁止 reconcile 提前 completed。
+
+    成功路径须保持到 post_tool 完成 collect_posts 入库之后再 clear；
+    禁止在工具刚返回、尚未 persist 时清除。
+    """
     import time
     from report_04.phases import post_platform_step_key
 
@@ -479,6 +483,101 @@ def analysis_steps_terminal(task_id: str) -> bool:
         if get_step_status(task_id, k) not in {"completed", "skipped"}:
             return False
     return True
+
+
+# 发文齐后等 step8 系统管线的最长 hold 秒数；超时仍放行 write，避免永久卡住
+_STEP8_WRITE_WAIT_SEC = 300
+
+
+def step8_write_wait_sec() -> int:
+    return int(_STEP8_WRITE_WAIT_SEC)
+
+
+def _step8_wait_elapsed_sec(task_id: str) -> Optional[float]:
+    """step8 进入 pending/running 后已等待秒数（优先 payload.wait_started_at）。"""
+    import time
+    from datetime import datetime
+
+    row = db.fetch_one(
+        """
+        SELECT status, updated_at, started_at, payload_json
+        FROM collect_phase_steps
+        WHERE task_id=%s AND step_key=%s
+        """,
+        (task_id, "step8_img_analysis"),
+    )
+    if not row:
+        return None
+    payload = {}
+    try:
+        payload = json.loads(row.get("payload_json") or "{}")
+    except Exception:
+        payload = {}
+    if not isinstance(payload, dict):
+        payload = {}
+    started = None
+    raw_ws = payload.get("wait_started_at")
+    if raw_ws:
+        try:
+            started = datetime.fromisoformat(str(raw_ws).replace("Z", ""))
+        except Exception:
+            started = None
+    if started is None:
+        started = row.get("started_at") or row.get("updated_at")
+    if started is None:
+        return 0.0
+    if isinstance(started, datetime):
+        return max(0.0, time.time() - started.timestamp())
+    return 0.0
+
+
+def step8_blocks_write(task_id: str) -> bool:
+    """发文齐后：step8 未终态则挡住 write；等待窗超时后放行（防永久 hold）。
+
+    终态：completed / skipped / failed。不在此处拒绝终稿落库。
+    """
+    st = get_step_status(task_id, "step8_img_analysis")
+    if st in {"completed", "skipped", "failed"}:
+        return False
+    # 尚无步骤行或仍 pending/running
+    if st not in {"pending", "running", None, ""}:
+        return False
+    elapsed = _step8_wait_elapsed_sec(task_id)
+    if elapsed is not None and elapsed >= float(_STEP8_WRITE_WAIT_SEC):
+        return False
+    # 能进研判但 step8 还未终态 → 应 hold
+    return True
+
+
+def format_step8_wait_hint(task_id: str) -> str:
+    """hold 提示：图片流分析进度；非 hold 场景返回空串。"""
+    if not step8_blocks_write(task_id):
+        return ""
+    try:
+        from report_04.image_assets import (
+            _POST_MEDIA_MAX_IMAGES,
+            count_image_analysis_stats,
+        )
+
+        pm = count_image_analysis_stats(task_id, source_type="post_media")
+        cap = _POST_MEDIA_MAX_IMAGES
+        done = int(pm.get("analyzed") or 0)
+        total = int(pm.get("total") or 0)
+        target = min(cap, total) if total > 0 else cap
+        elapsed = _step8_wait_elapsed_sec(task_id)
+        el_s = int(elapsed or 0)
+        wait_max = _STEP8_WRITE_WAIT_SEC
+        return (
+            f"【系统·步骤8】图片流分析中（发文配图已分析 {done}/{target}，上限 {cap}"
+            f"{'，发现 ' + str(total) if total > target else ''}；"
+            f"已等待 {el_s}s/{wait_max}s）。"
+            "完成后系统将催写步骤8/9/10与终稿；期间禁止输出终稿与研判正文，禁止结束会话。"
+        )
+    except Exception:
+        return (
+            "【系统·步骤8】图片流分析进行中，完成后写步骤8/9/10与终稿；"
+            "期间禁止输出终稿，禁止结束会话。"
+        )
 
 
 def can_complete_step11(task_id: str) -> Dict[str, Any]:

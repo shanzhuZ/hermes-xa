@@ -212,19 +212,83 @@ def run_post_media_pipeline_blocking(
                 )
                 _reset_post_media_running(task_id)
                 if store is not None:
-                    touch_step8_image_progress(
+                    _force_step8_terminal(
                         store,
                         task_id,
-                        prefix="发文配图分析超时",
+                        reason="管线超时",
+                        summary=None,
                     )
                 return 2
     except Exception as exc:
         logger.warning("post_media 管线线程异常 task=%s: %s", task_id, exc)
+        if store is not None:
+            _force_step8_terminal(
+                store,
+                task_id,
+                reason=f"管线异常:{exc}",
+                summary=None,
+            )
         return 1
 
     if store is not None:
         _finalize_step8_after_pipeline(store, task_id, summary)
     return 0 if summary is not None else 1
+
+
+def _force_step8_terminal(
+    store: Any,
+    task_id: str,
+    *,
+    reason: str,
+    summary: Optional[Dict[str, Any]],
+) -> None:
+    """超时/异常后必须落到终态，避免 hold 永久卡住。"""
+    from report_04.gates import get_step_status
+
+    st = get_step_status(task_id, STEP8_STEP_KEY)
+    if st in {"completed", "skipped", "failed"}:
+        return
+    stats = count_image_analysis_stats(task_id)
+    pm = count_image_analysis_stats(task_id, source_type="post_media")
+    cap = _POST_MEDIA_MAX_IMAGES
+    payload = dict(summary) if isinstance(summary, dict) else {}
+    payload.update(
+        {
+            "image_count": stats["total"],
+            "analyzed": stats["analyzed"],
+            "post_media_analyzed": pm["analyzed"],
+            "post_media_total": pm["total"],
+            "post_media_cap": cap,
+            "terminal_reason": reason[:200],
+        }
+    )
+    if pm["total"] <= 0 and stats["total"] <= 0:
+        store.set_step_status(
+            task_id,
+            STEP8_STEP_KEY,
+            "skipped",
+            message=f"无图可分析（{reason}）",
+            payload=payload,
+        )
+        return
+    if pm["analyzed"] > 0 or stats["analyzed"] > 0:
+        store.set_step_status(
+            task_id,
+            STEP8_STEP_KEY,
+            "completed",
+            message=(
+                f"发文配图分析结束（已分析 {pm['analyzed']} 张，上限 {cap}；{reason}）"
+            ),
+            payload=payload,
+        )
+        return
+    store.set_step_status(
+        task_id,
+        STEP8_STEP_KEY,
+        "failed",
+        message=f"发文配图分析未产出（{reason}）",
+        payload=payload,
+    )
 
 
 def _finalize_step8_after_pipeline(
@@ -237,7 +301,7 @@ def _finalize_step8_after_pipeline(
     stats = count_image_analysis_stats(task_id)
     pm_stats = count_image_analysis_stats(task_id, source_type="post_media")
     st = get_step_status(task_id, STEP8_STEP_KEY)
-    if st in {"completed", "skipped"}:
+    if st in {"completed", "skipped", "failed"}:
         return
 
     cap = _POST_MEDIA_MAX_IMAGES
@@ -263,7 +327,19 @@ def _finalize_step8_after_pipeline(
                 payload={"discovered": 0},
             )
         else:
-            store.ensure_step8_image_analysis(task_id)
+            # 仅有 profile：尽量收口 completed
+            try:
+                if store.ensure_step8_image_analysis(task_id):
+                    return
+            except Exception:
+                pass
+            store.set_step_status(
+                task_id,
+                STEP8_STEP_KEY,
+                "completed",
+                message=f"无发文配图，沿用主页图分析（已分析 {stats['analyzed']}/{stats['total']}）",
+                payload=payload,
+            )
         return
 
     # 达上限或限额内已无待办 → completed（不要求分析完全部发现图）
@@ -295,18 +371,19 @@ def _finalize_step8_after_pipeline(
             ),
             payload=payload,
         )
-    else:
-        touch_step8_image_progress(store, task_id, prefix="发文配图分析未完成")
-        store.set_step_status(
-            task_id,
-            STEP8_STEP_KEY,
-            "running",
-            message=(
-                f"发文配图分析未完成（已分析 {pm_stats['analyzed']}/"
-                f"{min(cap, max(pm_stats['total'], 1))}，上限 {cap}）"
-            ),
-            payload=payload,
-        )
+        return
+
+    # 管线本轮已结束：有部分产出也必须终态，禁止停在 running
+    store.set_step_status(
+        task_id,
+        STEP8_STEP_KEY,
+        "completed",
+        message=(
+            f"发文配图分析完成（已分析 {pm_stats['analyzed']}/"
+            f"{min(cap, max(pm_stats['total'], 1))}，上限 {cap}）"
+        ),
+        payload=payload,
+    )
 
 
 def start_step8_post_media_pipeline(
@@ -340,6 +417,21 @@ def start_step8_post_media_pipeline(
         except Exception:
             pass
         logger.info("发文配图已全部处理，步骤8 无需再跑 task=%s", task_id)
+        try:
+            from report_04.gates import get_step_status
+            from report_04.session_continue import maybe_continue_agent_session
+
+            st = get_step_status(task_id, STEP8_STEP_KEY) or ""
+            if st in {"completed", "skipped", "failed"}:
+                maybe_continue_agent_session(
+                    store,
+                    task_id,
+                    reason="step8_already_done",
+                    kind="analysis",
+                    force=False,
+                )
+        except Exception:
+            pass
         return False
 
     store.ensure_step_row(task_id, STEP8_STEP_KEY)
@@ -378,6 +470,7 @@ def start_step8_post_media_pipeline(
             with _POST_IMAGE_JOB_LOCK:
                 _POST_IMAGE_JOBS.pop(task_id, None)
             try:
+                from report_04.gates import get_step_status
                 from report_04.thought_progress import emit_system_thinking
 
                 st = get_step_status(task_id, STEP8_STEP_KEY) or ""
@@ -387,6 +480,22 @@ def start_step8_post_media_pipeline(
                 )
             except Exception:
                 pass
+            # 管线终态后催 Agent write（hold→write），避免会话一直等
+            try:
+                from report_04.gates import get_step_status
+                from report_04.session_continue import maybe_continue_agent_session
+
+                st = get_step_status(task_id, STEP8_STEP_KEY) or ""
+                if st in {"completed", "skipped", "failed"}:
+                    maybe_continue_agent_session(
+                        store,
+                        task_id,
+                        reason="step8_image_pipeline_done",
+                        kind="analysis",
+                        force=False,
+                    )
+            except Exception as exc:
+                logger.warning("step8 结束后催续跑失败 task=%s: %s", task_id, exc)
 
     threading.Thread(
         target=_work,

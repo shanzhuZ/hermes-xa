@@ -1424,22 +1424,13 @@ def _complete_step3_now(
     n_extract: int,
     message: Optional[str] = None,
 ) -> None:
-    from collect_01 import db as _db
-
-    n_web_cands = _db.fetch_one(
-        """
-        SELECT COUNT(*) AS c FROM cross_platform_candidates
-        WHERE task_id=%s AND match_strategy='web_search'
-        """,
-        (task_id,),
-    )
-    n_web = int((n_web_cands or {}).get("c") or 0)
-    msg = message or f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web}）"
+    # n_search/n_extract 保留给调用方日志；节点展示统一简洁文案
+    _ = (n_search, n_extract)
     store.set_step_status(
         task_id,
         "step3_web_search",
         "completed",
-        message=msg,
+        message=message or "网页检索完成",
     )
     store.materialize_step4_from_candidates(task_id)
 
@@ -1460,7 +1451,7 @@ def _force_complete_step3_by_budget(store: TaskStore, task_id: str) -> bool:
         task_id,
         n_search=n_search,
         n_extract=n_extract,
-        message=f"网页检索超时/达上限收口（{reason}；search={n_search} extract={n_extract}）",
+        message="网页检索完成",
     )
     logger.info(
         "step3 预算耗尽强制收口 task=%s reason=%s search=%s extract=%s",
@@ -1851,7 +1842,7 @@ def _sync_platform_collect_steps(
 
     if in_step7:
         store.ensure_step_row(task_id, post_key)
-        # post_tool：先清除在飞标记，再收口（超时有帖也按成功 finalize）
+        # 入库已在 _persist_normalized 完成：此处再清在飞并 finalize（禁止在 persist 前清标记）
         try:
             from report_04.gates import clear_post_tool_inflight
 
@@ -1869,13 +1860,22 @@ def _sync_platform_collect_steps(
             logger.warning("清除发文在飞标记失败 task=%s plat=%s: %s", task_id, platform, exc)
         if n_post > 0:
             from report_04.video_job import finalize_post_platform_after_posts
+            from collect_01 import db as _db
+
+            # 以库内实有条数为准，避免解析条数与入库进度不一致
+            row_cnt = _db.fetch_one(
+                "SELECT COUNT(*) AS c FROM collect_posts WHERE task_id=%s AND platform=%s",
+                (task_id, platform),
+            )
+            db_n = int((row_cnt or {}).get("c") or 0)
+            use_n = max(n_post, db_n)
 
             cur_post = get_step_status(task_id, post_key)
             finalize_post_platform_after_posts(
                 store,
                 task_id,
                 platform,
-                post_count=n_post,
+                post_count=use_n,
                 force_reopen=(cur_post == "skipped"),
             )
             # 方案 A：发文子步一完成立刻尝试关父壳，不等本轮 LLM / Hook 收尾
@@ -2137,22 +2137,9 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
     input_accounts = store.get_seed_accounts(task_id)
     platform_hint_early = _LAST_APIFY_HINT.get(task_id, "")
     platform = _infer_platform(tool_name, tool_args, input_accounts, platform_hint_early)
-    # 发文工具一旦返回（成功/失败/超时）：先清在飞标记，避免卡死门禁
-    if platform and (
-        tool_name in POST_TOOLS
-        or tool_name in APIFY_POST_TOOLS
-        or tool_name
-        in {
-            "mcp_apify_get_actor_run",
-            "mcp_apify_get_dataset_items",
-        }
-    ):
-        try:
-            from report_04.gates import clear_post_tool_inflight
-
-            clear_post_tool_inflight(store, task_id, platform)
-        except Exception as exc:
-            logger.warning("post_tool 清在飞失败 task=%s plat=%s: %s", task_id, platform, exc)
+    # 注意：发文成功路径禁止在此清 inflight。
+    # 须等 _persist_normalized 写完 collect_posts 后，再由 _sync_platform_collect_steps 清标记并 completed；
+    # 否则并发 reconcile 会按「库内仅几十条」提前 finalize，造成发文晚到/父壳回开。
     seed_collect = _is_seed_profile_tool(tool_name, task_id)
     collect_step, output_step_key = _resolve_collect_phase(
         store, task_id, tool_name, platform, seed_collect=seed_collect
@@ -2227,6 +2214,22 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         )
     except DbError as exc:
         logger.warning("写 tool_outputs 失败 tool=%s task=%s: %s", tool_name, task_id, exc)
+        # 审计都写不上时仍清发文在飞，避免门禁永久卡住
+        if platform and (
+            tool_name in POST_TOOLS
+            or tool_name in APIFY_POST_TOOLS
+            or tool_name
+            in {
+                "mcp_apify_get_actor_run",
+                "mcp_apify_get_dataset_items",
+            }
+        ):
+            try:
+                from report_04.gates import clear_post_tool_inflight
+
+                clear_post_tool_inflight(store, task_id, platform)
+            except Exception:
+                pass
         return
 
     if tool_call_id:
@@ -2319,6 +2322,22 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             return
 
     if status != "success":
+        # 失败/超时：立刻清在飞，避免永久挡关父壳（无帖可入库，不必等 persist）
+        if platform and (
+            tool_name in POST_TOOLS
+            or tool_name in APIFY_POST_TOOLS
+            or tool_name
+            in {
+                "mcp_apify_get_actor_run",
+                "mcp_apify_get_dataset_items",
+            }
+        ):
+            try:
+                from report_04.gates import clear_post_tool_inflight
+
+                clear_post_tool_inflight(store, task_id, platform)
+            except Exception as exc:
+                logger.warning("post_tool 失败清在飞失败 task=%s plat=%s: %s", task_id, platform, exc)
         if platform and (
             can_update_step4_children(task_id) or can_update_step7_children(task_id)
         ):
@@ -2440,7 +2459,26 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         except Exception:
             pass
 
-    _persist_normalized(store, task_id, result_data, platform=platform, tool_name=tool_name)
+    try:
+        _persist_normalized(store, task_id, result_data, platform=platform, tool_name=tool_name)
+    except Exception:
+        # 入库中途异常：清在飞，避免 reconcile/关父壳被永久挡住；已入库部分由后续 reconcile 收口
+        if platform and (
+            tool_name in POST_TOOLS
+            or tool_name in APIFY_POST_TOOLS
+            or tool_name
+            in {
+                "mcp_apify_get_actor_run",
+                "mcp_apify_get_dataset_items",
+            }
+        ):
+            try:
+                from report_04.gates import clear_post_tool_inflight
+
+                clear_post_tool_inflight(store, task_id, platform)
+            except Exception:
+                pass
+        raise
 
     seed_plat = _task_seed_platform(task_id)
     is_mcp_seed_tool = tool_name in TOOL_TO_SEED_PLATFORM and not tool_name.startswith("mcp_apify_")
@@ -2460,14 +2498,23 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         _clear_seed_fail_count(store, task_id)
 
     if tool_name == "mcp_maigret_collect_accounts":
+        from collect_01.normalizers.maigret import format_step2_message
+
         cands = result_data.get("candidates") or []
         store.set_step_status(
             task_id,
             "step2_maigret",
             "completed",
-            message=f"Maigret 发现 {len(cands)} 个候选",
+            message=format_step2_message(
+                len(cands),
+                sites_scanned=result_data.get("sites_scanned"),
+                result_data=result_data,
+                tool_args=tool_args if isinstance(tool_args, dict) else None,
+            ),
         )
     elif tool_name.startswith("mcp_maigret_"):
+        from collect_01.normalizers.maigret import format_step2_message
+
         cur2 = get_step_status(task_id, "step2_maigret")
         if cur2 == "pending":
             store.set_step_status(task_id, "step2_maigret", "running", message=f"Maigret 执行中 ({tool_name})")
@@ -2477,7 +2524,12 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                 task_id,
                 "step2_maigret",
                 "completed",
-                message=f"Maigret 发现 {len(cands)} 个候选",
+                message=format_step2_message(
+                    len(cands),
+                    sites_scanned=result_data.get("sites_scanned"),
+                    result_data=result_data,
+                    tool_args=tool_args if isinstance(tool_args, dict) else None,
+                ),
             )
 
     if tool_name in WEB_SEARCH_TOOLS:

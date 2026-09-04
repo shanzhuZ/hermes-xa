@@ -481,6 +481,7 @@ def next_agent_action(task_id: str) -> AgentAction:
     """下一步 Agent 该做什么：call 调工具 / hold 等系统管线 / write 研判终稿 / done。
 
     续跑 busy、链式 handoff、post_llm 提示均以此为准；不看「未来父壳 running」。
+    发文齐后须等 step8 系统管线终态（或等待窗超时）才 write。
     """
     if has_final_report(task_id):
         return "done"
@@ -490,15 +491,30 @@ def next_agent_action(task_id: str) -> AgentAction:
     if str(task.get("status") or "") not in {"running", "pending"}:
         return "done"
 
-    # 研判 / 终稿
+    def _write_or_hold_for_step8() -> AgentAction:
+        try:
+            from report_04.gates import step8_blocks_write
+            from report_04.image_assets import spawn_second_image_pipeline
+
+            if step8_blocks_write(task_id):
+                try:
+                    spawn_second_image_pipeline(task_id)
+                except Exception:
+                    pass
+                return "hold"
+        except Exception:
+            pass
+        return "write"
+
+    # 研判 / 终稿：发文齐后先等 step8
     try:
         from report_04.gates import can_advance_to_analysis
 
         if can_advance_to_analysis(task_id).get("ok"):
-            return "write"
+            return _write_or_hold_for_step8()
     except Exception:
         if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
-            return "write"
+            return _write_or_hold_for_step8()
 
     from report_04.gates import can_run_step7_collect, discovery_steps_terminal
 
@@ -517,7 +533,7 @@ def next_agent_action(task_id: str) -> AgentAction:
                     return "call"
             # 帖已采齐、父壳未终态：常见为等视频后台
             return "hold"
-        return "write"
+        return _write_or_hold_for_step8()
 
     # 4.1 / 4.2 / 4.3 系统管线
     s43 = get_step_status(task_id, "step6_osint_es")
@@ -584,7 +600,7 @@ def _inflight_continue_action(task_id: str) -> Optional[AgentAction]:
 def _continue_action_busy(task_id: str, *, target_kind: str) -> bool:
     """仅当「同动作」续跑仍在飞时视为 busy。
 
-    例：posts(call) 在飞不挡 write；系统点亮的 step8 running 不挡 write。
+    例：posts(call) 在飞不挡 write；step8 系统管线期间动作为 hold，不挡后续 write 续跑。
     """
     inflight = _inflight_continue_action(task_id)
     if inflight is None:
@@ -600,8 +616,22 @@ def build_next_action_hint(task_id: str) -> str:
         return ""
     if action == "write":
         return (
-            "【下一步·write】发文与视频已齐。请立即并行输出步骤8/9/10分析正文，"
+            "【下一步·write】发文/视频已齐且图片流分析已收口。"
+            "请立即并行输出步骤8/9/10分析正文，"
             "再写以「一、账号基本信息」开头的步骤11终稿。禁止结束会话、禁止 done。"
+        )
+    if action == "hold":
+        try:
+            from report_04.gates import format_step8_wait_hint
+
+            s8_hint = format_step8_wait_hint(task_id)
+            if s8_hint:
+                return s8_hint
+        except Exception:
+            pass
+        return (
+            "【下一步·hold】系统管线进行中（图片核验 / 认定 / 社工库 / 视频 / 图片流分析）。"
+            "保持会话，禁止 done；管线收口后系统将催下一步。"
         )
     if action == "call":
         if _can_run_step7(task_id):
@@ -676,6 +706,14 @@ def build_continue_message(kind: str, task_id: str) -> str:
                 "须等发文父壳 completed/skipped（含视频终态）后再写步骤8/9/10与终稿。"
                 "禁止提前输出研判正文；禁止结束会话；禁止同步 mcp_video2frame_*。"
             )
+        try:
+            from report_04.gates import format_step8_wait_hint
+
+            s8_hint = format_step8_wait_hint(task_id)
+            if s8_hint:
+                return "【系统续跑·禁止结束会话】" + s8_hint
+        except Exception:
+            pass
         return (
             "【系统续跑·禁止结束会话】系统正在推进 4.1.2/4.2/4.3 或内容采集收口。"
             "禁止写「等待系统」并结束。无工具可调则保持会话；"
@@ -695,8 +733,17 @@ def build_continue_message(kind: str, task_id: str) -> str:
                 + wait_hint
                 + "禁止等待句、禁止 done。"
             )
+        try:
+            from report_04.gates import format_step8_wait_hint
+
+            s8_hint = format_step8_wait_hint(task_id)
+            if s8_hint:
+                return "【系统续跑·禁止结束会话】" + s8_hint
+        except Exception:
+            pass
         return (
-            "【系统续跑·禁止结束会话】发文与视频已完成。请立即并行输出步骤8/9/10分析正文，"
+            "【系统续跑·禁止结束会话】发文/视频已齐且图片流分析已收口。"
+            "请立即并行输出步骤8/9/10分析正文，"
             "再输出以「一、账号基本信息」开头的步骤11终稿。禁止等待句、禁止 done。"
         )
     return (

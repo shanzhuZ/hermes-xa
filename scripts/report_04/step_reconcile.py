@@ -1907,7 +1907,7 @@ def reconcile_step2_from_maigret(store: Any, task_id: str) -> int:
 
     rows = db.fetch_all(
         """
-        SELECT id, tool_name, tool_output FROM hermes_tool_outputs
+        SELECT id, tool_name, tool_args, tool_output FROM hermes_tool_outputs
         WHERE task_id=%s AND status='success'
           AND (tool_name LIKE 'mcp_maigret_%%' OR tool_name LIKE 'mcp__maigret__%%')
         ORDER BY id
@@ -1916,15 +1916,27 @@ def reconcile_step2_from_maigret(store: Any, task_id: str) -> int:
     )
     if not rows:
         return 0
+    from collect_01.normalizers.maigret import format_step2_message
     from collect_01.normalizers.registry import dispatch
 
     total = 0
+    last_sites = None
+    last_data: Dict[str, Any] = {}
+    last_args: Dict[str, Any] = {}
     for row in rows:
         tool_name = normalize_mcp_tool_name(str(row["tool_name"]))
+        raw_args = row.get("tool_args")
+        if isinstance(raw_args, str):
+            try:
+                raw_args = json.loads(raw_args or "{}")
+            except Exception:
+                raw_args = {}
+        tool_args = raw_args if isinstance(raw_args, dict) else {}
         ctx = {
             "task_id": task_id,
             "tool_output_id": row["id"],
             "tool_name": tool_name,
+            "tool_args": tool_args,
         }
         data = dispatch(tool_name, row.get("tool_output"), ctx)
         cands = data.get("candidates") or []
@@ -1935,12 +1947,20 @@ def reconcile_step2_from_maigret(store: Any, task_id: str) -> int:
             c.setdefault("match_strategy", "maigret")
         store.save_candidate_rows(cands, step_key="step2_maigret")
         total += len(cands)
+        last_sites = data.get("sites_scanned")
+        last_data = data if isinstance(data, dict) else {}
+        last_args = tool_args
     if total > 0:
         store.set_step_status(
             task_id,
             "step2_maigret",
             "completed",
-            message=f"Maigret 发现 {total} 个候选",
+            message=format_step2_message(
+                total,
+                sites_scanned=last_sites,
+                result_data=last_data,
+                tool_args=last_args,
+            ),
         )
         return 1
     return 0
@@ -2037,15 +2057,19 @@ def reconcile_step3_from_web_tools(store: Any, task_id: str) -> int:
         "SELECT COUNT(*) AS c FROM cross_platform_candidates WHERE task_id=%s AND match_strategy='web_search'",
         (task_id,),
     )
-    n_web_c = int((n_web or {}).get("c") or 0)
-    msg = f"网页检索完成（search={n_search} extract={n_extract} 候选={n_web_c}）"
-    if force_budget:
-        msg = f"网页检索超时/达上限收口（search={n_search} extract={n_extract} 候选={n_web_c}）"
+    logger.info(
+        "reconcile 收口 step3 task=%s force_budget=%s search=%s extract=%s web_cands=%s",
+        task_id,
+        force_budget,
+        n_search,
+        n_extract,
+        int((n_web or {}).get("c") or 0),
+    )
     store.set_step_status(
         task_id,
         "step3_web_search",
         "completed",
-        message=msg,
+        message="网页检索完成",
     )
     store.materialize_step4_from_candidates(task_id)
     return 1

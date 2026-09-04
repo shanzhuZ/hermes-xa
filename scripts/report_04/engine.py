@@ -125,10 +125,28 @@ def format_system_progress_board(task_id: str) -> str:
                     if wait_hint:
                         lines.append(wait_hint)
                     else:
-                        lines.append(
-                            "【下一步】内容采集父壳已终态 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
-                            "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
-                        )
+                        try:
+                            from report_04.gates import (
+                                format_step8_wait_hint,
+                                step8_blocks_write,
+                            )
+
+                            if step8_blocks_write(task_id):
+                                s8 = format_step8_wait_hint(task_id)
+                                lines.append(
+                                    s8
+                                    or "【下一步】图片流分析进行中 → hold，完成后写步骤8/9/10与终稿。"
+                                )
+                            else:
+                                lines.append(
+                                    "【下一步】图片流已收口 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
+                                    "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
+                                )
+                        except Exception:
+                            lines.append(
+                                "【下一步】内容采集父壳已终态 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
+                                "禁止结束会话；禁止回写步骤5/6/4.3；禁止 vision。"
+                            )
             except Exception:
                 lines.append(
                     "【下一步】内容采集父壳已终态 → 立刻写步骤8/9/10，再写「一、账号基本信息」终稿；"
@@ -386,28 +404,33 @@ def build_agent_context(task_id: str) -> Optional[str]:
         except Exception:
             pass
         lines.append(
-            f"当前 task_id={task_id}。图片资产由系统 Hook 兜底；"
+            f"当前 task_id={task_id}。图片资产由系统 Hook 兜底（步骤8，最多分析 20 张发文配图）；"
+            "禁止 Agent 自行执行 image_pipeline；"
             "禁止在终稿前缀/正文写「跳过步骤7.5 / 管线未找到 / 即席执行」等元叙述。"
         )
         try:
+            from report_04.gates import format_step8_wait_hint, step8_blocks_write
+
+            if step8_blocks_write(task_id):
+                s8_hint = format_step8_wait_hint(task_id)
+                if s8_hint:
+                    lines.append(s8_hint)
+                lines.append(
+                    "当前须 hold：禁止输出步骤8/9/10与终稿；图片流分析收口后系统再催 write。"
+                )
+                return "\n".join(lines)
+        except Exception:
+            pass
+        try:
             from report_04.image_assets import has_stored_images
 
-            if not has_stored_images(task_id):
-                lines.append(
-                    "若需补跑图片入库（勿写入报告正文）："
-                    f"python -m image_pipeline.run --task-id {task_id} --force-analyze ；"
-                    "失败只记日志，勿判失败，继续步骤8/9/10。"
-                )
-            else:
+            if has_stored_images(task_id):
                 lines.append(
                     "图片资产已入库，步骤8可优先结合 collect_images / "
                     f"GET /api/tasks/{task_id}/images 写分析，勿重复全量空跑 vision。"
                 )
         except Exception:
-            lines.append(
-                "步骤8前可确认图片管线："
-                f"python -m image_pipeline.run --task-id {task_id} --force-analyze"
-            )
+            pass
         wait_hint = ""
         try:
             from report_04.video_report import format_report_wait_hint
@@ -440,7 +463,9 @@ def build_agent_context(task_id: str) -> Optional[str]:
             except Exception:
                 pass
         elif gate in ANALYSIS_STEP_KEYS:
-            lines.append("步骤8/9/10：同一次响应内并行输出三步分析正文。")
+            lines.append(
+                "步骤8/9/10：同一次响应内并行输出三步分析正文，再写步骤11终稿。"
+            )
 
     return "\n".join(lines)
 

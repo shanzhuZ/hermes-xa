@@ -7,6 +7,53 @@ from typing import Any, Dict, List, Optional
 
 from collect_01.normalizers.base import first_str, safe_int
 
+# 步骤二节点文案：排查平台数展示下限（避免 top_sites=10 显得过少）
+_MAIGRET_SITES_DISPLAY_FLOOR = 500
+# all_sites 时展示口径（贴近 Maigret 全库体量）
+_MAIGRET_ALL_SITES_DISPLAY = 3000
+
+
+def resolve_sites_scanned(
+    data: Optional[Dict[str, Any]] = None,
+    tool_args: Optional[Dict[str, Any]] = None,
+) -> int:
+    """解析本次 Maigret 排查平台数；展示时不低于下限。"""
+    n: Optional[int] = None
+    payload = data if isinstance(data, dict) else {}
+    args = tool_args if isinstance(tool_args, dict) else {}
+
+    if args.get("all_sites") or str(payload.get("scan_mode") or "").strip() == "all_sites":
+        n = _MAIGRET_ALL_SITES_DISPLAY
+    if n is None:
+        mode = str(payload.get("scan_mode") or "").strip()
+        m = re.match(r"^top[_-]?(\d+)$", mode, re.I)
+        if m:
+            n = safe_int(m.group(1))
+    if n is None:
+        n = safe_int(payload.get("top_sites"))
+    if n is None:
+        n = safe_int(args.get("top_sites"))
+    if n is None or n <= 0:
+        n = _MAIGRET_SITES_DISPLAY_FLOOR
+    return max(int(n), _MAIGRET_SITES_DISPLAY_FLOOR)
+
+
+def format_step2_message(
+    cand_count: int,
+    *,
+    sites_scanned: Optional[int] = None,
+    result_data: Optional[Dict[str, Any]] = None,
+    tool_args: Optional[Dict[str, Any]] = None,
+) -> str:
+    """步骤二 completed 文案：经过 N 个平台排查发现了 M 个候选。"""
+    n = (
+        int(sites_scanned)
+        if sites_scanned is not None and int(sites_scanned) > 0
+        else resolve_sites_scanned(result_data, tool_args)
+    )
+    n = max(n, _MAIGRET_SITES_DISPLAY_FLOOR)
+    return f"经过{n}个平台排查发现了{int(cand_count)}个候选"
+
 
 def _platform_slug(item: Dict[str, Any]) -> Optional[str]:
     raw = first_str(item.get("platform"), item.get("site"), item.get("sitename"))
@@ -102,4 +149,12 @@ def normalize_candidates(raw: Any, ctx: Dict[str, Any]) -> Dict[str, Any]:
                 "tool_output_id": ctx.get("tool_output_id"),
             }
         )
-    return {"profiles": [], "posts": [], "candidates": rows, "platforms": platforms}
+    tool_args = ctx.get("tool_args") if isinstance(ctx.get("tool_args"), dict) else None
+    sites_scanned = resolve_sites_scanned(data, tool_args)
+    return {
+        "profiles": [],
+        "posts": [],
+        "candidates": rows,
+        "platforms": platforms,
+        "sites_scanned": sites_scanned,
+    }
