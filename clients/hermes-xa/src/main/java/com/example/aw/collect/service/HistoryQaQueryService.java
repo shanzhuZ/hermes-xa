@@ -223,7 +223,6 @@ public class HistoryQaQueryService {
         // ---------- 2. 状态白名单（与列表 SQL 保持一致） ----------
         String status = str(task.get("status"));
         if (!isHistoryVisibleStatus(status)) {
-            // 例如 failed：不算「历史问答回顾」范围；前端可提示去别的入口看失败单
             throw new ResponseStatusException(HttpStatus.CONFLICT, "task_status_not_in_history");
         }
 
@@ -539,8 +538,8 @@ public class HistoryQaQueryService {
     /**
      * 规范化列表接口传入的 status 参数。
      * <ul>
-     *   <li>空 / 空白 → null，表示不额外按单状态过滤（SQL 仍限制在三种可见状态内）</li>
-     *   <li>pending / running / completed → 原样小写返回</li>
+     *   <li>空 / 空白 → null，表示不额外按单状态过滤</li>
+     *   <li>pending / running / completed / cancelled / failed → 原样小写返回</li>
      *   <li>其它值 → 400 invalid_status</li>
      * </ul>
      */
@@ -549,7 +548,8 @@ public class HistoryQaQueryService {
             return null;
         }
         String s = status.trim().toLowerCase(Locale.ROOT);
-        if ("pending".equals(s) || "running".equals(s) || "completed".equals(s) || "cancelled".equals(s)) {
+        if ("pending".equals(s) || "running".equals(s) || "completed".equals(s)
+                || "cancelled".equals(s) || "failed".equals(s)) {
             return s;
         }
         throw new ResponseStatusException(HttpStatus.BAD_REQUEST, "invalid_status");
@@ -657,7 +657,8 @@ public class HistoryQaQueryService {
         return "pending".equals(status)
                 || "running".equals(status)
                 || "completed".equals(status)
-                || "cancelled".equals(status);
+                || "cancelled".equals(status)
+                || "failed".equals(status);
     }
 
     /**

@@ -218,6 +218,21 @@ def maybe_start_platform_video(store: Any, task_id: str, platform: str) -> Optio
     elif existing == "failed":
         logger.info("04 视频节点曾失败，准备重试 task=%s platform=%s", task_id, platform)
 
+    # 首次开跑 / 失败重试也须过门禁（原先只挡空 pending，晚到首启仍会回开 step7）
+    if existing in (None, "", "failed") and not video_respawn_allowed(task_id):
+        logger.info(
+            "04 禁止新开视频（父壳已关或已进研判）task=%s platform=%s existing=%s",
+            task_id,
+            platform,
+            existing,
+        )
+        return {
+            "skipped": True,
+            "reason": "respawn_denied",
+            "step_key": key,
+            "status": existing or "absent",
+        }
+
     picked = select_latest_downloadable_video(task_id, platform)
     if not picked or not picked.get("url"):
         logger.info("04 平台无下载视频，不建节点 task=%s platform=%s", task_id, platform)

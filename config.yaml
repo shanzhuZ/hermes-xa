@@ -1,26 +1,25 @@
-﻿model:
-  default: deepseek-v4-flash
-  provider: deepseek
-  base_url: https://api.deepseek.com
+model:
+  default: gpt-5.6-sol
+  provider: openai-api
+  base_url: https://api.openai.com/v1
 agent:
   max_turns: 150
   max_verify_nudges: 8
   image_input_mode: auto
   verbose: false
   reasoning_effort: medium
-  system_prompt: '鐢ㄦ埛鐢ㄤ腑鏂囦笌浣犱氦娴佹椂锛屼綘蹇呴』鍏ㄧ▼浣跨敤绠€浣撲腑鏂囧洖澶嶏紝鍖呮嫭锛?
-
-    - 宸ュ叿璋冪敤鍓嶇殑杩涘害璇存槑锛堟楠?1锝? 鏈€澶?2 鍙ワ紝鐢ㄤ腑鏂囷級
-
-    - 涓棿鎺ㄧ悊涓庣姸鎬佽鏄?
-
-    - 鏈€缁堣緭鍑烘姤鍛?
-
-    绂佹鐢ㄨ嫳鏂囧彊杩伴噰闆嗘楠ゆ垨鍐欒嫳鏂囪皟鏌ユ姤鍛娿€傚凡鍔犺浇 Skill 鏃朵弗鏍奸伒瀹堝叾涓枃杈撳嚭鏍煎紡涓庝笁鑺傜粨鏋勩€?
-
-    '
+  system_prompt: |
+    用户用中文与你交流时，你必须全程使用简体中文回复，包括：
+    
+    - 工具调用前的进度说明（步骤1～N 最多 2 句，用中文）
+    
+    - 中间推理与状态说明
+    
+    - 最终输出报告
+    
+    禁止用英文叙述采集步骤或写英文调查报告。已加载 Skill 时严格遵守其中文输出格式与三节结构。
   personalities:
-    helpful: 浣犳槸 Hermes 鏁版嵁閲囬泦鍔╂墜銆傜敤鎴风敤涓枃鏃跺叏绋嬬畝浣撲腑鏂囷紱閬靛畧宸插姞杞?Skill 鐨勬楠や笌杈撳嚭鏍煎紡锛涚姝㈣嫳鏂囪皟鏌ユ姤鍛婁綋銆?
+    helpful: 你是 Hermes 数据采集助手。用户用中文时全程简体中文；遵守已加载 Skill 的步骤与输出格式；禁止英文调查报告体。
     concise: You are a concise assistant. Keep responses brief and to the point.
     technical: You are a technical expert. Provide detailed, accurate technical information.
     creative: You are a creative assistant. Think outside the box and offer innovative
@@ -224,8 +223,9 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   weixin_search:
-    enabled: false
+    enabled: true
     command: D:/environment/python/Scripts/weixin_search_mcp.exe
     args:
       - --transport
@@ -237,6 +237,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   weixin_read:
     enabled: true
     command: D:/environment/python/python.exe
@@ -249,6 +250,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   trends_hub:
     enabled: true
     command: D:/environment/node/node_cache/mcp-trends-hub.cmd
@@ -256,6 +258,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 120
+
   bilibili:
     enabled: true
     command: D:/environment/python/python.exe
@@ -267,6 +270,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   reddit:
     enabled: true
     command: D:/environment/node/node_cache/reddit-mcp-buddy.cmd
@@ -278,6 +282,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   firecrawl:
     enabled: true
     command: D:/environment/node/node_cache/firecrawl-mcp.cmd
@@ -287,6 +292,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   playwright:
     enabled: false
     command: D:/environment/node/node_cache/playwright-mcp.cmd
@@ -300,12 +306,14 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 600
     connect_timeout: 180
+
   brightdata:
     enabled: false
     url: ${BRIGHTDATA_MCP_URL}
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 60
+
   apify:
     enabled: true
     command: D:/environment/node/node_cache/actors-mcp-server.cmd
@@ -321,6 +329,7 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 600
     connect_timeout: 120
+
   maigret:
     enabled: true
     command: D:/environment/python/python.exe
@@ -338,6 +347,55 @@ mcp_servers:
     supports_parallel_tool_calls: false
     timeout: 360
     connect_timeout: 120
+
+  user_scanner:
+    enabled: true
+    command: D:/environment/python/python.exe
+    args:
+      - D:/hermes-xa/mcp/servers/user-scanner-mcp-server/run_user_scanner_mcp.py
+    env:
+      FASTMCP_SHOW_SERVER_BANNER: 'false'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: '1'
+      # 上游 get_proxy() 不读 HTTP_PROXY，启动器会把本变量注入工具 proxies
+      USER_SCANNER_PROXY: ${HTTPS_PROXY}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      # 未显式传 cross_scan 时默认开启（0/false 可关）
+      USER_SCANNER_CROSS_SCAN: '1'
+    supports_parallel_tool_calls: false
+    timeout: 600
+    connect_timeout: 120
+    tools:
+      include:
+        - scan_username
+        - scan_email
+        - list_available_modules
+
+  # 全球人员信息检索-PDL（People Data Labs Person Search）
+  pdl_person:
+    enabled: true
+    command: D:/environment/python/python.exe
+    args:
+      - D:/hermes-xa/mcp/servers/pdl-person-mcp-server/server.py
+    env:
+      FASTMCP_SHOW_SERVER_BANNER: 'false'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PDL_API_KEY: ${PDL_API_KEY}
+      PDL_PROXY: ${HTTPS_PROXY}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      PDL_TIMEOUT: '60'
+      PDL_MAX_SIZE: '25'
+    supports_parallel_tool_calls: true
+    timeout: 90
+    connect_timeout: 60
+    tools:
+      include:
+        - search_person
+
   twitter:
     enabled: true
     command: D:/environment/python/python.exe
@@ -367,6 +425,7 @@ mcp_servers:
         - get_user_following
         - get_trends
         - get_timeline
+
   ocr:
     enabled: true
     command: D:/environment/python/python.exe
@@ -384,6 +443,7 @@ mcp_servers:
     supports_parallel_tool_calls: true
     timeout: 120
     connect_timeout: 120
+
   youtube:
     enabled: true
     command: C:/nvm4w/nodejs/node.exe

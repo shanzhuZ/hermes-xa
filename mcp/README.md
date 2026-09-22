@@ -10,13 +10,16 @@ mcp/
 ├── install.ps1             # 合并配置到 ../config.yaml
 ├── servers/                # 自研/拷贝的 Python & Node MCP 实现
 │   ├── maigret-mcp-server/
+│   ├── user-scanner-mcp-server/
+│   ├── pdl-person-mcp-server/
 │   ├── ocr-mcp-server/
 │   ├── twitter-mcp-server/
 │   ├── youtube-mcp-server/
 │   ├── bilibili-mcp-server/
 │   └── weixin-read-mcp/
 └── data/
-    └── maigret-reports/    # Maigret 扫描报告输出
+    ├── maigret-reports/         # Maigret 扫描报告输出
+    └── user-scanner-reports/    # user-scanner 预留输出目录
 ```
 
 ## 已配置 MCP 列表
@@ -34,6 +37,8 @@ mcp/
 | brightdata | HTTP（默认关闭） | 亮数据 |
 | apify | npm cmd | Apify Actors |
 | maigret | `servers/maigret-mcp-server` | 跨平台用户名扫描 |
+| user_scanner | `servers/user-scanner-mcp-server` | 邮箱/用户名 OSINT（465+） |
+| pdl_person | `servers/pdl-person-mcp-server` | 全球人员信息检索（People Data Labs） |
 | twitter | `servers/twitter-mcp-server` | Twitter/X（仅基础工具） |
 | ocr | `servers/ocr-mcp-server` | 本地 Tesseract OCR |
 | youtube | `servers/youtube-mcp-server` | YouTube Data API |
@@ -43,7 +48,7 @@ mcp/
 ### 1. Python 包（若未安装）
 
 ```powershell
-pip install mcp-server-weibo weixin_search_mcp
+pip install mcp-server-weibo weixin_search_mcp "user-scanner[mcp]"
 ```
 
 ### 2. Node 全局包（若 cmd 不存在）
@@ -69,6 +74,7 @@ powershell -ExecutionPolicy Bypass -File .\install.ps1
 | `APIFY_TOKEN` | Apify（Instagram/Telegram/TikTok/Facebook/GitHub） |
 | `FIRECRAWL_API_KEY` | Firecrawl（Apify 失败时主页兜底） |
 | `YOUTUBE_API_KEY` | YouTube |
+| `PDL_API_KEY` | 全球人员信息检索-PDL |
 | `HTTP_PROXY` / `HTTPS_PROXY` | 需代理的 MCP |
 | `BRIGHTDATA_MCP_URL` | Bright Data（可选） |
 

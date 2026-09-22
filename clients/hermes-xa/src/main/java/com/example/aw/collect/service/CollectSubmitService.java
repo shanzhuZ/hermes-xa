@@ -61,6 +61,9 @@ public class CollectSubmitService {
     @Autowired
     private CollectTaskMapper collectTaskMapper;
 
+    @Autowired
+    private HomePageService homePageService;
+
     public Map<String, Object> submitCollect(String sessionId, String taskId, String message, String taskType)
             throws Exception {
         return submitInternal(sessionId, taskId, message, taskType, null, false);
@@ -108,6 +111,13 @@ public class CollectSubmitService {
 
         taskCreateRegistry.resolve(typeDef.getFrontendType())
                 .createPendingTask(taskId, sessionId, gatewayMessage, payloadJson);
+
+        // 首页看板：今日用量、历史任务总数各 +1（失败不影响下发）
+        try {
+            homePageService.bumpUsageOnTaskSubmit();
+        } catch (Exception e) {
+            log.warn("下发后用量计数失败 taskId={}: {}", taskId, e.getMessage());
+        }
 
         if ("account_report".equals(typeDef.getDbTaskType())) {
             // 1) 同步只推「思考中…」，立刻返回 taskId 让前端连 SSE

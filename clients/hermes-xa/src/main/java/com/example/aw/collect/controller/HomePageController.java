@@ -18,6 +18,7 @@ import javax.annotation.Resource;
  *   <li>节点树：{@code /tree/display}、{@code /node/{id}/children}</li>
  *   <li>L4 详情：{@code /l4/detail?esId=}</li>
  *   <li>看板统计：{@code /homepage/dashboard}</li>
+ *   <li>今日用量：{@code /homepage/today-usage}</li>
  * </ul>
  */
 @RestController
@@ -88,5 +89,15 @@ public class HomePageController {
     @GetMapping("/homepage/dashboard")
     public Result dashboard() {
         return homePageService.getDashboard();
+    }
+
+    /**
+     * 单独查询今日用量（只读 summary.todayUsage，不写回）。
+     * <p>
+     * 请求：{@code GET /api/agent/homepage/today-usage}
+     */
+    @GetMapping("/homepage/today-usage")
+    public Result todayUsage() {
+        return homePageService.getTodayUsage();
     }
 }

@@ -11,9 +11,11 @@ import org.elasticsearch.client.Request;
 import org.elasticsearch.client.RequestOptions;
 import org.elasticsearch.client.Response;
 import org.elasticsearch.client.RestHighLevelClient;
+import org.elasticsearch.common.Strings;
 import org.elasticsearch.index.query.QueryBuilders;
 import org.elasticsearch.search.SearchHit;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
+import org.elasticsearch.search.fetch.subphase.FetchSourceContext;
 import org.elasticsearch.search.sort.SortOrder;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
@@ -301,14 +303,7 @@ public class HomePageService {
             charts.put("social", social);
             charts.put("business", business);
 
-            Map<String, Object> todayRow = byDate.get(today);
-            if (todayRow != null) {
-                int todayUsage = toIntValue(todayRow.get("verifyCount"))
-                        + toIntValue(todayRow.get("reportCount"));
-                summary.put("todayUsage", Integer.valueOf(todayUsage));
-                summary.put("updatedAt", LocalDateTime.now().format(TS_FMT));
-                indexStatsDoc("summary", summary);
-            }
+            // todayUsage / historyTaskTotal 由下发任务累加维护，此处不再用 daily 覆盖
 
             Map<String, Object> records = new LinkedHashMap<String, Object>();
             records.put("todayUsage", summary.get("todayUsage"));
@@ -323,6 +318,68 @@ public class HomePageService {
 
         } catch (Exception e) {
             logger.error("getDashboard error", e);
+            return new Result(400, "查询失败", 0, 0, null);
+        }
+    }
+
+    /**
+     * 任务下发成功后：今日用量 +1、历史任务总数 +1（跨天自动重置今日用量）。
+     * 失败只打日志，不影响下发主流程。
+     */
+    public void bumpUsageOnTaskSubmit() {
+        try {
+            GetRequest getRequest = new GetRequest(INDEX_STATS, "summary");
+            GetResponse getResponse = restHighLevelClient5602.get(getRequest, RequestOptions.DEFAULT);
+            if (!getResponse.isExists()) {
+                logger.warn("bumpUsageOnTaskSubmit: summary 不存在，跳过");
+                return;
+            }
+            Map<String, Object> summary = JSON.parseObject(getResponse.getSourceAsString(), Map.class);
+            if (summary == null) {
+                summary = new LinkedHashMap<String, Object>();
+            }
+            String today = LocalDate.now().format(DAY_FMT);
+            String usageDate = summary.get("todayUsageDate") == null
+                    ? "" : String.valueOf(summary.get("todayUsageDate")).trim();
+            int todayUsage = toIntValue(summary.get("todayUsage"));
+            if (!today.equals(usageDate)) {
+                todayUsage = 1;
+                summary.put("todayUsageDate", today);
+            } else {
+                todayUsage = todayUsage + 1;
+            }
+            int historyTotal = toIntValue(summary.get("historyTaskTotal")) + 1;
+            summary.put("todayUsage", Integer.valueOf(todayUsage));
+            summary.put("historyTaskTotal", Integer.valueOf(historyTotal));
+            summary.put("updatedAt", LocalDateTime.now().format(TS_FMT));
+            indexStatsDoc("summary", summary);
+            logger.info("下发任务用量+1 todayUsage={} historyTaskTotal={}", todayUsage, historyTotal);
+        } catch (Exception e) {
+            logger.warn("bumpUsageOnTaskSubmit 失败（不影响下发）: {}", e.getMessage());
+        }
+    }
+
+    /**
+     * 仅读 summary.todayUsage，不写回、不拉 daily/图表。
+     */
+    public Result getTodayUsage() {
+        try {
+            GetRequest getRequest = new GetRequest(INDEX_STATS, "summary");
+            getRequest.fetchSourceContext(new FetchSourceContext(
+                    true, new String[]{"todayUsage"}, Strings.EMPTY_ARRAY));
+            GetResponse getResponse = restHighLevelClient5602.get(getRequest, RequestOptions.DEFAULT);
+            if (!getResponse.isExists()) {
+                return new Result(404, "未找到今日用量", 0, 0, null);
+            }
+            Map<String, Object> source = getResponse.getSourceAsMap();
+            if (source == null || source.get("todayUsage") == null) {
+                return new Result(404, "未找到今日用量", 0, 0, null);
+            }
+            Map<String, Object> records = new LinkedHashMap<String, Object>();
+            records.put("todayUsage", Integer.valueOf(toIntValue(source.get("todayUsage"))));
+            return new Result(200, "查询成功", 1, 1, records);
+        } catch (Exception e) {
+            logger.error("getTodayUsage error", e);
             return new Result(400, "查询失败", 0, 0, null);
         }
     }

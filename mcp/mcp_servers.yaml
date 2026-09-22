@@ -144,6 +144,54 @@ mcp_servers:
     timeout: 360
     connect_timeout: 120
 
+  user_scanner:
+    enabled: true
+    command: D:/environment/python/python.exe
+    args:
+      - D:/hermes-xa/mcp/servers/user-scanner-mcp-server/run_user_scanner_mcp.py
+    env:
+      FASTMCP_SHOW_SERVER_BANNER: 'false'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PYTHONUNBUFFERED: '1'
+      # 上游 get_proxy() 不读 HTTP_PROXY，启动器会把本变量注入工具 proxies
+      USER_SCANNER_PROXY: ${HTTPS_PROXY}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      # 未显式传 cross_scan 时默认开启（0/false 可关）
+      USER_SCANNER_CROSS_SCAN: '1'
+    supports_parallel_tool_calls: false
+    timeout: 600
+    connect_timeout: 120
+    tools:
+      include:
+        - scan_username
+        - scan_email
+        - list_available_modules
+
+  # 全球人员信息检索-PDL（People Data Labs Person Search）
+  pdl_person:
+    enabled: true
+    command: D:/environment/python/python.exe
+    args:
+      - D:/hermes-xa/mcp/servers/pdl-person-mcp-server/server.py
+    env:
+      FASTMCP_SHOW_SERVER_BANNER: 'false'
+      PYTHONUTF8: '1'
+      PYTHONIOENCODING: utf-8
+      PDL_API_KEY: ${PDL_API_KEY}
+      PDL_PROXY: ${HTTPS_PROXY}
+      HTTP_PROXY: ${HTTP_PROXY}
+      HTTPS_PROXY: ${HTTPS_PROXY}
+      PDL_TIMEOUT: '60'
+      PDL_MAX_SIZE: '25'
+    supports_parallel_tool_calls: true
+    timeout: 90
+    connect_timeout: 60
+    tools:
+      include:
+        - search_person
+
   twitter:
     enabled: true
     command: D:/environment/python/python.exe

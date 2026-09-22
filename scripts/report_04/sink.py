@@ -819,7 +819,12 @@ _HARD_SEED_MARKERS = (
     "account not found",
     "no such user",
     "could not find user",
+    "user is suspended",
+    "account is suspended",
+    "suspended",
     "账号不存在",
+    "账号已封",
+    "账号被封",
     "validation error",
     "requires either",
 )
@@ -836,6 +841,60 @@ def _is_hard_seed_error(text: str) -> bool:
     if re.search(r"\bnot found\b", low):
         return True
     return False
+
+
+def _seed_ready(task_id: str) -> bool:
+    """步骤一已成功，才允许进入线索发现。失败重试中不算完成。"""
+    return get_step_status(task_id, "step1_seed") == "completed"
+
+
+def _hold_discovery_until_seed(store: TaskStore, task_id: str) -> None:
+    """种子未完成时，把已抢跑的线索发现打回 pending，避免第二步先亮。"""
+    if _seed_ready(task_id):
+        return
+    if get_step_status(task_id, "step1_seed") in {"failed", "skipped"}:
+        return
+    for step_key, message in (
+        ("step2_maigret", "等待种子采集完成"),
+        ("step3_web_search", "等待种子采集完成"),
+        ("phase_discovery", "等待锁定目标完成"),
+    ):
+        cur = get_step_status(task_id, step_key)
+        if cur != "running":
+            continue
+        store.set_step_status(
+            task_id,
+            step_key,
+            "pending",
+            message=message,
+            skip_phase_rollup=True,
+        )
+        logger.info("种子未完成，回退抢跑步骤 task=%s step=%s", task_id, step_key)
+
+
+def _is_premature_before_seed(tool_name: str, task_id: str) -> Optional[str]:
+    """种子未完成：禁止 Maigret / 网页检索及更后步骤的工具。"""
+    if _seed_ready(task_id):
+        return None
+    if get_step_status(task_id, "step1_seed") in {"failed", "skipped"}:
+        return "步骤1种子已失败，任务应结束，禁止继续后续采集。"
+    if _is_seed_profile_tool(tool_name, task_id):
+        return None
+    if tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}:
+        return None
+    later = (
+        tool_name.startswith("mcp_maigret_")
+        or tool_name in WEB_SEARCH_TOOLS
+        or tool_name in PROFILE_TOOLS
+        or tool_name in POST_TOOLS
+        or tool_name in APIFY_POST_TOOLS
+    )
+    if not later:
+        return None
+    return (
+        f"步骤1种子尚未完成，禁止调用 {tool_name}。"
+        "请先完成种子主页采集；失败会自动重试，满 3 次或账号封禁/不存在则任务失败。"
+    )
 
 
 def _seed_fail_count(task_id: str) -> int:
@@ -893,7 +952,10 @@ def _abort_or_retry_seed(
         return
     n = _seed_fail_count(task_id) + 1
     if n >= _SEED_RETRY_MAX:
-        store.fail_seed_and_abort(task_id, fail_msg)
+        store.fail_seed_and_abort(
+            task_id,
+            f"种子账号连续失败{n}次，任务已失败。{fail_msg}",
+        )
         logger.warning(
             "种子采集失败已满 %s 次，中止 task=%s tool=%s: %s",
             _SEED_RETRY_MAX,
@@ -912,6 +974,7 @@ def _abort_or_retry_seed(
             "seed_fail_last": (fail_msg or "")[:200],
         },
     )
+    _hold_discovery_until_seed(store, task_id)
     logger.warning(
         "种子采集瞬态失败，软重试 %s/%s task=%s tool=%s: %s",
         n,
@@ -978,6 +1041,7 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
         reason = (
             _is_skipped_step_tool(tool_name, task_id, tool_args=tool_args, phase=phase)
             or _is_invalid_youtube_channel_id(tool_name, tool_args)
+            or _is_premature_before_seed(tool_name, task_id)
             or _is_premature_step5_tool(tool_name, task_id)
             or _is_redundant_step5_vision(tool_name, tool_args, task_id)
             or _is_late_web_search_tool(tool_name, task_id)
@@ -2167,6 +2231,8 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         if primary_step and tool_name not in _STEP5_STREAM_TOOLS:
             if primary_step == "step4_profiles" and not discovery_steps_terminal(task_id):
                 pass
+            elif primary_step == "step2_maigret" and not _seed_ready(task_id):
+                _hold_discovery_until_seed(store, task_id)
             elif primary_step == "step3_web_search" and not can_run_step3_web_search(task_id):
                 pass
             elif primary_step == "step7_posts" and not can_run_step7_collect(task_id):
@@ -2498,28 +2564,12 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
         _clear_seed_fail_count(store, task_id)
 
     if tool_name == "mcp_maigret_collect_accounts":
-        from collect_01.normalizers.maigret import format_step2_message
+        if not _seed_ready(task_id):
+            _hold_discovery_until_seed(store, task_id)
+        else:
+            from collect_01.normalizers.maigret import format_step2_message
 
-        cands = result_data.get("candidates") or []
-        store.set_step_status(
-            task_id,
-            "step2_maigret",
-            "completed",
-            message=format_step2_message(
-                len(cands),
-                sites_scanned=result_data.get("sites_scanned"),
-                result_data=result_data,
-                tool_args=tool_args if isinstance(tool_args, dict) else None,
-            ),
-        )
-    elif tool_name.startswith("mcp_maigret_"):
-        from collect_01.normalizers.maigret import format_step2_message
-
-        cur2 = get_step_status(task_id, "step2_maigret")
-        if cur2 == "pending":
-            store.set_step_status(task_id, "step2_maigret", "running", message=f"Maigret 执行中 ({tool_name})")
-        cands = result_data.get("candidates") or []
-        if cands and get_step_status(task_id, "step2_maigret") not in {"completed", "skipped"}:
+            cands = result_data.get("candidates") or []
             store.set_step_status(
                 task_id,
                 "step2_maigret",
@@ -2531,6 +2581,28 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
                     tool_args=tool_args if isinstance(tool_args, dict) else None,
                 ),
             )
+    elif tool_name.startswith("mcp_maigret_"):
+        if not _seed_ready(task_id):
+            _hold_discovery_until_seed(store, task_id)
+        else:
+            from collect_01.normalizers.maigret import format_step2_message
+
+            cur2 = get_step_status(task_id, "step2_maigret")
+            if cur2 == "pending":
+                store.set_step_status(task_id, "step2_maigret", "running", message=f"Maigret 执行中 ({tool_name})")
+            cands = result_data.get("candidates") or []
+            if cands and get_step_status(task_id, "step2_maigret") not in {"completed", "skipped"}:
+                store.set_step_status(
+                    task_id,
+                    "step2_maigret",
+                    "completed",
+                    message=format_step2_message(
+                        len(cands),
+                        sites_scanned=result_data.get("sites_scanned"),
+                        result_data=result_data,
+                        tool_args=tool_args if isinstance(tool_args, dict) else None,
+                    ),
+                )
 
     if tool_name in WEB_SEARCH_TOOLS:
         if get_step_status(task_id, "step3_web_search") not in {"completed", "skipped"}:

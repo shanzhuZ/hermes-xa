@@ -534,11 +534,35 @@ public class CollectApiController {
             item.put("msgType", stringVal(row.get("msg_type")));
             String dbType = stringVal(row.get("task_type"));
             item.put("taskType", taskTypeRegistry.labelOfDbTaskType(dbType));
+            // 与 /api/history/tasks 一致：返回任务状态，failed 的 statusLabel 为「失败」
+            String status = stringVal(row.get("status"));
+            item.put("status", status);
+            item.put("statusLabel", labelTaskStatus(status));
             item.put("payload", parsePayloadJson(row.get("payload_json")));
             item.put("createdAt", row.get("created_at"));
             dialogues.add(item);
         }
         return dialogues;
+    }
+
+    /** 任务状态英文码 → 中文文案（与 HistoryQaQueryService.labelStatus 对齐）。 */
+    private static String labelTaskStatus(String status) {
+        if ("pending".equals(status)) {
+            return "待开始";
+        }
+        if ("running".equals(status)) {
+            return "进行中";
+        }
+        if ("completed".equals(status)) {
+            return "已完成";
+        }
+        if ("failed".equals(status)) {
+            return "失败";
+        }
+        if ("cancelled".equals(status)) {
+            return "已取消";
+        }
+        return status;
     }
 
     private static String stringVal(Object v) {

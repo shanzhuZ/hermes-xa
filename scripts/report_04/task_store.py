@@ -323,15 +323,24 @@ class TaskStore:
         )
 
     def fail_seed_and_abort(self, task_id: str, error_message: str) -> None:
-        """种子主页采集失败：步骤一 failed、任务 failed，未完成步骤一律 skipped。"""
-        msg = (error_message or "种子账号采集失败，请检查账号名").strip()
-        cur1 = get_step_status(task_id, "step1_seed")
-        if cur1 not in {"completed", "failed", "skipped"}:
-            self.set_step_status(task_id, "step1_seed", "failed", message=msg[:500])
-        elif cur1 != "failed":
-            # 已 completed 但业务上应失败时不再改步骤终态语义；任务级失败仍写入
-            pass
+        """种子主页采集失败：任务标 failed；步骤一文案固定为「种子账号不存在」；父壳标 completed。
+
+        任务状态必须先于步骤收口写入。步骤失败会向上收口父壳，若后写任务状态，
+        可能被 completed 守卫挡住，列表就一直看不到 failed。
+        流程图上「锁定目标」父节点按完成展示，具体原因留在任务 error_message。
+        """
+        msg = (error_message or "种子账号不存在").strip()
+        node_message = "种子账号不存在"
         self.mark_task_failed(task_id, msg)
+        cur1 = get_step_status(task_id, "step1_seed")
+        if cur1 not in {"completed", "skipped"}:
+            self.set_step_status(
+                task_id,
+                "step1_seed",
+                "failed",
+                message=node_message,
+                skip_phase_rollup=True,
+            )
         db.execute(
             """
             UPDATE collect_phase_steps
@@ -345,6 +354,15 @@ class TaskStore:
             """,
             ("种子账号采集失败，已中止后续步骤", task_id),
         )
+        # 父节点「锁定目标」标完成，进度走到 100%。任务本身仍是 failed。
+        if get_step_status(task_id, "step1_seed") == "failed":
+            self.set_step_status(
+                task_id,
+                "phase_lock_target",
+                "completed",
+                message="阶段内业务步骤已全部终态",
+                skip_phase_rollup=True,
+            )
 
     def create_pending_task(
         self,
@@ -1112,10 +1130,31 @@ class TaskStore:
             # 兼容：仅映射到壳的旧路径
             shell = phase_shell_of_execution_step(execution_step_key)
             chain = [shell] if shell else []
+
+        # 视频旁路：研判已点亮或发文父壳已关时，禁止把 step7_posts / phase_content 打回 running
+        block_video_parent_reopen = False
+        if is_video_platform_step(execution_step_key):
+            try:
+                from report_04.video_job import video_respawn_allowed
+
+                block_video_parent_reopen = not video_respawn_allowed(task_id)
+            except Exception:
+                block_video_parent_reopen = False
+
         for node in chain:
             # 方案 A：视频旁路不把已 completed 的发文子步重新钉成 running；
             # 仍点亮 step7_posts / phase_content，保证树上层与视频进行中一致
             if is_video_platform_step(execution_step_key) and is_post_platform_step(node):
+                continue
+            if block_video_parent_reopen and node in {
+                POST_PARENT_STEP_KEY,
+                "phase_content",
+            }:
+                logger.info(
+                    "拒绝视频回开发文父壳 step=%s task=%s（已进研判或父壳已关）",
+                    node,
+                    task_id,
+                )
                 continue
             cur = get_step_status(task_id, node)
             if cur == "skipped":

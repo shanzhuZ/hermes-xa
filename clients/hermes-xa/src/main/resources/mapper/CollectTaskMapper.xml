@@ -104,6 +104,7 @@
                ) AS payload_json,
                d.msg_type,
                t.task_type,
+               t.status,
                d.created_at
         <include refid="dialogueHistoryWhere"/>
         ORDER BY d.created_at DESC, d.id DESC
@@ -247,10 +248,10 @@
       - 含 pending / running / completed / cancelled
       - 列表通过子查询附带用户提问、payload、summary 预览，避免 N+1
     -->
-    <!-- 历史问答：pending/running/completed/cancelled；可选按业务类型、单一状态再筛 -->
+    <!-- 历史问答：pending/running/completed/cancelled/failed；可选按业务类型、单一状态再筛 -->
     <sql id="historyTaskWhere">
         FROM hermes_tasks t
-        WHERE t.status IN ('pending', 'running', 'completed', 'cancelled')
+        WHERE t.status IN ('pending', 'running', 'completed', 'cancelled', 'failed')
         <if test="dbTaskType != null and dbTaskType != ''">
             AND t.task_type = #{dbTaskType}
         </if>

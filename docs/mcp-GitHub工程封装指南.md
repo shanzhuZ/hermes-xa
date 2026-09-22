@@ -318,6 +318,7 @@ hermes chat
 | 项目 | 模式 | 上游 | 启动入口 |
 |------|------|------|----------|
 | Maigret | A CLI+Worker | [soxoj/maigret](https://github.com/soxoj/maigret) | `server.py` |
+| user-scanner | B 薄启动器 | [kaifcodec/user-scanner](https://github.com/kaifcodec/user-scanner) | `run_user_scanner_mcp.py` |
 | Twitter | B 薄启动器 | pip `twitter_mcp` | `run_twitter_mcp_data_only.py` |
 | OCR | C 薄启动器 | pip `mcp-ocr` | `run_ocr_mcp.py` |
 | YouTube | D Node stdio | [coyaSONG/youtube-mcp-server](https://github.com/coyaSONG/youtube-mcp-server) | `dist/stdio-main.js` |
