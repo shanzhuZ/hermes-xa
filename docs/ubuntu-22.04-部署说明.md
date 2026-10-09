@@ -116,10 +116,17 @@ chmod +x /opt/hermes-xa/clients/hermes-xa/start.sh
 
 需先确认 `pom.xml` 打出的 jar 名；若不是 `target/hermes-xa.jar`，改 `hermes-java.service` 的 `ExecStart`。
 
-## 7. MySQL / ES（后做）
+## 7. MySQL / ES
 
-建表：按序号执行 `scripts/sql/001_*.sql` …（不要跑已删除的 `022_collect_pdl_hits`）。  
-改 `.env` 的 `HERMES_DB_*`、`ES_*`，以及 `clients/hermes-xa/src/main/resources/application.yml` 数据源后重新打包 Java。
+本分支已写好连接（HBase 仍关闭）：
+
+| 组件 | 地址 |
+|------|------|
+| MySQL | `192.168.3.124:3306` / 库 `hermes-xa` / `root` |
+| ES | `http://192.168.3.226:9201` / `elastic` |
+
+服务器上从 `.env.example` 拷出 `.env` 后，Python 入库走 `HERMES_DB_*`、`ES_*`；Java 走 `application.yml`。  
+建表：按序号执行 `scripts/sql/001_*.sql` …（不要跑已删除的 `022_collect_pdl_hits`）。
 
 ## 8. 自检
 

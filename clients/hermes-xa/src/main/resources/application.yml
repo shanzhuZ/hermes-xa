@@ -10,11 +10,11 @@ server:
 
 # 大屏 agent_node ES（与 scripts/agent_node/seed_es.py 对齐）
 es:
-  host: 127.0.0.1
-  port: 9200
+  host: 192.168.3.226
+  port: 9201
   scheme: http
   username: elastic
-  password: "123456"
+  password: "i7Smzj2wVUndynjJXXv76A=="
   connect-timeout: 10000
   socket-timeout: 600000
   agent-node-index: hermes_xa_agent_node
@@ -41,13 +41,9 @@ spring:
       max-file-size: 1024MB
       max-request-size: 1024MB
   datasource:
-    url: jdbc:mysql://127.0.0.1:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
+    url: jdbc:mysql://192.168.3.124:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
     username: root
-    password: 123456
-#  datasource:
-#    url: jdbc:mysql://192.168.3.124:3306/hermes-xa?useUnicode=true&characterEncoding=utf8&serverTimezone=Asia/Shanghai&useSSL=false&allowPublicKeyRetrieval=true
-#    username: root
-#    password: "Yvns!niwo^coc57Qpoi"
+    password: "Yvns!niwo^coc57Qpoi"
 
 #hermes:
 #  base-url: http://127.0.0.1:8642

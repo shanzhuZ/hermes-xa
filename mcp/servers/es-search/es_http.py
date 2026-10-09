@@ -32,9 +32,9 @@ if _env_path.exists():
                 os.environ[_k] = _v
 
 # 凭证仅从环境变量 / config.yaml env 注入，禁止把密码写进仓库
-ES_HOST = os.environ.get("ES_HOST", "http://127.0.0.1:9200")
-ES_USERNAME = os.environ.get("ES_USERNAME", "")
-ES_PASSWORD = os.environ.get("ES_PASSWORD", "")
+ES_HOST = os.environ.get("ES_HOST", "http://192.168.3.226:9201")
+ES_USERNAME = os.environ.get("ES_USERNAME", "elastic")
+ES_PASSWORD = os.environ.get("ES_PASSWORD", "i7Smzj2wVUndynjJXXv76A==")
 
 # ──────────────────────────────────────────────
 # 1. 索引定义（一个索引起一个 tool）

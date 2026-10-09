@@ -42,10 +42,10 @@ def load_env() -> None:
 def db_config() -> Dict[str, Any]:
     load_env()
     return {
-        "host": os.environ.get("HERMES_DB_HOST", "127.0.0.1"),
+        "host": os.environ.get("HERMES_DB_HOST", "192.168.3.124"),
         "port": int(os.environ.get("HERMES_DB_PORT", "3306")),
         "user": os.environ.get("HERMES_DB_USER", "root"),
-        "password": os.environ.get("HERMES_DB_PASSWORD", "123456"),
+        "password": os.environ.get("HERMES_DB_PASSWORD", "Yvns!niwo^coc57Qpoi"),
         "database": os.environ.get("HERMES_DB_NAME", "hermes-xa"),
         "charset": "utf8mb4",
     }
