@@ -1,0 +1,19 @@
+[Unit]
+Description=Hermes XA Java API (port 4377)
+After=network.target mysql.service
+
+[Service]
+Type=simple
+User=root1
+Group=root1
+WorkingDirectory=/opt/hermes-xa/clients/hermes-xa
+Environment=JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
+EnvironmentFile=-/opt/hermes-xa/.env
+ExecStart=/usr/bin/java -jar /opt/hermes-xa/clients/hermes-xa/target/aw-0.0.1-SNAPSHOT.jar
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/hermes-xa/logs/java.log
+StandardError=append:/opt/hermes-xa/logs/java-error.log
+
+[Install]
+WantedBy=

@@ -22,7 +22,10 @@ EVENTS = (
 
 
 def _hook_command() -> str:
-    python_exe = os.environ.get("HERMES_PYTHON", r"D:/environment/python/python.exe").strip()
+    python_exe = os.environ.get(
+        "HERMES_PYTHON",
+        "/opt/hermes-xa/.venv/bin/python",
+    ).strip()
     sink = (REPO_ROOT / "scripts" / "db_sink.py").as_posix()
     return f"{python_exe} {sink}"
 

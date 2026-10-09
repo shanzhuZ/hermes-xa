@@ -2,6 +2,9 @@
 
 账号智能分析平台的 Hermes Agent 部署与业务配置仓库。
 
+**当前分支 `deploy/ubuntu-22.04`**：面向 Ubuntu 22.04，代码根目录约定 **`/opt/hermes-xa`**。  
+Windows 请用 `backup/2026-08-19-local`。Linux 步骤见 [docs/ubuntu-22.04-部署说明.md](docs/ubuntu-22.04-部署说明.md)。
+
 ## 仓库内容
 
 | 目录/文件 | 说明 |

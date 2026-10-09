@@ -31,10 +31,10 @@ public class VideoAssetQueryService {
     @Autowired
     private HBaseImageClient hBaseImageClient;
 
-    @Value("${hermes.video.public-base-url:http://192.168.100.39:4377}")
+    @Value("${hermes.video.public-base-url:http://127.0.0.1:4377}")
     private String publicBaseUrl;
 
-    @Value("${hermes.video.local-dir:D:/hermes-xa/data/video_bytes}")
+    @Value("${hermes.video.local-dir:/opt/hermes-xa/data/video_bytes}")
     private String videoLocalDir;
 
     @Value("${hermes.video.url-prefix:/video-files}")
@@ -212,7 +212,7 @@ public class VideoAssetQueryService {
     }
 
     private String normalizeLocalDir() {
-        String dir = videoLocalDir == null ? "D:/hermes-xa/data/video_bytes" : videoLocalDir.trim();
+        String dir = videoLocalDir == null ? "/opt/hermes-xa/data/video_bytes" : videoLocalDir.trim();
         return dir.replace("/", File.separator);
     }
 

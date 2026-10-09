@@ -1,11 +1,13 @@
 # MCP Server 基础配置（Hermes config.yaml 的 mcp_servers 段）
-# 路径均相对于本机部署根目录 D:/hermes-xa/mcp/
-# 合并方式：将本文件内容复制到 D:/hermes-xa/config.yaml 的 mcp_servers: 下
+# Ubuntu 22.04 部署根目录：/opt/hermes-xa
+# Python：仓库 venv  /opt/hermes-xa/.venv/bin/python
+# Node：系统 node/npx（apt 或 nodesource）
+# 合并：bash mcp/install.sh
 
 mcp_servers:
   weibo:
     enabled: true
-    command: D:/environment/python/Scripts/mcp-server-weibo.exe
+    command: /opt/hermes-xa/.venv/bin/mcp-server-weibo
     args:
       - stdio
     env:
@@ -22,7 +24,7 @@ mcp_servers:
 
   weixin_search:
     enabled: true
-    command: D:/environment/python/Scripts/weixin_search_mcp.exe
+    command: /opt/hermes-xa/.venv/bin/weixin_search_mcp
     args:
       - --transport
       - stdio
@@ -36,11 +38,10 @@ mcp_servers:
 
   weixin_read:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/weixin-read-mcp/src/server.py
+      - /opt/hermes-xa/mcp/servers/weixin-read-mcp/src/server.py
     env:
-      PATH: C:/Users/zhr/.url-md/bin;${PATH}
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
     supports_parallel_tool_calls: true
@@ -49,17 +50,19 @@ mcp_servers:
 
   trends_hub:
     enabled: true
-    command: D:/environment/node/node_cache/mcp-trends-hub.cmd
-    args: []
+    command: npx
+    args:
+      - -y
+      - mcp-trends-hub
     supports_parallel_tool_calls: true
     timeout: 180
     connect_timeout: 120
 
   bilibili:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/bilibili-mcp-server/server.py
+      - /opt/hermes-xa/mcp/servers/bilibili-mcp-server/server.py
     env:
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
@@ -69,8 +72,10 @@ mcp_servers:
 
   reddit:
     enabled: true
-    command: D:/environment/node/node_cache/reddit-mcp-buddy.cmd
-    args: []
+    command: npx
+    args:
+      - -y
+      - reddit-mcp-buddy
     env:
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
@@ -81,8 +86,10 @@ mcp_servers:
 
   firecrawl:
     enabled: true
-    command: D:/environment/node/node_cache/firecrawl-mcp.cmd
-    args: []
+    command: npx
+    args:
+      - -y
+      - firecrawl-mcp
     env:
       FIRECRAWL_API_KEY: ${FIRECRAWL_API_KEY}
     supports_parallel_tool_calls: true
@@ -91,8 +98,10 @@ mcp_servers:
 
   playwright:
     enabled: false
-    command: D:/environment/node/node_cache/playwright-mcp.cmd
+    command: npx
     args:
+      - -y
+      - '@playwright/mcp'
       - --timeout-navigation
       - '300000'
       - --timeout-action
@@ -112,8 +121,10 @@ mcp_servers:
 
   apify:
     enabled: true
-    command: D:/environment/node/node_cache/actors-mcp-server.cmd
+    command: npx
     args:
+      - -y
+      - '@apify/actors-mcp-server'
       - --actors
       - headlessagent/facebook-profile-post-scraper,clockworks/tiktok-scraper,apify/instagram-scraper,vujeen/telegram-channel-scraper,knotless_cadence/github-profile-scraper
     env:
@@ -128,14 +139,14 @@ mcp_servers:
 
   maigret:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/maigret-mcp-server/server.py
+      - /opt/hermes-xa/mcp/servers/maigret-mcp-server/server.py
     env:
       FASTMCP_SHOW_SERVER_BANNER: 'false'
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
-      MAIGRET_REPORTS_DIR: D:/hermes-xa/mcp/data/maigret-reports
+      MAIGRET_REPORTS_DIR: /opt/hermes-xa/mcp/data/maigret-reports
       MAIGRET_PERSONA_GATE: '0'
       MAIGRET_PROXY: ${HTTPS_PROXY}
       MAIGRET_DEFAULT_TIMEOUT: '300'
@@ -146,19 +157,17 @@ mcp_servers:
 
   user_scanner:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/user-scanner-mcp-server/run_user_scanner_mcp.py
+      - /opt/hermes-xa/mcp/servers/user-scanner-mcp-server/run_user_scanner_mcp.py
     env:
       FASTMCP_SHOW_SERVER_BANNER: 'false'
       PYTHONUTF8: '1'
       PYTHONIOENCODING: utf-8
       PYTHONUNBUFFERED: '1'
-      # 上游 get_proxy() 不读 HTTP_PROXY，启动器会把本变量注入工具 proxies
       USER_SCANNER_PROXY: ${HTTPS_PROXY}
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
-      # 未显式传 cross_scan 时默认开启（0/false 可关）
       USER_SCANNER_CROSS_SCAN: '1'
     supports_parallel_tool_calls: false
     timeout: 600
@@ -169,12 +178,11 @@ mcp_servers:
         - scan_email
         - list_available_modules
 
-  # 全球人员信息检索-PDL（People Data Labs Person Search）
   pdl_person:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/pdl-person-mcp-server/server.py
+      - /opt/hermes-xa/mcp/servers/pdl-person-mcp-server/server.py
     env:
       FASTMCP_SHOW_SERVER_BANNER: 'false'
       PYTHONUTF8: '1'
@@ -194,11 +202,11 @@ mcp_servers:
 
   twitter:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/twitter-mcp-server/run_twitter_mcp_data_only.py
+      - /opt/hermes-xa/mcp/servers/twitter-mcp-server/run_twitter_mcp_data_only.py
     env:
-      TWITTER_COOKIES: C:/Users/zhr/.config/twitter-mcp/cookies.json
+      TWITTER_COOKIES: /opt/hermes-xa/mcp/data/twitter-cookies.json
       TWITTER_PROXY: ${HTTPS_PROXY}
       TWITTER_PERSONA_TOOLS: '0'
       HTTP_PROXY: ${HTTP_PROXY}
@@ -224,12 +232,12 @@ mcp_servers:
 
   ocr:
     enabled: true
-    command: D:/environment/python/python.exe
+    command: /opt/hermes-xa/.venv/bin/python
     args:
-      - D:/hermes-xa/mcp/servers/ocr-mcp-server/run_ocr_mcp.py
+      - /opt/hermes-xa/mcp/servers/ocr-mcp-server/run_ocr_mcp.py
     env:
-      TESSERACT_CMD: C:/Program Files/Tesseract-OCR/tesseract.exe
-      TESSDATA_PREFIX: D:/hermes-xa/mcp/servers/ocr-mcp-server/tessdata
+      TESSERACT_CMD: /usr/bin/tesseract
+      TESSDATA_PREFIX: /opt/hermes-xa/mcp/servers/ocr-mcp-server/tessdata
       HTTP_PROXY: ${HTTP_PROXY}
       HTTPS_PROXY: ${HTTPS_PROXY}
       PYTHONUTF8: '1'
@@ -242,9 +250,9 @@ mcp_servers:
 
   youtube:
     enabled: true
-    command: C:/nvm4w/nodejs/node.exe
+    command: node
     args:
-      - D:/hermes-xa/mcp/servers/youtube-mcp-server/dist/stdio-main.js
+      - /opt/hermes-xa/mcp/servers/youtube-mcp-server/dist/stdio-main.js
     env:
       YOUTUBE_API_KEY: ${YOUTUBE_API_KEY}
       YOUTUBE_COLLECT_MODE: '1'

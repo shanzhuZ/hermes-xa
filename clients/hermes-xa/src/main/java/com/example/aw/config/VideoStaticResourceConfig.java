@@ -11,7 +11,7 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 public class VideoStaticResourceConfig implements WebMvcConfigurer {
 
-    @Value("${hermes.video.local-dir:D:/hermes-xa/data/video_bytes}")
+    @Value("${hermes.video.local-dir:/opt/hermes-xa/data/video_bytes}")
     private String videoLocalDir;
 
     @Value("${hermes.video.url-prefix:/video-files}")

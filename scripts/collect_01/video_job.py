@@ -66,7 +66,11 @@ def _video_python() -> str:
     except Exception as exc:
         logger.debug("读取 video2frame python 失败: %s", exc)
 
+    env_py = (os.environ.get("HERMES_PYTHON") or "").strip()
     for candidate in (
+        Path(env_py) if env_py else Path(),
+        Path("/opt/hermes-xa/.venv/bin/python"),
+        Path("/usr/bin/python3"),
         Path(r"D:/environment/python/python.exe"),
         Path(r"C:/environment/python/python.exe"),
     ):

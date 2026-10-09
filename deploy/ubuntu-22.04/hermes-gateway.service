@@ -1,0 +1,23 @@
+[Unit]
+Description=Hermes XA Gateway (Ubuntu 22.04)
+After=network.target
+# 需要时再启用：WantedBy 留空，不随开机自启
+
+[Service]
+Type=simple
+User=root1
+Group=root1
+WorkingDirectory=/opt/hermes-xa
+Environment=HERMES_HOME=/opt/hermes-xa
+Environment=PYTHONPATH=/opt/hermes-xa/scripts
+Environment=PYTHONUTF8=1
+Environment=PYTHONUNBUFFERED=1
+EnvironmentFile=-/opt/hermes-xa/.env
+ExecStart=/opt/hermes-xa/.venv/bin/hermes gateway
+Restart=on-failure
+RestartSec=5
+StandardOutput=append:/opt/hermes-xa/logs/gateway.log
+StandardError=append:/opt/hermes-xa/logs/gateway-error.log
+
+[Install]
+WantedBy=
