@@ -54,6 +54,7 @@ from report_04.phases import (
     APIFY_POST_TOOLS,
     APIFY_TOOL_PLATFORM,
     OSINT_ES_STEP_KEY,
+    PDL_STEP_KEY,
     POST_TOOLS,
     PROFILE_TOOLS,
     STEP4_COLLECT_TOOLS,
@@ -236,6 +237,24 @@ def _is_premature_osint_tool(tool_name: str, task_id: str) -> Optional[str]:
     )
 
 
+def _is_premature_pdl_tool(tool_name: str, task_id: str) -> Optional[str]:
+    """4.1+4.2 未完成时禁止 PDL（与 4.3 并行，不依赖社工库）。"""
+    try:
+        from report_04.pdl_enrich import can_advance_to_pdl, is_pdl_tool
+    except Exception:
+        return None
+    if not is_pdl_tool(tool_name):
+        return None
+    if can_advance_to_pdl(task_id).get("ok"):
+        return None
+    s5 = get_step_status(task_id, "step5_streams")
+    s6 = get_step_status(task_id, "step6_validated")
+    return (
+        f"步骤4.7 全球人员信息检索尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'}）。"
+        f"禁止调用 {tool_name}。须等 4.1+4.2 完成后由系统或本步调用 PDL（与 4.3 并行）。"
+    )
+
+
 def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
     """步骤五/六未完成时禁止发文类工具。返回拦截原因，允许则 None。"""
     if can_run_step7_collect(task_id):
@@ -261,11 +280,12 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
                 "同一会话下一轮编排变为 step7_posts 后必须立即调发文工具。"
             )
         s43 = get_step_status(task_id, "step6_osint_es")
+        s_pdl = get_step_status(task_id, "step6_pdl")
         return (
             f"步骤7发文尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
-            f"step6_osint_es={s43 or 'pending'}）。"
+            f"step6_osint_es={s43 or 'pending'} step6_pdl={s_pdl or 'pending'}）。"
             "禁止发文类工具。禁止结束会话空等；"
-            "保持同一会话，待系统收口 4.1/4.2/4.3 后下一轮立刻补采各平台发文。"
+            "保持同一会话，待系统收口 4.1/4.2/4.3/4.7 后下一轮立刻补采各平台发文。"
             "禁止输出「等待系统完成后再发文」后 done。"
         )
     # 步骤四已收口后的 Apify：只可能是抢跑步骤7
@@ -275,11 +295,12 @@ def _is_premature_step7_tool(tool_name: str, task_id: str) -> Optional[str]:
     )
     if apify_like and s4 in {"completed", "skipped"}:
         s43 = get_step_status(task_id, "step6_osint_es")
+        s_pdl = get_step_status(task_id, "step6_pdl")
         return (
             f"步骤4已完成，但步骤7尚未开放（step5={s5 or 'pending'} step6={s6 or 'pending'} "
-            f"step6_osint_es={s43 or 'pending'}）。"
+            f"step6_osint_es={s43 or 'pending'} step6_pdl={s_pdl or 'pending'}）。"
             "禁止提前用 Apify 采发文；禁止结束会话空等；"
-            "待 4.2+4.3 终态后同一会话立即采发文。"
+            "待 4.2+4.3+4.7 终态后同一会话立即采发文。"
         )
     return None
 
@@ -386,10 +407,10 @@ def _is_premature_step5_tool(tool_name: str, task_id: str) -> Optional[str]:
                 "步骤5图片流已收口，禁止再调用 vision/OCR。"
                 "当前为研判/写报：请直接输出步骤8/9/10分析正文与「一、账号基本信息」终稿。"
             )
-        if gate in {"step6_validated", "step6_osint_es"}:
+        if gate in {"step6_validated", "step6_osint_es", "step6_pdl"}:
             return (
                 "步骤5图片流已收口，禁止再调用 vision/OCR。"
-                "当前为步骤6/4.3：保持会话，终态后立刻调步骤7发文工具，勿回补 vision。"
+                "当前为步骤6/4.3/4.7：保持会话，终态后立刻调步骤7发文工具，勿回补 vision。"
             )
         return (
             "步骤5图片流已收口，禁止再调用 vision/OCR。"
@@ -703,6 +724,13 @@ def _resolve_collect_phase(
 
         if is_osint_es_tool(tool_name):
             return None, "step6_osint_es"
+    except Exception:
+        pass
+    try:
+        from report_04.pdl_enrich import is_pdl_tool
+
+        if is_pdl_tool(tool_name):
+            return None, "step6_pdl"
     except Exception:
         pass
     # 步骤七已可跑：Apify Actor/dataset / 发文 MCP 优先归 step7，禁止误进 step4 重开已完成主页
@@ -1046,6 +1074,7 @@ def _on_pre_tool(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
             or _is_redundant_step5_vision(tool_name, tool_args, task_id)
             or _is_late_web_search_tool(tool_name, task_id)
             or _is_premature_osint_tool(tool_name, task_id)
+            or _is_premature_pdl_tool(tool_name, task_id)
             or _is_premature_step7_tool(tool_name, task_id)
         )
         already_enriched = False
@@ -2240,6 +2269,20 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             elif primary_step == OSINT_ES_STEP_KEY and not can_advance_to_osint(task_id).get("ok"):
                 # 禁止抢跑点亮 4.3（含连带 phase_collision 壳）
                 pass
+            elif primary_step == PDL_STEP_KEY:
+                try:
+                    from report_04.pdl_enrich import can_advance_to_pdl
+
+                    if not can_advance_to_pdl(task_id).get("ok"):
+                        pass
+                    else:
+                        cur = get_step_status(task_id, primary_step)
+                        if cur not in {"completed", "failed", "skipped"}:
+                            store.set_step_status(
+                                task_id, primary_step, "running", message=f"执行 {tool_name}"
+                            )
+                except Exception:
+                    pass
             else:
                 cur = get_step_status(task_id, primary_step)
                 if cur not in {"completed", "failed", "skipped"}:
@@ -2354,6 +2397,42 @@ def _on_post_tool(payload: Dict[str, Any]) -> None:
             return
     except Exception as exc:
         logger.warning("社工库 post_tool 失败 task=%s tool=%s: %s", task_id, tool_name, exc)
+
+    # 4.7 PDL：系统主路径 + Agent 补查收口
+    try:
+        from report_04.pdl_enrich import (
+            apply_pdl_tool_result,
+            can_advance_to_pdl,
+            is_pdl_tool,
+            kickoff_pdl_if_ready,
+        )
+
+        if is_pdl_tool(tool_name):
+            if not can_advance_to_pdl(task_id).get("ok"):
+                try:
+                    from report_04.engine import run_post_tool_light
+
+                    run_post_tool_light(store, task_id)
+                except Exception:
+                    pass
+                return
+            kickoff_pdl_if_ready(store, task_id)
+            if get_step_status(task_id, PDL_STEP_KEY) in {"pending", "running"}:
+                apply_pdl_tool_result(
+                    store,
+                    task_id,
+                    tool_output=tool_output,
+                    success=(status == "success"),
+                )
+            try:
+                from report_04.engine import run_post_tool_light
+
+                run_post_tool_light(store, task_id)
+            except Exception as exc:
+                logger.warning("PDL 后引擎推进失败 task=%s: %s", task_id, exc)
+            return
+    except Exception as exc:
+        logger.warning("PDL post_tool 失败 task=%s tool=%s: %s", task_id, tool_name, exc)
 
     # OCR/Vision 快路径：无 profile/post 产物，必须先写图片流再退出。
     # GPT 并行多工具时 db_sink 易在尾部超时，导致 tool_outputs 已成功、步骤五永远 pending。
@@ -2815,6 +2894,12 @@ def _on_post_llm_call(payload: Dict[str, Any]) -> Optional[Dict[str, Any]]:
                 _maybe_advance_step67(store, task_id)
                 if get_step_status(task_id, "step6_validated") == "completed":
                     kickoff_osint_if_ready(store, task_id)
+                    try:
+                        from report_04.pdl_enrich import kickoff_pdl_if_ready
+
+                        kickoff_pdl_if_ready(store, task_id)
+                    except Exception:
+                        pass
                 followup_ctx = build_post_llm_followup(task_id)
                 # 叠加 anti_wait 文案
                 try:
@@ -2961,8 +3046,11 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
 
     s43 = get_step_status(task_id, "step6_osint_es")
     osint_pending = s43 not in {"completed", "skipped", "failed"}
+    s_pdl = get_step_status(task_id, "step6_pdl")
+    # 旧任务无 PDL 行：不算 pending
+    pdl_pending = s_pdl is not None and s_pdl not in {"completed", "skipped", "failed"}
 
-    # 2) 尽快 spawn 续跑：4.3 未终态交给 osint_worker→osint_done，避免 hold/posts 抢 inflight
+    # 2) 尽快 spawn 续跑：4.3/4.7 未终态交给 worker，避免 hold/posts 抢 inflight
     deferred = False
     try:
         from report_04.session_continue import (
@@ -2972,7 +3060,7 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
         )
 
         if not has_final_report(task_id):
-            if osint_pending:
+            if osint_pending or pdl_pending:
                 deferred = True
             else:
                 try:
@@ -3017,6 +3105,46 @@ def _on_session_end(payload: Dict[str, Any]) -> None:
             close_osint_on_session_end(store, task_id)
     except Exception as exc2:
         logger.warning("on_session_end 社工库收口失败 task=%s: %s", task_id, exc2)
+
+    # 3b) PDL：4.2 已完成且 4.7 未终态时 spawn / 同步收口（与 4.3 无关）
+    try:
+        from report_04.pdl_enrich import (
+            close_pdl_on_session_end,
+            kickoff_pdl_if_ready,
+            spawn_detached_pdl,
+        )
+
+        s_pdl2 = get_step_status(task_id, "step6_pdl")
+        pdl_pending2 = s_pdl2 is not None and s_pdl2 not in {
+            "completed",
+            "skipped",
+            "failed",
+        }
+        s6b = get_step_status(task_id, "step6_validated")
+        if s6b == "completed" and pdl_pending2:
+            if not spawn_detached_pdl(task_id):
+                kickoff_pdl_if_ready(store, task_id)
+                close_pdl_on_session_end(store, task_id)
+                try:
+                    from report_04.session_continue import (
+                        has_final_report,
+                        maybe_continue_agent_session,
+                        should_defer_finalize,
+                    )
+
+                    if not has_final_report(task_id):
+                        maybe_continue_agent_session(
+                            store, task_id, reason="session_end"
+                        )
+                        deferred = should_defer_finalize(task_id)
+                except Exception:
+                    pass
+            else:
+                deferred = True
+        else:
+            close_pdl_on_session_end(store, task_id)
+    except Exception as exc3:
+        logger.warning("on_session_end PDL 收口失败 task=%s: %s", task_id, exc3)
 
     # 4) 终稿解析保持简短（禁止同步 urlopen 读完整 stream）
     try:

@@ -10,10 +10,12 @@ from typing import Any, Dict, FrozenSet, Optional
 from collect_01 import db
 from report_04.gates import get_step_status
 from report_04.osint_es import is_osint_es_tool
+from report_04.pdl_enrich import is_pdl_tool
 from report_04.phases import (
     ANALYSIS_STEP_KEYS,
     APIFY_POST_TOOLS,
     OSINT_ES_STEP_KEY,
+    PDL_STEP_KEY,
     PHASE_ANALYSIS,
     PHASE_ANALYSIS_SHELL,
     PHASE_CONTENT,
@@ -70,6 +72,11 @@ _STEP_WHITELIST: Dict[str, FrozenSet[str]] = {
             "mcp_es_search_es_cluster_health",
             "mcp_es-search_list_es_indices",
             "mcp_es-search_es_cluster_health",
+        }
+    ),
+    "step6_pdl": frozenset(
+        {
+            "mcp_pdl_person_search_person",
         }
     ),
     # [COLLISION_DEMO_FAKE] 假节点禁止一切工具 — 正式版删除下列三行
@@ -146,7 +153,11 @@ def _allow_late_step7_post_collect(task_id: str, tool_name: str, phase: Optional
     """步骤7 父节点已 completed 后允许补采发文（只入库，编排层禁止回开父节点）。"""
     if get_step_status(task_id, "step6_validated") != "completed":
         return False
-    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
+    from report_04.gates import osint_terminal_or_absent, pdl_terminal_or_absent
+
+    if not osint_terminal_or_absent(task_id):
+        return False
+    if not pdl_terminal_or_absent(task_id):
         return False
     if get_step_status(task_id, "step7_posts") not in {"completed", "skipped"}:
         return False
@@ -205,12 +216,34 @@ def block_tool_reason(
             "仅对 validated 账号的 profile_url 调用 search_country_wise。"
         )
 
+    # PDL：4.2 后即可；与 4.3 并行（gate 在社工库时也放行）
+    if is_pdl_tool(tool_name):
+        if gate == PDL_STEP_KEY:
+            return None
+        if gate == OSINT_ES_STEP_KEY:
+            try:
+                from report_04.pdl_enrich import can_advance_to_pdl
+
+                if can_advance_to_pdl(task_id).get("ok"):
+                    return None
+            except Exception:
+                pass
+        return (
+            f"当前编排步骤为 {gate}，禁止调用 PDL 工具 {tool_name}。"
+            "须等 4.1+4.2 完成后进入 4.7（step6_pdl），与社工库并行、不依赖 4.3 成败。"
+        )
+
     # Apify dataset/run：phase 与 gate 不一致时按 phase 放宽（Hook 已写 phase）
     ph = str(phase or "")
     if tool_name in {"mcp_apify_get_dataset_items", "mcp_apify_get_actor_run"}:
         if ph.startswith("step4_profile_") and gate in {"step4_profiles", "step1_seed"}:
             return None
-        if ph.startswith("step7_post_") and gate in {"step7_posts", "step6_validated", OSINT_ES_STEP_KEY}:
+        if ph.startswith("step7_post_") and gate in {
+            "step7_posts",
+            "step6_validated",
+            OSINT_ES_STEP_KEY,
+            PDL_STEP_KEY,
+        }:
             return None
 
     if tool_name in allowed:
@@ -242,7 +275,11 @@ def should_advance_on_tool(task_id: str, tool_name: str) -> bool:
     """步骤7未收口时，Agent 又调主页/检索类采集工具 → 视为进入分析前收口 step7。"""
     if not tool_name or get_step_status(task_id, "step6_validated") != "completed":
         return False
-    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
+    from report_04.gates import osint_terminal_or_absent, pdl_terminal_or_absent
+
+    if not osint_terminal_or_absent(task_id):
+        return False
+    if not pdl_terminal_or_absent(task_id):
         return False
     if get_step_status(task_id, "step7_posts") in {"completed", "skipped"}:
         return False
@@ -251,6 +288,8 @@ def should_advance_on_tool(task_id: str, tool_name: str) -> bool:
     if tool_name in {"mcp_apify_get_actor_run", "mcp_apify_get_dataset_items"}:
         return False
     if is_osint_es_tool(tool_name):
+        return False
+    if is_pdl_tool(tool_name):
         return False
     if tool_name in WEB_SEARCH_TOOLS | PROFILE_TOOLS:
         return True
@@ -298,7 +337,11 @@ def _advance_to_analysis_phase_body(
 
     if get_step_status(task_id, "step6_validated") != "completed":
         return False
-    if get_step_status(task_id, OSINT_ES_STEP_KEY) not in {"completed", "skipped"}:
+    from report_04.gates import osint_terminal_or_absent, pdl_terminal_or_absent
+
+    if not osint_terminal_or_absent(task_id):
+        return False
+    if not pdl_terminal_or_absent(task_id):
         return False
 
     leftover = list_unattempted_post_platforms(task_id)

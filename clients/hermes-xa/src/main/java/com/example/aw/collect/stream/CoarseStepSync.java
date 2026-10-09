@@ -209,9 +209,17 @@ public class CoarseStepSync {
         if (!"completed".equals(s6)) {
             return true;
         }
-        // 4.3 未终态（含尚未补插的旧任务 null）禁止粗同步点亮发文
+        // 4.3 / 4.7 未终态禁止粗同步点亮发文；社工库 failed 也算终态
         String sOsint = collectTaskMapper.selectStepStatus(taskId, "step6_osint_es");
-        return !"completed".equals(sOsint) && !"skipped".equals(sOsint);
+        if (!"completed".equals(sOsint) && !"skipped".equals(sOsint) && !"failed".equals(sOsint)) {
+            return true;
+        }
+        String sPdl = collectTaskMapper.selectStepStatus(taskId, "step6_pdl");
+        // 旧任务无 step6_pdl 行：不挡发文；新任务 pending 仍挡，等 Hook kickoff 收口
+        if (sPdl == null || sPdl.trim().isEmpty()) {
+            return false;
+        }
+        return !"completed".equals(sPdl) && !"skipped".equals(sPdl) && !"failed".equals(sPdl);
     }
 
     /**

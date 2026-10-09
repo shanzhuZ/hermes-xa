@@ -280,11 +280,39 @@ def can_advance_to_osint(task_id: str) -> Dict[str, Any]:
     return {"ok": True, "message": "满足社工库核验推进条件"}
 
 
+def can_advance_to_pdl(task_id: str) -> Dict[str, Any]:
+    """4.2 完成后开放 4.7 PDL（与 4.3 并行）。"""
+    from report_04.pdl_enrich import can_advance_to_pdl as _pdl_gate
+
+    return _pdl_gate(task_id)
+
+
+def osint_terminal_or_absent(task_id: str) -> bool:
+    """4.3 已终态（含 failed/skipped），或行不存在。社工库常失败，failed 也算过。"""
+    st = get_step_status(task_id, "step6_osint_es")
+    if st is None:
+        return True
+    return st in {"completed", "skipped", "failed"}
+
+
+def pdl_terminal_or_absent(task_id: str) -> bool:
+    """4.7 已终态，或旧任务根本没有该步骤行。"""
+    pdl = get_step_status(task_id, "step6_pdl")
+    if pdl is None:
+        return True
+    return pdl in {"completed", "skipped", "failed"}
+
+
 def can_run_step7_collect(task_id: str) -> bool:
-    """步骤6 + 4.3 终态后才允许执行发文采集。"""
+    """步骤6 + 4.3(可失败) + 4.7 终态后才允许发文。
+
+    旧任务无 step6_pdl 行时不挡发文。4.3 失败/跳过均不挡 4.7 与发文。
+    """
     if get_step_status(task_id, "step6_validated") != "completed":
         return False
-    return get_step_status(task_id, "step6_osint_es") in {"completed", "skipped"}
+    if not osint_terminal_or_absent(task_id):
+        return False
+    return pdl_terminal_or_absent(task_id)
 
 
 def _step4_profile_children_pending(task_id: str) -> Optional[str]:
@@ -388,9 +416,12 @@ def can_advance_to_step7(task_id: str) -> Dict[str, Any]:
         return {"ok": False, "message": "step5_streams 未完成"}
     if get_step_status(task_id, "step6_validated") != "completed":
         return {"ok": False, "message": "step6_validated 未完成"}
-    osint = get_step_status(task_id, "step6_osint_es")
-    if osint not in {"completed", "skipped"}:
+    if not osint_terminal_or_absent(task_id):
+        osint = get_step_status(task_id, "step6_osint_es")
         return {"ok": False, "message": f"step6_osint_es={osint or 'pending'}"}
+    if not pdl_terminal_or_absent(task_id):
+        pdl = get_step_status(task_id, "step6_pdl")
+        return {"ok": False, "message": f"step6_pdl={pdl or 'pending'}"}
     return {"ok": True, "message": "满足步骤七推进条件"}
 
 

@@ -168,6 +168,58 @@ collect_osint_hits:
   hit_count: 命中数
   created_at: 查询时间
 
+pdl_person_hits:
+  _order:
+    - platform
+    - account_id
+    - profile_url
+    - full_name
+    - industry
+    - job_title
+    - job_company_name
+    - job_company_website
+    - job_company_size
+    - location_country
+    - location_name
+    - education
+    - experience
+    - profiles
+    - skills
+    - emails
+    - phones
+    - linkedin_url
+    - twitter_url
+    - facebook_url
+    - github_url
+    - gated_fields
+    - hit_count
+  _exclude:
+    - id
+    - task_id
+  platform: 平台
+  account_id: 账号ID
+  profile_url: 主页URL
+  full_name: 姓名
+  industry: 行业
+  job_title: 职位
+  job_company_name: 公司
+  job_company_website: 公司网站
+  job_company_size: 公司规模
+  location_country: 国家
+  location_name: 地区
+  education: 学历
+  experience: 经历
+  profiles: 社交档案
+  skills: 技能
+  emails: 邮箱
+  phones: 电话
+  linkedin_url: LinkedIn
+  twitter_url: Twitter
+  facebook_url: Facebook
+  github_url: GitHub
+  gated_fields: 未开放明细字段
+  hit_count: 命中数
+
 # 平台语义差异覆盖
 platform_overrides:
   youtube:

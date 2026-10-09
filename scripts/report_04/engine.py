@@ -60,6 +60,7 @@ def format_system_progress_board(task_id: str) -> str:
     s5 = get_step_status(task_id, "step5_streams") or "pending"
     s6 = get_step_status(task_id, "step6_validated") or "pending"
     s43 = get_step_status(task_id, "step6_osint_es") or "pending"
+    s_pdl = get_step_status(task_id, "step6_pdl") or "pending"
     s7 = get_step_status(task_id, "step7_posts") or "pending"
 
     # 尚未进入四、关联碰撞：只展示前四步，严禁催核验/发文
@@ -103,6 +104,7 @@ def format_system_progress_board(task_id: str) -> str:
         f"- 4.1 信息核验 step5_streams: {s5}",
         f"- 4.2 可信收敛 step6_validated: {s6}",
         f"- 4.3 社工库 step6_osint_es: {s43}",
+        f"- 4.7 全球人员 step6_pdl: {s_pdl}",
         f"- 步骤7 发文 step7_posts: {s7}",
         f"【当前编排】{gate}",
     ]
@@ -298,18 +300,59 @@ def build_agent_context(task_id: str) -> Optional[str]:
         else:
             lines.append(
                 "待查 URL 已由系统查完或无可查 URL；"
-                "可选输出 [社工库核验结论]，然后同一会话立刻进入步骤7调发文工具（禁止 done）。"
+                "可选输出 [社工库核验结论]。4.7 PDL 与本步并行，不依赖社工库成败。"
             )
-        # 4.3 已终态：点名步骤7待采，逼 Agent 立刻调发文工具
-        if get_step_status(task_id, "step6_osint_es") in {"completed", "skipped"}:
+        # 4.3 已终态：催 4.7 / 发文
+        if get_step_status(task_id, "step6_osint_es") in {"completed", "skipped", "failed"}:
+            sp = get_step_status(task_id, "step6_pdl")
+            if sp not in {"completed", "skipped", "failed"}:
+                lines.append(
+                    "【下一步】4.3 已终态（失败/跳过也算），系统正在/即将跑 4.7 PDL；"
+                    "可补调 mcp_pdl_person_search_person(social_link=profile_url)；禁止发文、禁止 done。"
+                )
+            else:
+                try:
+                    from report_04.step_reconcile import list_unattempted_post_platforms
+
+                    todo7 = list_unattempted_post_platforms(task_id)
+                    if todo7:
+                        lines.append(
+                            "【下一步硬强制】步骤7须先对下列 validated 调用发文工具"
+                            f"（{len(todo7)} 个尚未尝试），禁止直接写分析/终稿："
+                        )
+                        for item in todo7[:10]:
+                            lines.append(
+                                f"- {item.get('platform')}: {item.get('tool_hint')}"
+                            )
+                except Exception:
+                    pass
+
+    elif gate == "step6_pdl":
+        lines.append(
+            "步骤4.7 全球人员信息检索（PDL）：与 4.3 并行，主路径由系统自动查；"
+            "可补调 mcp_pdl_person_search_person(social_link=validated 的 profile_url)；"
+            "无命中会 skipped，不阻塞发文。禁止发文工具，禁止结束会话。"
+        )
+        try:
+            from report_04.pdl_enrich import list_pdl_query_targets
+
+            targets = list_pdl_query_targets(task_id)
+            if targets:
+                lines.append(f"可查 URL（{len(targets)}）：")
+                for item in targets[:10]:
+                    lines.append(
+                        f"- {item.get('platform')}/{item.get('account_id')}: {item.get('profile_url')}"
+                    )
+        except Exception:
+            pass
+        if get_step_status(task_id, "step6_pdl") in {"completed", "skipped"}:
             try:
                 from report_04.step_reconcile import list_unattempted_post_platforms
 
                 todo7 = list_unattempted_post_platforms(task_id)
                 if todo7:
                     lines.append(
-                        "【下一步硬强制】步骤7须先对下列 validated 调用发文工具"
-                        f"（{len(todo7)} 个尚未尝试），禁止直接写分析/终稿："
+                        "【下一步硬强制】4.7 已终态，步骤7须立刻调发文工具："
                     )
                     for item in todo7[:10]:
                         lines.append(
@@ -333,7 +376,7 @@ def build_agent_context(task_id: str) -> Optional[str]:
         open_keys = [str(r.get("step_key") or "") for r in (open_posts or [])]
         if s7 in {"pending", None, ""}:
             lines.append(
-                "【步骤7发文·待启动】4.3 已终态，发文父节点等待你调用工具后才会 running。"
+                "【步骤7发文·待启动】4.3/4.7 已终态，发文父节点等待你调用工具后才会 running。"
                 "本回合必须对下列 validated 发起发文工具；"
                 "禁止只写步骤5核验/等待系统、禁止进分析/终稿、禁止结束会话。"
             )
@@ -454,12 +497,17 @@ def build_agent_context(task_id: str) -> Optional[str]:
             )
             try:
                 from report_04.osint_es import format_osint_hits_for_report
+                from report_04.pdl_enrich import format_pdl_hits_for_report
 
                 osint_sum = format_osint_hits_for_report(task_id)
                 if osint_sum:
                     lines.append(osint_sum)
                 else:
                     lines.append("社工库无命中或未查：终稿可不写或一句「社工库未命中」。")
+                pdl_lines = format_pdl_hits_for_report(task_id)
+                if pdl_lines:
+                    lines.append("【PDL 全球人员命中摘要】可揉进一/五章：")
+                    lines.extend(pdl_lines)
             except Exception:
                 pass
         elif gate in ANALYSIS_STEP_KEYS:
@@ -477,6 +525,7 @@ def advance_collision_phase(store: Any, task_id: str, *, max_rounds: int = 4) ->
             get_step_status(task_id, "step5_streams"),
             get_step_status(task_id, "step6_validated"),
             get_step_status(task_id, "step6_osint_es"),
+            get_step_status(task_id, "step6_pdl"),
         )
         try:
             _auto_step5_step6(store, task_id)
@@ -487,10 +536,14 @@ def advance_collision_phase(store: Any, task_id: str, *, max_rounds: int = 4) ->
             get_step_status(task_id, "step5_streams"),
             get_step_status(task_id, "step6_validated"),
             get_step_status(task_id, "step6_osint_es"),
+            get_step_status(task_id, "step6_pdl"),
         )
         if after == before:
             break
-        if after[2] in {"completed", "skipped"}:
+        # 4.3/4.7 终态后才停连推（failed 也算；旧任务无 PDL 行则只看 4.3）
+        if after[2] in {"completed", "skipped", "failed"} and (
+            after[3] is None or after[3] in {"completed", "skipped", "failed"}
+        ):
             break
 
 
@@ -697,14 +750,18 @@ def _auto_step5_step6(store: Any, task_id: str) -> None:
         if get_step_status(task_id, "step6_validated") != "completed":
             return
 
-    # 4.2 已完成：推 4.3；终态后只 prepare 发文子节点
+    # 4.2 已完成：4.3 与 4.7 并行 kickoff（PDL 不依赖社工库成败）
     try:
         from report_04.osint_es import kickoff_osint_if_ready, maybe_fail_forward_stale_osint
+        from report_04.pdl_enrich import kickoff_pdl_if_ready, maybe_fail_forward_stale_pdl
 
+        # 先推 4.7，避免卡在常失败的 4.3 同步管线上
+        kickoff_pdl_if_ready(store, task_id)
+        maybe_fail_forward_stale_pdl(store, task_id, min_wait_seconds=180)
         kickoff_osint_if_ready(store, task_id)
         maybe_fail_forward_stale_osint(store, task_id, min_wait_seconds=120.0)
     except Exception as exc:
-        logger.warning("engine kickoff/fail-forward osint 失败 task=%s: %s", task_id, exc)
+        logger.warning("engine kickoff/fail-forward osint/pdl 失败 task=%s: %s", task_id, exc)
     _prepare_step7_after_osint(store, task_id)
 
 
@@ -753,8 +810,8 @@ def pre_tool_allowed(task_id: str, tool_name: str, *, phase: Optional[str] = Non
             tip = "当前为步骤7发文：禁止 vision；请调发文工具或写步骤8～11。"
         elif gate in ANALYSIS_STEP_KEYS or gate == "step11_report":
             tip = "当前为研判/写报阶段：禁止 vision；请直接写步骤8/9/10；发文与视频齐后再写终稿。"
-        elif gate in {"step6_validated", "step6_osint_es"}:
-            tip = "当前为步骤6/4.3：禁止 vision；保持会话，门禁放行后立刻调发文工具。"
+        elif gate in {"step6_validated", "step6_osint_es", "step6_pdl"}:
+            tip = "当前为步骤6/4.3/4.7：禁止 vision；保持会话，门禁放行后立刻调发文工具。"
         else:
             tip = "步骤5已收口，禁止再 vision/OCR；请按当前编排步骤继续。"
         return enrich_block_reason(task_id, f"步骤5图片流已收口，禁止再调用 vision/OCR。{tip}")

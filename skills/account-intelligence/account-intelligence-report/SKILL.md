@@ -1,6 +1,6 @@
 ---
 name: account-intelligence-report
-description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/4.2认定/4.3系统社工库ES→发文→7.5图片入库→分析→画像报告。禁search_username。"
+description: "04写报@种子。步骤2仅mcp_maigret_collect_accounts→步骤3网页检索→主页/流/4.2认定→4.3社工库∥4.7 PDL→发文→7.5图片入库→分析→画像报告。禁search_username。"
 version: 1.25.0
 author: hermes-xa
 license: MIT
@@ -30,13 +30,14 @@ metadata:
 - **步骤 4 只采主页**：有 MCP→profile；无 MCP→Apify；**失败就跳过**，不换工具；**禁止**因「其它平台已采完」提前跳过尚未轮到的平台（含 youtube/github）；**全部 step4_profile_* 子节点终态前禁止 vision/OCR**
 - **步骤 5（4.1）**：父壳下分 **4.1.1 文本流核验** / **4.1.2 图片流核验**。步骤4全部主页子节点终态后系统启动核验：文本可做规则比对；Agent 应用 `[文本核验结论]` 输出核验正文（无工具）。**4.1.2 由系统 `image_pipeline` 入库分析，完成后才 completed（无图则 skipped）**。两子都终态后父壳 completed 并进步骤6。步骤5未完成禁止发文工具。**禁止**输出「等待系统完成 4.2/4.3 / 会话保持中」后结束会话；无工具可调也须保持会话，系统会同 session 续跑催促下一步
 - **步骤 6（4.2）** 由**系统**收敛 `validated_accounts`（种子必进；勿空转宣称完成）。Agent **无权**因「证据不足」写「不启动步骤6 / 不宜纳入 validated / 不宜前推」——文本核验只陈述证据，收敛由系统执行。完成前 **禁止**发文工具与 Apify 发文轮；**禁止**空等结束会话
-- **步骤 4.3（`step6_osint_es`）**：**主路径由系统自动查 ES**（4.2 完成后 kickoff，不依赖 Agent）。Agent 若见待查 URL 可补调 `mcp_es_search_search_country_wise`；**禁止**默认跑 `search_facebook`/`search_worldpeople`；可选输出 `[社工库核验结论]`。系统无命中 → **skipped**（不阻塞发文）；会话结束/超时有 fail-forward。**4.3 终态后同一会话必须立刻调发文工具**
-- **步骤 7 发文（硬强制·禁止空过）** 须等 4.3 终态后，对 **每一个** `verdict=validated` 平台（含种子）**本回合必须实际调用对应发文工具**（不是口头宣称）。Twitter→`get_user_tweets`；YouTube→`analyze_channel_videos(channelId)`；微博→`get_user_feeds`；其余 Apify→Actor→dataset。**禁止**未调用就收口/进分析/结束会话；**禁止**空过种子 Twitter/YouTube；步骤1/4 主页≠发文。允许：工具已调用但失败或 0 条再 skip。**编号约定：步骤7=发文（树上 `step7_posts`）；切勿把步骤7称作「步骤5/UI步骤5」——步骤5仅指 4.1 核验。**
+- **步骤 4.3（`step6_osint_es`）**：**主路径由系统自动查 ES**（4.2 完成后 kickoff）。Agent 若见待查 URL 可补调 `mcp_es_search_search_country_wise`；**禁止**默认跑 `search_facebook`/`search_worldpeople`；可选输出 `[社工库核验结论]`。系统无命中/失败 → **skipped/failed**（**不阻塞 4.7 与发文**）
+- **步骤 4.7（`step6_pdl`）**：**主路径由系统自动查 PDL**（4.2 完成后与 4.3 **并行** kickoff，**不依赖 4.3 成败**）。Agent 可补调 `mcp_pdl_person_search_person(social_link=profile_url)`；无命中/失败 → **skipped**。**4.7 终态后同一会话必须立刻调发文工具**
+- **步骤 7 发文（硬强制·禁止空过）** 须等 **4.7** 终态（且 4.3 已终态含失败/跳过），对 **每一个** `verdict=validated` 平台（含种子）**本回合必须实际调用对应发文工具**（不是口头宣称）。Twitter→`get_user_tweets`；YouTube→`analyze_channel_videos(channelId)`；微博→`get_user_feeds`；其余 Apify→Actor→dataset。**禁止**未调用就收口/进分析/结束会话；**禁止**空过种子 Twitter/YouTube；步骤1/4 主页≠发文。允许：工具已调用但失败或 0 条再 skip。**编号约定：步骤7=发文（树上 `step7_posts`）；切勿把步骤7称作「步骤5/UI步骤5」——步骤5仅指 4.1 核验。**
 - **步骤 7 视频（Hook 自动·旁路）**：发文入库后若有可下载视频，系统自动挂 `step7_video_*` 并后台分析（每平台最多 1 条、只取前 180 秒、3 秒一帧）。**禁止**同步调用 `mcp_video2frame_*`。**视频不挡发文子步 completed**；**挡住** `step7_posts` 父壳收口。**深度研判只认父壳**：`step7_posts` 为 completed/skipped 后才进步骤8～10；无视频时发文齐即可关父壳并进研判
 - **步骤 7.5（硬门槛）**：步骤7发文全部结束后、步骤8之前，必须跑图片资产入库+分析回填（见下）；失败只记日志/摘要，**禁止**因此把整任务判失败，**禁止**跳过直接写步骤8～11
-- **硬顺序**：步骤5（4.1.1+4.1.2）→ 步骤6（4.2）→ **4.3 社工库** → 步骤7发文 → **7.5 补发文配图** → 步骤8/9/10；4.3 未终态时发文工具会被拦截
+- **硬顺序**：步骤5（4.1.1+4.1.2）→ 步骤6（4.2）→ **4.3 社工库 ∥ 4.7 PDL（并行）** → 步骤7发文 → **7.5 补发文配图** → 步骤8/9/10；4.7 未终态时发文工具会被拦截
 - **步骤3→4**：web_search 未停轮前不要宣称步骤3完成；步骤4主页工具开始后禁止再 web_search（YouTube 解析 UC 例外见上）
-- **步骤5→6→4.3→7**：4.1 两子终态后进 4.2；4.2 后进 4.3；步骤7仅在真正调用发文工具时开始。**系统推进与 Agent 同会话接力，禁止「等系统」后 done**
+- **步骤5→6→4.3∥4.7→7**：4.1 两子终态后进 4.2；4.2 后 **同时** 进 4.3 与 4.7；步骤7仅在真正调用发文工具时开始。**系统推进与 Agent 同会话接力，禁止「等系统」后 done**
 - **步骤 8、步骤9、步骤10**：在同一次响应内同时发起（并行）；三步分析结果必须完全展示呈现；步骤8可优先结合已入库的 `collect_images` / 图片 API，勿再全量空跑未入库 CDN
 - **步骤11** 结合 步骤9、步骤10的分析结果为数据基础。
 - **步骤11** 必须按一～六章结构输出（章节齐全）。**排版硬约束**（禁止整章糊成一段）：章题单独成行；章与章之间空一行；章内按小节换行；小节标题用 `###` 且单独成行；一～四章同一小节内用 1～3 段叙述即可。**五、六两章必须写长**：第五章不少于 5 段、合计不少于约 600 字；第六章研判正文不少于 2 段、合计不少于约 400 字，外加不少于 4 条后续核查。**禁止**把整章所有内容连成一大段。**禁止**在终稿末尾写「（终稿完）/报告完毕/执行完毕」
@@ -56,6 +57,7 @@ metadata:
 | 5  | 4.1 信息核验：4.1.1 文本流核验 + 4.1.2 图片流核验（系统 image_pipeline）                    |
 | 6  | 4.2 `validated_accounts`（相似账号认定）                                                 |
 | 4.3 | 社工库核验：**系统自动**查 validated 的 TW/FB/LI URL；Agent 可补查；无命中 skipped |
+| 4.7 | 全球人员信息检索（PDL）：**系统自动**按 validated 的 profile_url 查；可补调 `mcp_pdl_person_search_person`；无命中 skipped |
 | 7  | 发文：MCP 或 Apify；有可下载视频时 Hook 挂 `step7_video_*` 后台分析（不挡收口） |
 | 7.5 | **补发文配图**：发文后再次 `image_pipeline`（`skip_if_stored`），补齐发文中图片 |
 | 8  | 图片流： 分析账号头像、账号背景图片、账号发文配图的关联信息                                                     |
@@ -90,9 +92,20 @@ metadata:
 | 开门 | 4.1（`step5_streams`）与 4.2（`step6_validated`）均 completed |
 | 主路径 | **系统**对 validated 的 Twitter/Facebook/LinkedIn `profile_url` 自动调 ES；有命中 completed，无命中 skipped |
 | Agent | 若系统未收口且上下文仍列待查 URL，可补调 `search_country_wise`；可选输出 `[社工库核验结论]` |
-| 禁止 | 默认跑 `search_facebook` / `search_worldpeople`；4.3 未终态禁止发文 |
+| 禁止 | 默认跑 `search_facebook` / `search_worldpeople`；4.3 未终态时勿抢发文；**4.3 失败/跳过不挡 4.7** |
 | 成报 | **不单开**「社工库」专节；有命中时把摘要揉进「一、账号基本信息」或「四、核查思路」 |
 | 兜底 | 会话结束未调用 ES → skip；超时无 ES 调用 → fail-forward skip |
+
+## 步骤 4.7 全球人员信息检索-PDL（系统主路径 + Agent 可选）
+
+| 规则 | 说明 |
+|------|------|
+| 开门 | 4.1+4.2 completed（**与 4.3 并行，不依赖 4.3**） |
+| 主路径 | **系统**对 validated 的 TW/FB/LI `profile_url` 自动调 `search_person`；有命中 completed，无命中/失败 skipped |
+| Agent | 可补调 `mcp_pdl_person_search_person(social_link=profile_url)` |
+| 禁止 | 步骤 1～3 调用 PDL；4.7 未终态禁止发文 |
+| 成报 | 命中摘要可揉进「一、账号基本信息」「五、个人画像」；**不单开**专节 |
+| 兜底 | 无 API Key / 无 URL / 超时 / 会话结束 → skipped，**不挡发文** |
 
 ## 步骤 7.5 图片入库与分析回填（硬门槛）
 

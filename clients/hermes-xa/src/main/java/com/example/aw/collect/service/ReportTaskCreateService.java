@@ -200,6 +200,9 @@ public class ReportTaskCreateService implements TaskCreateService {
                 "陕西谣言特色库 Agent", SourceTag.jsonForStep("step6_rumor_sx"));
         // [COLLISION_DEMO_FAKE] end
         collectTaskMapper.insertPhaseStep(
+                taskId, "step6_pdl", PHASE_COLLISION, 470, "4.7",
+                "全球人员信息检索 Agent", SourceTag.jsonForStep("step6_pdl"));
+        collectTaskMapper.insertPhaseStep(
                 taskId, "step7_posts", PHASE_CONTENT, 510, "5.1",
                 "跨平台发文采集 Agent", SourceTag.jsonForStep("step7_posts"));
         collectTaskMapper.insertPhaseStep(

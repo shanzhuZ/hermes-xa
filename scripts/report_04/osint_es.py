@@ -366,18 +366,11 @@ def run_osint_es_pipeline(store: Any, task_id: str) -> bool:
         emit_system_thinking(
             task_id,
             f"【系统·步骤4.3】社工库核验结束：命中={'有' if has_hits else '无'}，"
-            f"成功查询 {ok_n}，失败 {err_n}。请立刻调发文工具，禁止结束会话。",
+            f"成功查询 {ok_n}，失败 {err_n}。"
+            "4.7 PDL 与本步并行，不依赖社工库成败；两步终态后立刻调发文工具。",
         )
     except Exception:
         pass
-    try:
-        from report_04.session_continue import maybe_continue_agent_session
-
-        maybe_continue_agent_session(
-            store, task_id, reason="osint_done", kind="posts"
-        )
-    except Exception as exc:
-        logger.warning("osint 后续跑失败 task=%s: %s", task_id, exc)
     return True
 
 

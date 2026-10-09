@@ -24,6 +24,7 @@ FIXED_SOURCE_TAGS = {
     "step2_maigret": [TAG_OPEN],
     "step3_web_search": [TAG_OPEN],
     "step6_osint_es": [TAG_SELF, TAG_OFFLINE],
+    "step6_pdl": [TAG_PAID],
     "step1_input_accounts": [TAG_SELF],
     # [COLLISION_DEMO_FAKE] 关联碰撞假节点标签 — 正式版删除下列三行
     "step6_geo_verify": [TAG_OPEN],

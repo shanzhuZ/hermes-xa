@@ -293,6 +293,10 @@ public final class CoarseToolStepMapping {
                 || tool.endsWith("es_cluster_health"))) {
             return new Target("step6_osint_es", false);
         }
+        if ("mcp_pdl_person_search_person".equals(tool)
+                || (tool != null && tool.contains("pdl_person") && tool.endsWith("search_person"))) {
+            return new Target("step6_pdl", false);
+        }
         if ("mcp_twitter_get_user_tweets".equals(tool)) {
             return new Target("step7_post_twitter", false);
         }

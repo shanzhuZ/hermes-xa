@@ -371,6 +371,10 @@ public class TaskStepDataQueryService {
         if ("step5_validated".equals(stepKey) || "step6_validated".equals(stepKey)) {
             return "collect_validated_accounts";
         }
+        if ("step6_pdl".equals(stepKey)) {
+            // 仅展示层 collect_display_records（data_type=pdl_person_hits），无独立业务表
+            return "pdl_person_hits";
+        }
         if (DEMO_STEP_KEYS.contains(stepKey)) {
             return "collect_step_demo_records";
         }

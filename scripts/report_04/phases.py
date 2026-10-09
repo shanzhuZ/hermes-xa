@@ -52,6 +52,8 @@ STREAM_TEXT_CONCLUSION_MARKER = "[文本核验结论]"
 # Agent 社工库核验结论标记（Hook 解析）
 OSINT_ES_STEP_KEY = "step6_osint_es"
 OSINT_CONCLUSION_MARKER = "[社工库核验结论]"
+# 4.7 全球人员信息检索（PDL）；4.2 后与 4.3 并行，可 skip，不挡发文前须终态
+PDL_STEP_KEY = "step6_pdl"
 
 # ---------------------------------------------------------------------------
 # [COLLISION_DEMO_FAKE] 假流程节点（演示用）— 正式版请整段删除
@@ -197,6 +199,14 @@ def execution_steps_for_platform(platform: Optional[str] = None) -> Tuple[StepDe
             PHASE_STREAM_VALIDATE,
         ),
         # [COLLISION_DEMO_FAKE] 结束
+        StepDef(
+            PDL_STEP_KEY,
+            "全球人员信息检索 Agent",
+            470,
+            "4.7",
+            PHASE_COLLISION,
+            PHASE_VALIDATED,
+        ),
         StepDef("step7_posts", "跨平台发文采集 Agent", 510, "5.1", PHASE_CONTENT, PHASE_POSTS),
         StepDef("step8_img_analysis", "图片流 Agent 分析", 610, "6.1", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
         StepDef("step9_context_views", "观点与涉华分析 Agent", 620, "6.2", PHASE_ANALYSIS_SHELL, PHASE_ANALYSIS),
@@ -245,6 +255,7 @@ TOOL_PRIMARY_STEP: Dict[str, str] = {
     "mcp_es-search_search_country_wise": OSINT_ES_STEP_KEY,
     "mcp_es_search_list_es_indices": OSINT_ES_STEP_KEY,
     "mcp_es_search_es_cluster_health": OSINT_ES_STEP_KEY,
+    "mcp_pdl_person_search_person": PDL_STEP_KEY,
 }
 
 PROFILE_TOOLS = frozenset(

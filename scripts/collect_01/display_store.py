@@ -33,6 +33,7 @@ DATA_TYPE_BY_STEP = {
     "step5_validated": "collect_validated_accounts",
     "step6_validated": "collect_validated_accounts",
     "step6_osint_es": "collect_osint_hits",
+    "step6_pdl": "pdl_person_hits",
     "step6_posts": "collect_posts",
     "step7_posts": "collect_posts",
     "step8_img_analysis": "report_analysis",
@@ -174,6 +175,14 @@ def build_record_title(data_type: str, row: Dict[str, Any]) -> str:
         hits = row.get("hit_count")
         url = (row.get("profile_url") or row.get("query_text") or "")[:48]
         return f"{plabel} · {handle} · 命中{hits} · {url}".strip(" ·")
+    if data_type == "pdl_person_hits":
+        name = row.get("full_name") or ""
+        handle = row.get("account_id") or ""
+        if name and handle:
+            return f"{plabel} · {handle} · {name}".strip(" ·")
+        if name:
+            return f"{plabel} · {name}".strip(" ·")
+        return f"{plabel} · {handle}".strip(" ·") or "全球人员命中"
     if data_type == "input_accounts":
         handle = row.get("account_handle") or ""
         return f"{plabel} · @{handle}".rstrip(" · @") if handle else plabel
@@ -473,6 +482,53 @@ def sync_osint_hit_display(row: Dict[str, Any], *, step_key: str = "step6_osint_
         row=dict(ref),
         platform=str(ref.get("platform") or row.get("platform") or ""),
         account_id=str(ref.get("account_id") or row.get("account_id") or "") or None,
+    )
+
+
+def sync_pdl_hit_display(row: Dict[str, Any], *, step_key: str = "step6_pdl") -> None:
+    """4.7 全球人员信息检索命中 → 仅写展示层 collect_display_records（无独立业务表）。"""
+    task_id = str(row.get("task_id") or "")
+    if not task_id:
+        return
+    platform = str(row.get("platform") or "")
+    account_id = str(row.get("account_id") or "")
+    profile_url = str(row.get("profile_url") or "")
+    # 唯一键：同任务同 URL 一条展示记录
+    source_ref = f"pdl:{platform}:{account_id}:{profile_url}"[:190]
+    payload = {
+        "platform": platform,
+        "account_id": account_id,
+        "profile_url": profile_url,
+        "full_name": row.get("full_name") or "",
+        "industry": row.get("industry") or "",
+        "job_title": row.get("job_title") or "",
+        "job_company_name": row.get("job_company_name") or "",
+        "job_company_website": row.get("job_company_website") or "",
+        "job_company_size": row.get("job_company_size") or "",
+        "location_country": row.get("location_country") or "",
+        "location_name": row.get("location_name") or "",
+        "linkedin_url": row.get("linkedin_url") or "",
+        "twitter_url": row.get("twitter_url") or "",
+        "facebook_url": row.get("facebook_url") or "",
+        "github_url": row.get("github_url") or "",
+        "education": row.get("education") or "",
+        "experience": row.get("experience") or "",
+        "profiles": row.get("profiles") or "",
+        "skills": row.get("skills") or "",
+        "emails": row.get("emails") or "",
+        "phones": row.get("phones") or "",
+        "gated_fields": row.get("gated_fields") or "",
+        "hit_count": row.get("hit_count") if row.get("hit_count") is not None else 1,
+    }
+    upsert_display_record(
+        task_id=task_id,
+        step_key=step_key,
+        data_type="pdl_person_hits",
+        source_table="collect_phase_steps",
+        source_ref=source_ref,
+        row=payload,
+        platform=platform or None,
+        account_id=account_id or None,
     )
 
 

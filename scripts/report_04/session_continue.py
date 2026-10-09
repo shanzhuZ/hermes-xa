@@ -535,10 +535,13 @@ def next_agent_action(task_id: str) -> AgentAction:
             return "hold"
         return _write_or_hold_for_step8()
 
-    # 4.1 / 4.2 / 4.3 系统管线
+    # 4.1 / 4.2 / 4.3 / 4.7 系统管线（无 PDL 行的旧任务不因 4.7 空转）
     s43 = get_step_status(task_id, "step6_osint_es")
+    s_pdl = get_step_status(task_id, "step6_pdl")
     s6 = get_step_status(task_id, "step6_validated")
     if s43 in {"pending", "running"} or s6 in {"pending", "running"}:
+        return "hold"
+    if s_pdl in {"pending", "running"}:
         return "hold"
 
     s5 = get_step_status(task_id, "step5_streams")

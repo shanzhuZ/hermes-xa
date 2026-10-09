@@ -411,16 +411,21 @@ public class TaskTreeQueryService {
         return new StageProgress(stages, 0);
     }
 
-    /** 4.关联碰撞：开始 → 4.1 → 4.2 → 4.3 → 完成 */
+    /** 4.关联碰撞：开始 → 4.1 → 4.2 → 4.3 → 4.7 → 完成 */
     private StageProgress stageCollision(Map<String, Object> shell, String shellStatus) {
-        List<String> stages = Arrays.asList("开始", "4.1信息核验", "4.2认定", "4.3社工库", "完成");
+        List<String> stages = Arrays.asList(
+                "开始", "4.1信息核验", "4.2认定", "4.3社工库", "4.7全球人员", "完成");
         if (isTerminalStatus(shellStatus)) {
-            return new StageProgress(stages, 4);
+            return new StageProgress(stages, 5);
         }
         String s5 = findDescendantStatus(shell, "step5_streams");
         String s6 = findDescendantStatus(shell, "step6_validated");
         String s43 = findDescendantStatus(shell, "step6_osint_es");
-        if (isTerminalStatus(s43)) {
+        String sPdl = findDescendantStatus(shell, "step6_pdl");
+        if (isTerminalStatus(sPdl)) {
+            return new StageProgress(stages, 5);
+        }
+        if (isActiveStatus(sPdl) || isTerminalStatus(s43)) {
             return new StageProgress(stages, 4);
         }
         if (isActiveStatus(s43) || isTerminalStatus(s6)) {

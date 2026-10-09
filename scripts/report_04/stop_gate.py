@@ -21,6 +21,7 @@ _COLLISION_STEPS = (
     "step5_streams",
     "step6_validated",
     "step6_osint_es",
+    "step6_pdl",
 )
 
 # collision=碰撞未齐；posts=碰撞已齐但发文未落地（防滞后「步骤4完成」收束）
@@ -32,6 +33,9 @@ def collision_phase_incomplete(task_id: str) -> bool:
     """四、关联碰撞是否尚未全部终态。"""
     for sk in _COLLISION_STEPS:
         st = get_step_status(task_id, sk)
+        # 旧任务无 step6_pdl 行：跳过该检查
+        if sk == "step6_pdl" and st is None:
+            continue
         if st not in _TERMINAL:
             return True
     return False
